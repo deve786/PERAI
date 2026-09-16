@@ -10,7 +10,10 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.perai.app"
+      "bundleIdentifier": "com.perai.app",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "Allow PERAI to record voice notes so you can speak instead of typing."
+      }
     },
     "android": {
       "package": "com.perai.app",
@@ -20,7 +23,10 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "RECORD_AUDIO"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -36,7 +42,13 @@
         }
       ],
       "expo-status-bar",
-      "expo-sqlite"
+      "expo-sqlite",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Allow PERAI to record voice notes so you can speak instead of typing."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

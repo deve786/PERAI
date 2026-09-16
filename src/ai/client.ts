@@ -113,6 +113,45 @@ export async function requestJson(options: {
   }
 }
 
+/**
+ * Send audio plus an instruction and get plain text back.
+ *
+ * Separate from requestJson because transcription wants prose, not a schema —
+ * forcing JSON here would only invite the model to summarise rather than
+ * transcribe. Retries on a rate limit the same way.
+ */
+export async function requestTextFromAudio(options: {
+  model: string;
+  system: string;
+  prompt: string;
+  audioBase64: string;
+  mimeType: string;
+  retries?: number;
+}): Promise<string> {
+  try {
+    const interaction = await getClient().interactions.create({
+      model: options.model,
+      system_instruction: options.system,
+      input: [
+        { type: 'text', text: options.prompt },
+        { type: 'audio', data: options.audioBase64, mime_type: options.mimeType },
+      ],
+    } as Parameters<GoogleGenAI['interactions']['create']>[0]);
+
+    if (!interaction || typeof interaction !== 'object' || !('output_text' in interaction)) {
+      throw new Error('Gemini returned a streaming response, which is not supported here.');
+    }
+    return interaction.output_text ?? '';
+  } catch (err) {
+    const wait = retryDelayMs(err);
+    const remaining = options.retries ?? 1;
+    if (wait === null || remaining <= 0) throw err;
+
+    await sleep(wait);
+    return requestTextFromAudio({ ...options, retries: remaining - 1 });
+  }
+}
+
 async function sendOnce(options: {
   model: string;
   system: string;

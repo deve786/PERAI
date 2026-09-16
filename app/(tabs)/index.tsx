@@ -14,8 +14,10 @@ import {
 } from 'react-native';
 import { describeError, hasApiKey } from '@/ai/client';
 import { extractMemories } from '@/ai/extract';
+import { MicButton } from '@/components/MicButton';
 import { setPendingDrafts } from '@/draftStore';
 import { COLORS, FONTS, SPACE, TYPE } from '@/theme';
+import { useVoiceInput } from '@/useVoiceInput';
 
 const EXAMPLES = [
   'I got my haircut today',
@@ -31,8 +33,15 @@ export default function CaptureScreen() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // A transcript joins whatever is already typed rather than replacing it, so
+  // you can start typing, finish out loud, or dictate a second event.
+  const voice = useVoiceInput((spoken) =>
+    setText((current) => (current.trim() ? `${current.trim()} ${spoken}` : spoken))
+  );
+
   const configured = hasApiKey();
-  const canSubmit = text.trim().length > 0 && !busy && configured;
+  const listening = voice.stage !== 'idle';
+  const canSubmit = text.trim().length > 0 && !busy && !listening && configured;
 
   async function submit() {
     if (!canSubmit) return;
@@ -77,23 +86,34 @@ export default function CaptureScreen() {
 
           <View style={styles.wellFoot}>
             <Text style={TYPE.fine}>
-              {busy ? 'Reading that' : 'One line can hold several events'}
+              {voice.stage === 'listening'
+                ? 'Listening — press again when you finish'
+                : voice.stage === 'transcribing'
+                  ? 'Writing that down'
+                  : busy
+                    ? 'Reading that'
+                    : 'Speak or type. One line can hold several events'}
             </Text>
-            <Pressable
-              onPress={submit}
-              disabled={!canSubmit}
-              hitSlop={8}
-              style={[styles.send, !canSubmit && styles.sendOff]}
-              accessibilityLabel="Save this to your record"
-            >
-              {busy ? (
-                <ActivityIndicator color={COLORS.paper} size="small" />
-              ) : (
-                <Ionicons name="arrow-forward" size={17} color={COLORS.paper} />
-              )}
-            </Pressable>
+            <View style={styles.controls}>
+              <MicButton stage={voice.stage} onPress={voice.toggle} disabled={busy} />
+              <Pressable
+                onPress={submit}
+                disabled={!canSubmit}
+                hitSlop={8}
+                style={[styles.send, !canSubmit && styles.sendOff]}
+                accessibilityLabel="Save this to your record"
+              >
+                {busy ? (
+                  <ActivityIndicator color={COLORS.paper} size="small" />
+                ) : (
+                  <Ionicons name="arrow-forward" size={17} color={COLORS.paper} />
+                )}
+              </Pressable>
+            </View>
           </View>
         </View>
+
+        {voice.error ? <Notice>{voice.error}</Notice> : null}
 
         {!configured ? (
           <Notice>
@@ -155,6 +175,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: COLORS.rule,
   },
+  controls: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   wellFoot: {
     flexDirection: 'row',
     alignItems: 'center',

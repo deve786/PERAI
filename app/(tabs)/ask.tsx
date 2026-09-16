@@ -14,8 +14,10 @@ import {
 import { askAI, type AskResult } from '@/ai/ask';
 import { describeError, hasApiKey } from '@/ai/client';
 import { MemoryRow } from '@/components/MemoryRow';
+import { MicButton } from '@/components/MicButton';
 import { getAllMemories } from '@/db/queries';
 import { COLORS, FONTS, GUTTER, SPACE, TYPE } from '@/theme';
+import { useVoiceInput } from '@/useVoiceInput';
 
 const SUGGESTIONS = [
   'When did I last cut my hair?',
@@ -31,8 +33,13 @@ export default function AskScreen() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // A spoken question replaces the box rather than appending: you ask one
+  // thing at a time, and the previous question is already answered above.
+  const voice = useVoiceInput(setQuestion);
+
   const configured = hasApiKey();
-  const canAsk = question.trim().length > 0 && !busy && configured;
+  const listening = voice.stage !== 'idle';
+  const canAsk = question.trim().length > 0 && !busy && !listening && configured;
 
   async function ask() {
     if (!canAsk) return;
@@ -77,6 +84,7 @@ export default function AskScreen() {
             onSubmitEditing={ask}
             multiline
           />
+          <MicButton stage={voice.stage} onPress={voice.toggle} disabled={busy} />
           <Pressable
             onPress={ask}
             disabled={!canAsk}
@@ -91,6 +99,20 @@ export default function AskScreen() {
             )}
           </Pressable>
         </View>
+
+        {listening ? (
+          <Text style={TYPE.label}>
+            {voice.stage === 'listening'
+              ? 'LISTENING — PRESS AGAIN WHEN YOU FINISH'
+              : 'WRITING THAT DOWN'}
+          </Text>
+        ) : null}
+
+        {voice.error ? (
+          <View style={styles.notice}>
+            <Text style={[TYPE.body, styles.noticeText]}>{voice.error}</Text>
+          </View>
+        ) : null}
 
         {!configured ? (
           <View style={styles.notice}>

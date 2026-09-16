@@ -5,7 +5,7 @@ stores it on-device, and later answers questions **only from what you recorded**
 — never from general knowledge, never invented.
 
 ```
-"I got my haircut today"
+"I got my haircut today"   (typed, or spoken — there is a mic on both tabs)
    -> AI extracts { title, type, category, date, tags, amount, people }
    -> you confirm / edit it
    -> saved to your record (local SQLite)
@@ -140,6 +140,35 @@ target earns its place.
 
 ---
 
+## Voice
+
+There is a mic on both the Record and Ask tabs. Press to talk, press again to
+stop. Recording uses `expo-audio`, which runs **in Expo Go** — no development
+build needed — and the audio goes to Gemini for transcription.
+
+**It stops at text.** The transcript lands in the same input box you would have
+typed into, so you check and edit it before it becomes anything. Nothing is
+saved or asked straight off the microphone: a mis-heard "1200" is a typo you
+fix, not a wrong memory you have to hunt down later.
+
+That also keeps the feature swappable exactly as the brief intended —
+`extractMemories` and the storage layer never learn that audio was involved, so
+an on-device recogniser could replace `src/ai/transcribe.ts` without touching
+anything else.
+
+Two details worth knowing:
+
+- On **Record**, a transcript is appended to whatever is already in the box, so
+  you can type a bit, finish out loud, or dictate a second event. On **Ask** it
+  replaces the box, because you ask one thing at a time.
+- Transcription is a second Gemini call, so a voice note costs two requests
+  against the free tier instead of one.
+
+Microphone permission is declared in `app.json`. Android also needs
+`RECORD_AUDIO`, which is set there.
+
+---
+
 ## Architecture
 
 ```
@@ -161,7 +190,9 @@ src/
   db/client.ts             async connection + change listener
   db/queries.ts            insert / timeline / range / delete
   useMemories.ts           live timeline hook
-  components/              MemoryRow, DraftCard, Chip
+  ai/transcribe.ts         speech -> text, then hands off to the normal flow
+  useVoiceInput.ts         press-to-talk recorder hook
+  components/              MemoryRow, DraftCard, Chip, MicButton
   draftStore.ts            holds drafts between capture and the preview modal
   format.ts                currency, day labels, day grouping
 ```
@@ -241,16 +272,22 @@ behaviour the app exists for:
 | Frequency | "typical gap 42 days", computed from the three cited haircuts |
 | **Nothing recorded** | "There is no recorded memory for that." — no evidence cited |
 
+- ✅ Gemini accepts the inline-audio request shape, and silence correctly comes
+  back as `NO_SPEECH` rather than an invented transcript
+
 ## Not verified
 
-The end-to-end acceptance check on a real device — enter a memory in Expo Go,
-restart the app, ask about it — still needs a phone. Everything it covers has
-been verified in the browser and in the live suite, but not in Expo Go itself.
+**Voice has only been tested as far as the API boundary.** The audio request
+shape works, but three things need a real phone: `expo-audio` actually
+recording, `new File(uri).base64()` reading that recording, and transcription
+quality on real speech. None of it can run in Node or in the browser build.
+
+The end-to-end acceptance check on a device — record a memory in Expo Go,
+restart the app, ask about it — also still needs a phone. Everything it covers
+has been verified in the browser and in the live suite, but not in Expo Go.
 
 ## Out of scope for this MVP
 
-Voice input (the capture flow is text-only, but `extractMemories` takes a plain
-string, so a speech-to-text source drops in without touching extraction or
-storage) · any backend or multi-device sync · auth · actually firing reminder
+Any backend or multi-device sync · auth · actually firing reminder
 notifications (reminder data is stored, delivery is not built) · knowledge-graph
 linking · proactive suggestions · native release builds.
