@@ -11,25 +11,23 @@ import {
   View,
 } from 'react-native';
 import { describeError, hasApiKey } from '@/ai/client';
+import { appVersion } from '@/appVersion';
 import { extractMemories } from '@/ai/extract';
 import { ComposeButton, type ComposeMode } from '@/components/ComposeButton';
 import { MemoryRow } from '@/components/MemoryRow';
 import { deleteMemories, insertMemory } from '@/db/queries';
 import { setPendingDrafts } from '@/draftStore';
+import { notificationsAllowed, syncReminders } from '@/reminders';
+import { reminderTime } from '@/reminderTime';
 import { COLORS, FONTS, SPACE, TYPE } from '@/theme';
 import type { Memory, MemoryDraft } from '@/types';
 import { useVoiceInput } from '@/useVoiceInput';
 
-const EXAMPLES = [
-  'I got my haircut today',
-  'Bought AirPods for 18000 yesterday',
-  'Remind me to renew my passport next month',
-  'Went to Kozhikode yesterday and bought a shirt for 1200 rupees',
-];
-
 interface Saved {
   rawInput: string;
   memories: Memory[];
+  /** null when nothing saved is a reminder; otherwise whether alerts can fire. */
+  alerts: boolean | null;
 }
 
 function toDraft({ id, createdAt, confirmed, rawInput, ...draft }: Memory): MemoryDraft {
@@ -65,8 +63,17 @@ export default function CaptureScreen() {
       const drafts = await extractMemories(note, new Date().toISOString());
       const memories: Memory[] = [];
       for (const draft of drafts) memories.push(await insertMemory(draft, note));
+
+      // Ask for notification permission here, the first time it matters —
+      // right after saving something that is meant to remind you.
+      let alerts: boolean | null = null;
+      if (memories.some((m) => reminderTime(m) !== null)) {
+        alerts = await notificationsAllowed(true);
+        if (alerts) await syncReminders();
+      }
+
       setText('');
-      setSaved({ rawInput: note, memories });
+      setSaved({ rawInput: note, memories, alerts });
     } catch (err) {
       // Put a spoken note in the box so nothing said is lost.
       setText(note);
@@ -197,22 +204,16 @@ export default function CaptureScreen() {
             {saved.memories.map((memory) => (
               <MemoryRow key={memory.id} memory={memory} gutter="date" />
             ))}
+            {saved.alerts === false ? (
+              <Text style={[TYPE.body, styles.alertsOff]}>
+                Notifications are off, so this won't remind you. Turn them on in
+                Settings › Apps › PERAI › Notifications.
+              </Text>
+            ) : null}
           </View>
-        ) : (
-          <View style={styles.examples}>
-            <Text style={TYPE.label}>FOR EXAMPLE</Text>
-            {EXAMPLES.map((example) => (
-              <Pressable
-                key={example}
-                onPress={() => setText(example)}
-                disabled={mode !== 'voice' && mode !== 'send'}
-                style={({ pressed }) => [styles.example, pressed && styles.pressed]}
-              >
-                <Text style={TYPE.body}>{example}</Text>
-              </Pressable>
-            ))}
-          </View>
-        )}
+        ) : null}
+
+        <Text style={[TYPE.stamp, styles.version]}>PERAI {appVersion()}</Text>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -229,7 +230,9 @@ function Notice({ children }: { children: React.ReactNode }) {
 
 const styles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: COLORS.paper },
-  content: { padding: SPACE.page, paddingTop: 72, paddingBottom: 48, gap: 22 },
+  content: { flexGrow: 1, padding: SPACE.page, paddingTop: 72, paddingBottom: 28, gap: 22 },
+  // Pinned to the bottom of the screen, out of the way of capturing.
+  version: { marginTop: 'auto', textAlign: 'center', color: COLORS.mist },
   composer: { gap: 14 },
   input: {
     fontFamily: FONTS.sans,
@@ -260,7 +263,5 @@ const styles = StyleSheet.create({
   kept: { color: COLORS.moss },
   savedActions: { flexDirection: 'row', gap: 20 },
   action: { color: COLORS.graphite },
-  examples: { gap: 2 },
-  example: { paddingVertical: 9 },
-  pressed: { opacity: 0.45 },
+  alertsOff: { color: COLORS.alert, marginTop: 8 },
 });

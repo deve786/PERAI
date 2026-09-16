@@ -17,13 +17,6 @@ import { getAllMemories } from '@/db/queries';
 import { COLORS, FONTS, GUTTER, SPACE, TYPE } from '@/theme';
 import { useVoiceInput } from '@/useVoiceInput';
 
-const SUGGESTIONS = [
-  'When did I last cut my hair?',
-  'How much did I spend on electronics?',
-  'How often do I go to the gym?',
-  'What did I do last week?',
-];
-
 export default function AskScreen() {
   const [question, setQuestion] = useState('');
   const [asked, setAsked] = useState('');
@@ -170,22 +163,10 @@ export default function AskScreen() {
         ) : null}
 
         {idle ? (
-          <View style={styles.suggestions}>
-            <Text style={TYPE.label}>TRY</Text>
-            {SUGGESTIONS.map((suggestion) => (
-              <Pressable
-                key={suggestion}
-                onPress={() => void ask(suggestion)}
-                style={({ pressed }) => [styles.suggestion, pressed && styles.pressed]}
-              >
-                <Text style={TYPE.body}>{suggestion}</Text>
-              </Pressable>
-            ))}
-            <Text style={[TYPE.fine, styles.disclaimer]}>
-              Answers come only from what you have recorded. When there is no
-              entry for something, this says so instead of guessing.
-            </Text>
-          </View>
+          <Text style={[TYPE.fine, styles.disclaimer]}>
+            Answers come only from what you have recorded. When there is no
+            entry for something, this says so instead of guessing.
+          </Text>
         ) : null}
       </ScrollView>
     </KeyboardAvoidingView>
@@ -232,8 +213,5 @@ const styles = StyleSheet.create({
     marginLeft: GUTTER,
   },
   noEvidence: { marginTop: -4 },
-  suggestions: { gap: 2 },
-  suggestion: { paddingVertical: 9 },
-  pressed: { opacity: 0.45 },
-  disclaimer: { marginTop: 18, maxWidth: 320 },
+  disclaimer: { maxWidth: 320 },
 });

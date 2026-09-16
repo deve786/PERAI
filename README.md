@@ -179,6 +179,36 @@ builds. See `src/useAutoUpdate.ts`.
 
 ---
 
+## Reminders
+
+Reminders and appointments notify you with local notifications scheduled on the
+phone — no server, works offline and with the app closed.
+
+| You said | Notifies |
+| --- | --- |
+| A clock time for a reminder ("tomorrow at 8:30pm") | At that time |
+| A clock time for an appointment ("dentist Friday at 4pm") | 30 minutes before |
+| Only a day ("renew passport next month") | 9:00 AM that day |
+| Only "today", after 9 AM has passed | One hour from now |
+| Anything that works out to the past, or a task / purchase / memory | Never |
+
+The rules live in `src/reminderTime.ts` (pure, unit-tested) and the numbers are
+constants at the top of it.
+
+**The database is the only source of truth.** On launch and shortly after any
+write, `src/reminders.ts` cancels every scheduled notification and reschedules
+from the stored entries, keyed by entry id. That is why Undo, Edit and deleting
+from the timeline keep alarms correct without any of them touching
+notifications — and why reminders saved before this feature existed get
+scheduled too.
+
+Permission is asked the first time you save something that should remind you,
+not at launch. If it is denied, the saved entry says so and points to Settings.
+Notifications are inexact (Android may deliver a few minutes late to save
+battery); exact alarms would need a permission Android 14 denies by default.
+
+---
+
 ## Voice
 
 There is a mic on both the Record and Ask tabs. Press to talk, press again to

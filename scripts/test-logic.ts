@@ -17,6 +17,7 @@ import {
   hasStatedTime,
   localTimestamp,
 } from '../src/format';
+import { reminderTime } from '../src/reminderTime';
 import type { Memory } from '../src/types';
 
 let passed = 0;
@@ -236,6 +237,60 @@ section('local timestamp sent to the model');
     'names the same instant',
     new Date(stamp).getTime() === new Date('2026-09-15T20:10:00.000Z').getTime(),
     stamp
+  );
+}
+
+section('when reminders notify');
+{
+  // A fixed "now": Wed 16 Sep 2026, 14:00 local.
+  const now = new Date(2026, 8, 16, 14, 0, 0);
+  const at = (y: number, mo: number, d: number, h = 12, mi = 0) =>
+    new Date(y, mo, d, h, mi, 0).toISOString();
+  const base = { status: 'active' as const };
+
+  const passport = reminderTime(
+    { ...base, type: 'reminder', eventDate: at(2026, 9, 16), dateExpression: 'next month' },
+    now
+  );
+  check(
+    'date-only reminder -> 9:00 AM that day',
+    passport?.getHours() === 9 && passport?.getMinutes() === 0 && passport?.getDate() === 16 && passport?.getMonth() === 9,
+    passport?.toString()
+  );
+
+  const pills = reminderTime(
+    { ...base, type: 'reminder', eventDate: at(2026, 8, 17, 20, 30), dateExpression: 'tomorrow at 8:30pm' },
+    now
+  );
+  check('stated time reminder -> exactly that time', pills?.getHours() === 20 && pills?.getMinutes() === 30, pills?.toString());
+
+  const dentist = reminderTime(
+    { ...base, type: 'appointment', eventDate: at(2026, 8, 18, 16, 0), dateExpression: 'Friday at 4pm' },
+    now
+  );
+  check('appointment with time -> 30 min before', dentist?.getHours() === 15 && dentist?.getMinutes() === 30, dentist?.toString());
+
+  const callMom = reminderTime(
+    { ...base, type: 'reminder', eventDate: at(2026, 8, 16), dateExpression: 'today' },
+    now
+  );
+  check(
+    'date-only for today after 9 AM -> an hour from now, not dropped',
+    callMom?.getTime() === now.getTime() + 60 * 60_000,
+    callMom?.toString()
+  );
+
+  check(
+    'past reminder -> no notification',
+    reminderTime({ ...base, type: 'reminder', eventDate: at(2026, 8, 10), dateExpression: 'last week' }, now) === null
+  );
+  check(
+    'purchases never notify',
+    reminderTime({ ...base, type: 'purchase', eventDate: at(2026, 9, 1), dateExpression: 'next month' }, now) === null
+  );
+  check(
+    'done reminders never notify',
+    reminderTime({ status: 'done', type: 'reminder', eventDate: at(2026, 9, 1), dateExpression: 'next month' }, now) === null
   );
 }
 

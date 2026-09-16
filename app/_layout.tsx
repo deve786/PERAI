@@ -14,6 +14,7 @@ import { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { COLORS, SPACE, TYPE } from '@/theme';
 import { initDatabase } from '@/db/client';
+import { startReminderSync } from '@/reminders';
 import { useAutoUpdate } from '@/useAutoUpdate';
 
 export default function RootLayout() {
@@ -21,6 +22,9 @@ export default function RootLayout() {
   const [dbError, setDbError] = useState<string | null>(null);
 
   useAutoUpdate();
+
+  // Once the database is open, keep scheduled reminders in step with it.
+  useEffect(() => (dbReady ? startReminderSync() : undefined), [dbReady]);
 
   const [fontsReady] = useFonts({
     IBMPlexSans_400Regular,

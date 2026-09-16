@@ -14,6 +14,7 @@
     "expo-file-system": "~57.0.7",
     "expo-font": "~57.0.4",
     "expo-linking": "~57.0.10",
+    "expo-notifications": "~57.0.19",
     "expo-router": "~57.0.21",
     "expo-sqlite": "~57.0.3",
     "expo-status-bar": "~57.0.1",
@@ -41,8 +42,8 @@
     "test:schema": "tsx scripts/test-schema.ts",
     "test": "npm run test:schema && npm run test:logic",
     "web:export": "expo export --platform web --output-dir dist-web",
-    "build:android": "npx eas-cli build --platform android --profile preview",
-    "update": "npx eas-cli update --channel preview --environment preview"
+    "build:android": "node scripts/release.mjs build",
+    "update": "node scripts/release.mjs update"
   },
   "private": true
 }

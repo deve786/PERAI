@@ -2,7 +2,7 @@
   "expo": {
     "name": "PERAI",
     "slug": "PERAI",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "perai",
@@ -51,6 +51,14 @@
         "expo-audio",
         {
           "microphonePermission": "Allow PERAI to record voice notes so you can speak instead of typing."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#2F5D45",
+          "defaultChannel": "reminders"
         }
       ]
     ],

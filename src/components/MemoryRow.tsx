@@ -1,6 +1,7 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { COLORS, GUTTER, SPACE, TYPE } from '../theme';
 import { addedLabel, formatAmount, hasStatedTime, shortDate, timeLabel } from '../format';
+import { reminderLabel, reminderTime } from '../reminderTime';
 import type { Memory } from '../types';
 
 interface Props {
@@ -34,6 +35,7 @@ export function MemoryRow({ memory, gutter = 'time', onPress, onLongPress }: Pro
         ? timeLabel(memory.eventDate)
         : '—';
   const added = addedLabel(memory);
+  const remindsAt = reminderTime(memory);
 
   return (
     <Pressable
@@ -59,6 +61,12 @@ export function MemoryRow({ memory, gutter = 'time', onPress, onLongPress }: Pro
             .filter(Boolean)
             .join('  ·  ')}
         </Text>
+
+        {remindsAt ? (
+          <Text style={[TYPE.stamp, styles.reminds]}>
+            REMINDS YOU {reminderLabel(remindsAt)}
+          </Text>
+        ) : null}
       </View>
     </Pressable>
   );
@@ -83,4 +91,5 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   title: { flex: 1, color: COLORS.ink },
+  reminds: { color: COLORS.moss },
 });
