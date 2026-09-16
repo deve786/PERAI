@@ -1,0 +1,203 @@
+/**
+ * Offline checks for everything that does not need the Gemini API:
+ * retrieval ranking, date-window parsing and timeline grouping.
+ *
+ *   npm run test:logic
+ */
+import {
+  guessDateRange,
+  selectRelevantMemories,
+  tokenize,
+} from '../src/ai/retrieval';
+import { dayLabel, groupByDay, formatAmount } from '../src/format';
+import type { Memory } from '../src/types';
+
+let passed = 0;
+let failed = 0;
+
+function check(name: string, condition: boolean, detail?: unknown) {
+  if (condition) {
+    passed++;
+    console.log(`  PASS  ${name}`);
+  } else {
+    failed++;
+    console.log(`  FAIL  ${name}`);
+    if (detail !== undefined) console.log('        got:', detail);
+  }
+}
+
+function section(title: string) {
+  console.log(`\n${title}`);
+}
+
+const NOW = new Date('2026-09-16T10:00:00+05:30');
+
+let seq = 0;
+function memory(partial: Partial<Memory> & { title: string; eventDate: string }): Memory {
+  seq += 1;
+  return {
+    id: `id-${seq}`,
+    rawInput: partial.title,
+    type: 'memory',
+    category: 'Other',
+    dateExpression: null,
+    createdAt: partial.eventDate,
+    amount: null,
+    currency: null,
+    people: null,
+    location: null,
+    tags: null,
+    priority: null,
+    status: 'active',
+    confirmed: true,
+    ...partial,
+  };
+}
+
+const CORPUS: Memory[] = [
+  memory({
+    title: 'Got a haircut',
+    eventDate: '2026-09-16T12:00:00+05:30',
+    category: 'Personal Care',
+    tags: 'haircut,grooming',
+  }),
+  memory({
+    title: 'Got a haircut',
+    eventDate: '2026-07-20T12:00:00+05:30',
+    category: 'Personal Care',
+    tags: 'haircut',
+  }),
+  memory({
+    title: 'Bought AirPods',
+    eventDate: '2026-09-10T12:00:00+05:30',
+    category: 'Shopping',
+    type: 'purchase',
+    amount: 18000,
+    currency: 'INR',
+    tags: 'electronics,audio',
+  }),
+  memory({
+    title: 'Bought a laptop charger',
+    eventDate: '2026-08-02T12:00:00+05:30',
+    category: 'Shopping',
+    type: 'purchase',
+    amount: 2400,
+    currency: 'INR',
+    tags: 'electronics',
+  }),
+  memory({
+    title: 'Trip to Kozhikode',
+    eventDate: '2026-09-15T12:00:00+05:30',
+    category: 'Travel',
+    location: 'Kozhikode',
+    tags: 'travel',
+  }),
+  memory({
+    title: 'Gym session',
+    eventDate: '2026-09-14T07:00:00+05:30',
+    category: 'Fitness',
+    tags: 'gym,workout',
+  }),
+];
+
+section('tokenize');
+check('drops stopwords and punctuation', JSON.stringify(tokenize('When did I last cut my hair?')) === '["cut","hair"]', tokenize('When did I last cut my hair?'));
+
+section('guessDateRange');
+check('detects "last month"', guessDateRange('what did I spend last month', NOW)?.label === 'last month');
+check('detects "this year"', guessDateRange('how much this year', NOW)?.label === 'this year');
+check('detects explicit year', guessDateRange('what happened in 2024', NOW)?.label === '2024');
+check('detects "last 3 weeks"', guessDateRange('anything in the last 3 weeks', NOW)?.label === 'last 3 weeks');
+check('detects "yesterday"', guessDateRange('what did I do yesterday', NOW)?.label === 'yesterday');
+check('returns null with no period', guessDateRange('when did I last cut my hair', NOW) === null);
+
+{
+  const range = guessDateRange('what did I buy last month', NOW)!;
+  // NOW is 16 Sep 2026, so "last month" is August.
+  check(
+    'last month spans August',
+    range.from.getMonth() === 7 && range.to.getMonth() === 7,
+    `${range.from.toDateString()} -> ${range.to.toDateString()}`
+  );
+}
+
+section('selectRelevantMemories');
+{
+  const { memories, hadKeywordMatch } = selectRelevantMemories(
+    'When did I last cut my hair?',
+    CORPUS,
+    NOW
+  );
+  check('haircut question matches on keywords', hadKeywordMatch);
+  check('ranks a haircut memory first', memories[0].title === 'Got a haircut', memories[0]?.title);
+  check(
+    'newest haircut outranks the older one',
+    memories[0].eventDate.startsWith('2026-09-16'),
+    memories[0]?.eventDate
+  );
+}
+
+{
+  const { memories } = selectRelevantMemories(
+    'How much did I spend on electronics?',
+    CORPUS,
+    NOW
+  );
+  const top2 = memories.slice(0, 2).map((m) => m.title).sort();
+  check(
+    'electronics question surfaces both purchases first',
+    top2[0] === 'Bought AirPods' && top2[1] === 'Bought a laptop charger',
+    top2
+  );
+}
+
+{
+  const { memories, range } = selectRelevantMemories(
+    'what did I buy last month',
+    CORPUS,
+    NOW
+  );
+  check('scopes to the named month', range?.label === 'last month');
+  check(
+    'only August entries survive the window',
+    memories.every((m) => new Date(m.eventDate).getMonth() === 7),
+    memories.map((m) => m.eventDate)
+  );
+}
+
+{
+  // A question about something never recorded must not fabricate a match.
+  const { hadKeywordMatch } = selectRelevantMemories(
+    'When did I last go scuba diving?',
+    CORPUS,
+    NOW
+  );
+  check('unrecorded topic has no keyword match', hadKeywordMatch === false);
+}
+
+{
+  const { memories } = selectRelevantMemories('anything at all', CORPUS, NOW, 3);
+  check('respects the context cap', memories.length === 3, memories.length);
+}
+
+section('formatting');
+check('formats INR', formatAmount(18000, 'INR') === '₹18,000', formatAmount(18000, 'INR'));
+check('null amount formats to null', formatAmount(null, null) === null);
+check('labels today', dayLabel('2026-09-16T12:00:00+05:30', NOW) === 'Today', dayLabel('2026-09-16T12:00:00+05:30', NOW));
+check('labels yesterday', dayLabel('2026-09-15T12:00:00+05:30', NOW) === 'Yesterday', dayLabel('2026-09-15T12:00:00+05:30', NOW));
+
+{
+  const sorted = [...CORPUS].sort(
+    (a, b) => new Date(b.eventDate).getTime() - new Date(a.eventDate).getTime()
+  );
+  const sections = groupByDay(sorted, NOW);
+  check('groups into one section per day', sections.length === 6, sections.length);
+  check('first section is Today', sections[0].title === 'Today', sections[0]?.title);
+  check(
+    'every memory kept',
+    sections.reduce((n, s) => n + s.data.length, 0) === CORPUS.length
+  );
+}
+
+console.log(`\n${passed} passed, ${failed} failed\n`);
+process.exit(failed === 0 ? 0 : 1);

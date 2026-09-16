@@ -39,3 +39,11 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# local env
+.env
+
+# bundle exports
+dist/
+dist-ios/
+dist-web/

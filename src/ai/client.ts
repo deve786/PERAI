@@ -1,0 +1,162 @@
+import { GoogleGenAI } from '@google/genai';
+
+/**
+ * Read the key injected by app.config.ts.
+ *
+ * Loaded lazily and guarded so this module also imports cleanly under plain
+ * Node — that is what lets `scripts/test-ai.ts` exercise extraction and
+ * question-answering outside the app.
+ */
+function keyFromExpoConstants(): string {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const Constants = require('expo-constants').default;
+    return Constants?.expoConfig?.extra?.geminiApiKey ?? '';
+  } catch {
+    return '';
+  }
+}
+
+export function getApiKey(): string {
+  return (
+    keyFromExpoConstants() ||
+    process.env.EXPO_PUBLIC_GEMINI_API_KEY ||
+    process.env.GEMINI_API_KEY ||
+    ''
+  );
+}
+
+export function hasApiKey(): boolean {
+  return getApiKey().trim().length > 0;
+}
+
+/** Raised when the app is misconfigured, so the UI can show setup help. */
+export class MissingApiKeyError extends Error {
+  constructor() {
+    super(
+      'No Gemini API key configured. Add EXPO_PUBLIC_GEMINI_API_KEY to .env and restart with `npx expo start --clear`.'
+    );
+    this.name = 'MissingApiKeyError';
+  }
+}
+
+let cached: GoogleGenAI | null = null;
+let cachedKey = '';
+
+export function getClient(): GoogleGenAI {
+  const key = getApiKey();
+  if (!key) throw new MissingApiKeyError();
+  if (!cached || cachedKey !== key) {
+    cached = new GoogleGenAI({ apiKey: key });
+    cachedKey = key;
+  }
+  return cached;
+}
+
+/**
+ * Both features run on flash-lite.
+ *
+ * Every Gemini model here is on the free tier — "free" is not a model, it is a
+ * per-model quota. The newest flagship Flash has the tightest free allowance,
+ * and this app makes one call per captured note, so the lite tier is both the
+ * roomiest and an easy fit for the work: extraction is a short schema-bound
+ * transform, and answering reasons over text it has already been handed.
+ *
+ * Raise ASK_MODEL if answers start missing totals or intervals; that costs
+ * quota, so change it on its own rather than alongside EXTRACT_MODEL.
+ */
+export const EXTRACT_MODEL =
+  process.env.EXPO_PUBLIC_GEMINI_EXTRACT_MODEL || 'gemini-3.5-flash-lite';
+export const ASK_MODEL =
+  process.env.EXPO_PUBLIC_GEMINI_ASK_MODEL || 'gemini-3.5-flash-lite';
+
+/** Gemini's free tier is capped per minute; it tells us how long to wait. */
+function retryDelayMs(err: unknown): number | null {
+  const status = (err as { status?: number })?.status;
+  const message = err instanceof Error ? err.message : String(err);
+  if (status !== 429 && !/quota|too_many_requests|rate limit/i.test(message)) {
+    return null;
+  }
+
+  const suggested = message.match(/retry in ([\d.]+)s/i);
+  const seconds = suggested ? Number(suggested[1]) : 20;
+  // Cap it: a user staring at a spinner will not wait a full minute.
+  return Math.min(Math.ceil(seconds) + 1, 30) * 1000;
+}
+
+const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
+
+/**
+ * Call Gemini with a response schema and hand back the raw JSON text.
+ * Both AI features need exactly this, so the request shape lives in one place.
+ *
+ * Retries once on a rate-limit response, because hitting the free tier's
+ * per-minute cap is routine rather than exceptional.
+ */
+export async function requestJson(options: {
+  model: string;
+  system: string;
+  user: string;
+  schemaName: string;
+  schema: object;
+  retries?: number;
+}): Promise<string> {
+  try {
+    return await sendOnce(options);
+  } catch (err) {
+    const wait = retryDelayMs(err);
+    const remaining = options.retries ?? 1;
+    if (wait === null || remaining <= 0) throw err;
+
+    await sleep(wait);
+    return requestJson({ ...options, retries: remaining - 1 });
+  }
+}
+
+async function sendOnce(options: {
+  model: string;
+  system: string;
+  user: string;
+  schema: object;
+}): Promise<string> {
+  const interaction = await getClient().interactions.create({
+    model: options.model,
+    system_instruction: options.system,
+    input: options.user,
+    response_format: {
+      type: 'text',
+      mime_type: 'application/json',
+      schema: options.schema as Record<string, unknown>,
+    },
+  } as Parameters<GoogleGenAI['interactions']['create']>[0]);
+
+  // create() is typed as interaction-or-stream; we never request streaming, so
+  // narrow rather than cast blindly — a stream here would mean a real bug.
+  if (!interaction || typeof interaction !== 'object' || !('output_text' in interaction)) {
+    throw new Error('Gemini returned a streaming response, which is not supported here.');
+  }
+
+  return interaction.output_text ?? '';
+}
+
+/**
+ * Turn any SDK/network failure into a short sentence we can render inline.
+ * The UI never shows a raw stack trace.
+ */
+export function describeError(err: unknown): string {
+  if (err instanceof MissingApiKeyError) return err.message;
+
+  const message = err instanceof Error ? err.message : String(err);
+  const status = (err as { status?: number })?.status;
+
+  if (status === 401 || status === 403 || /API key/i.test(message)) {
+    return 'That API key was rejected. Check EXPO_PUBLIC_GEMINI_API_KEY.';
+  }
+  if (status === 429 || /quota|rate limit/i.test(message)) {
+    return 'Hit the Gemini rate limit. Wait a minute and try again.';
+  }
+  if (/fetch|network|ENOTFOUND|ECONNREFUSED/i.test(message)) {
+    return 'Could not reach Gemini. Check your network connection.';
+  }
+  return message || 'Something went wrong.';
+}
