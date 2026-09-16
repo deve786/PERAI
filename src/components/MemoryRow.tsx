@@ -51,16 +51,18 @@ export function MemoryRow({ memory, gutter = 'time', onPress, onLongPress }: Pro
           {amount ? <Text style={TYPE.figure}>{amount}</Text> : null}
         </View>
 
-        <Text style={TYPE.stamp} numberOfLines={1}>
+        <Text style={TYPE.stamp}>
           {[
             memory.category.toUpperCase(),
             memory.type !== 'memory' ? memory.type.toUpperCase() : null,
             memory.location?.toUpperCase(),
-            added,
           ]
             .filter(Boolean)
             .join('  ·  ')}
         </Text>
+
+        {/* Its own line: sharing the category line got it truncated to "ADDED 16 …". */}
+        {added ? <Text style={TYPE.stamp}>{added}</Text> : null}
 
         {remindsAt ? (
           <Text style={[TYPE.stamp, styles.reminds]}>

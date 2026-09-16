@@ -147,9 +147,29 @@ The Gemini key reaches the build as an EAS environment variable, because
 `.env` is gitignored and never uploaded.
 
 ```bash
-npm run build:android    # new installable APK (preview profile)
-npm run update -- --message "what changed"    # ship JS changes to installed apps
+npm run build:android -- "what changed"   # new APK      1.1.x -> 1.2.0
+npm run update -- "what changed"          # OTA update   1.2.0 -> 1.2.1
 ```
+
+### Version numbers
+
+Both commands bump the version before shipping and roll the bump back if EAS
+fails, so the number in the repo always matches what shipped. The version is
+shown at the bottom of the Record tab as `PERAI 1.2.1`.
+
+- **MAJOR.MINOR** is `version` in `app.json`. A build bumps MINOR.
+- **The last number** counts OTA updates on top of that build. It lives in
+  `src/release.json` and resets to 0 on the next build.
+
+They are split because `version` is part of the runtime fingerprint: bumping it
+in an OTA update would stop that update reaching installed phones.
+`src/release.json` ships in the JS bundle and does not affect the fingerprint.
+Both behaviours were checked with `npx expo-updates fingerprint:generate`.
+
+`fingerprint.config.js` also excludes npm scripts from the fingerprint. By
+default, editing any `package.json` script changes it — which would silently
+cut installed phones off from updates even though scripts never touch native
+code.
 
 ### When you need which
 
