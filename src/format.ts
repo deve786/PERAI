@@ -61,6 +61,54 @@ export function shortDate(iso: string): string {
   });
 }
 
+/**
+ * Did the person actually say a clock time?
+ *
+ * The model always returns a full timestamp, so a note like "bought a car two
+ * days back" arrives with a time attached that nobody stated — often the minute
+ * it was typed. Showing that time would claim the car was bought at 20:52.
+ * Only an explicit clock time in the original wording counts. Uses the stored
+ * `dateExpression`, so it also corrects entries saved before this existed.
+ */
+export function hasStatedTime(dateExpression: string | null): boolean {
+  if (!dateExpression) return false;
+  return /\b\d{1,2}(:\d{2})?\s*(am|pm|a\.m\.|p\.m\.)|\b\d{1,2}:\d{2}\b|o'?clock|\bnoon\b|\bmidnight\b/i.test(
+    dateExpression
+  );
+}
+
+/**
+ * "ADDED 16 SEP" when an entry was recorded on a different day from when it
+ * happened; null when they are the same day and the label would only repeat
+ * the section heading.
+ */
+export function addedLabel(
+  memory: Pick<Memory, 'eventDate' | 'createdAt'>
+): string | null {
+  if (dayKey(memory.createdAt) === dayKey(memory.eventDate)) return null;
+  return `ADDED ${shortDate(memory.createdAt).toUpperCase()}`;
+}
+
+/**
+ * The current moment as local wall-clock time with its UTC offset, e.g.
+ * "2026-09-16T01:10:00+05:30".
+ *
+ * Sent to the model instead of a UTC ISO string. In India between midnight and
+ * 05:30 the UTC date is still yesterday, so "yesterday" resolved against a UTC
+ * timestamp lands two days back.
+ */
+export function localTimestamp(iso: string): string {
+  const d = new Date(iso);
+  const pad = (n: number) => String(Math.floor(Math.abs(n))).padStart(2, '0');
+  const offset = -d.getTimezoneOffset();
+  const sign = offset >= 0 ? '+' : '-';
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}` +
+    `${sign}${pad(offset / 60)}:${pad(offset % 60)}`
+  );
+}
+
 export function fullDateLabel(iso: string): string {
   return new Date(iso).toLocaleDateString('en-GB', {
     weekday: 'long',

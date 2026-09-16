@@ -9,6 +9,7 @@ import {
   type Priority,
 } from '../types';
 import { DEFAULT_CURRENCY } from '../constants';
+import { localTimestamp } from '../format';
 import { EXTRACT_MODEL, requestJson } from './client';
 
 /** Thrown when the model replied but we could not read a memory out of it. */
@@ -93,12 +94,14 @@ CATEGORY — pick the closest of: ${CATEGORIES.join(', ')}. Use "Other" only whe
 nothing else fits.
 
 DATES — resolve every relative expression ("yesterday", "two weeks ago",
-"last Monday", "tomorrow at 5") against the current timestamp given in the user
-message, and return eventDate as a full ISO 8601 timestamp. Put the person's
-original wording in dateExpression ("two weeks ago"); use null when they gave no
-time reference at all. When only a date is implied and no clock time, use 12:00
-local time on that date. When no date is implied anywhere, use the current
-timestamp for a "memory" or "purchase", and leave dateExpression null.
+"last Monday", "tomorrow at 5") against the current local time given in the
+user message, and return eventDate as a full ISO 8601 timestamp that keeps the
+same UTC offset. Put the person's original wording in dateExpression, including
+any clock time they said ("two weeks ago", "Friday at 4pm"); use null when they
+gave no time reference at all. When only a date is implied and no clock time,
+use 12:00 local time on that date — never copy the current clock time onto a
+different day. When no date is implied anywhere, use the current time for a
+"memory" or "purchase", and leave dateExpression null.
 
 NEVER INVENT. If the note does not imply an amount, a person, a location, a
 tag, or a priority, return null for that field. Do not guess a price, do not
@@ -229,7 +232,7 @@ export async function extractMemories(
     await requestJson({
       model: EXTRACT_MODEL,
       system: SYSTEM_PROMPT,
-      user: `Current timestamp: ${nowISO} (${weekday})\n\nNote:\n${trimmed}`,
+      user: `Current local time: ${localTimestamp(nowISO)} (${weekday})\n\nNote:\n${trimmed}`,
       schemaName: 'extracted_memories',
       schema: EXTRACTION_SCHEMA,
     })

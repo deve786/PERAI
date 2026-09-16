@@ -1,8 +1,6 @@
-import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
-  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -14,52 +12,114 @@ import {
 } from 'react-native';
 import { describeError, hasApiKey } from '@/ai/client';
 import { extractMemories } from '@/ai/extract';
-import { MicButton } from '@/components/MicButton';
+import { ComposeButton, type ComposeMode } from '@/components/ComposeButton';
+import { MemoryRow } from '@/components/MemoryRow';
+import { deleteMemories, insertMemory } from '@/db/queries';
 import { setPendingDrafts } from '@/draftStore';
 import { COLORS, FONTS, SPACE, TYPE } from '@/theme';
+import type { Memory, MemoryDraft } from '@/types';
 import { useVoiceInput } from '@/useVoiceInput';
 
 const EXAMPLES = [
   'I got my haircut today',
   'Bought AirPods for 18000 yesterday',
   'Remind me to renew my passport next month',
-  'Dentist appointment on Friday at 4pm',
   'Went to Kozhikode yesterday and bought a shirt for 1200 rupees',
 ];
 
+interface Saved {
+  rawInput: string;
+  memories: Memory[];
+}
+
+function toDraft({ id, createdAt, confirmed, rawInput, ...draft }: Memory): MemoryDraft {
+  return draft;
+}
+
+/**
+ * Capture in one action.
+ *
+ * Press the mic, say it, stop talking — the note is transcribed, understood and
+ * saved without another press. Typing works the same way with the send
+ * button. Instead of a confirmation screen before saving, what was saved is
+ * shown right away with Undo and Edit, so a mistake costs one press to fix
+ * rather than every note costing one press to confirm.
+ */
 export default function CaptureScreen() {
   const router = useRouter();
   const [text, setText] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // A transcript joins whatever is already typed rather than replacing it, so
-  // you can start typing, finish out loud, or dictate a second event.
-  const voice = useVoiceInput((spoken) =>
-    setText((current) => (current.trim() ? `${current.trim()} ${spoken}` : spoken))
-  );
+  const [saved, setSaved] = useState<Saved | null>(null);
 
   const configured = hasApiKey();
-  const listening = voice.stage !== 'idle';
-  const canSubmit = text.trim().length > 0 && !busy && !listening && configured;
 
-  async function submit() {
-    if (!canSubmit) return;
-    const raw = text.trim();
+  async function save(raw: string) {
+    const note = raw.trim();
+    if (!note || saving || !configured) return;
 
-    setBusy(true);
+    setSaving(true);
     setError(null);
+    setSaved(null);
     try {
-      const drafts = await extractMemories(raw, new Date().toISOString());
-      setPendingDrafts(raw, drafts);
+      const drafts = await extractMemories(note, new Date().toISOString());
+      const memories: Memory[] = [];
+      for (const draft of drafts) memories.push(await insertMemory(draft, note));
       setText('');
-      router.push('/preview');
+      setSaved({ rawInput: note, memories });
     } catch (err) {
+      // Put a spoken note in the box so nothing said is lost.
+      setText(note);
       setError(describeError(err));
     } finally {
-      setBusy(false);
+      setSaving(false);
     }
   }
+
+  const voice = useVoiceInput((spoken) => void save(spoken));
+
+  async function undo() {
+    if (!saved) return;
+    await deleteMemories(saved.memories.map((m) => m.id));
+    setText(saved.rawInput);
+    setSaved(null);
+  }
+
+  async function edit() {
+    if (!saved) return;
+    await deleteMemories(saved.memories.map((m) => m.id));
+    setPendingDrafts(saved.rawInput, saved.memories.map(toDraft));
+    setSaved(null);
+    router.push('/preview');
+  }
+
+  const typed = text.trim().length > 0;
+  const mode: ComposeMode =
+    voice.stage === 'listening'
+      ? 'listening'
+      : voice.stage === 'transcribing' || saving
+        ? 'busy'
+        : typed
+          ? 'send'
+          : 'voice';
+
+  function press() {
+    if (mode === 'send') void save(text);
+    else void voice.toggle();
+  }
+
+  const status =
+    voice.stage === 'listening'
+      ? 'Listening. Stops when you pause'
+      : voice.stage === 'transcribing'
+        ? 'Writing that down'
+        : saving
+          ? 'Saving'
+          : typed
+            ? 'One line can hold several events'
+            : 'Tap the mic and say what happened';
+
+  const problem = voice.error ?? error;
 
   return (
     <KeyboardAvoidingView
@@ -67,76 +127,92 @@ export default function CaptureScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
     >
-      <ScrollView
-        contentContainerStyle={styles.content}
-        keyboardShouldPersistTaps="handled"
-      >
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <Text style={TYPE.display}>What happened?</Text>
 
-        <View style={styles.well}>
+        <View style={styles.composer}>
           <TextInput
             value={text}
-            onChangeText={setText}
-            placeholder="I got my haircut today"
+            onChangeText={(value) => {
+              setText(value);
+              if (problem) {
+                setError(null);
+                voice.clearError();
+              }
+            }}
+            placeholder="Speak or type"
             placeholderTextColor={COLORS.mist}
             style={styles.input}
             multiline
-            editable={!busy}
+            editable={mode !== 'listening' && !saving}
           />
 
-          <View style={styles.wellFoot}>
-            <Text style={TYPE.fine}>
-              {voice.stage === 'listening'
-                ? 'Listening — press again when you finish'
-                : voice.stage === 'transcribing'
-                  ? 'Writing that down'
-                  : busy
-                    ? 'Reading that'
-                    : 'Speak or type. One line can hold several events'}
-            </Text>
-            <View style={styles.controls}>
-              <MicButton stage={voice.stage} onPress={voice.toggle} disabled={busy} />
-              <Pressable
-                onPress={submit}
-                disabled={!canSubmit}
-                hitSlop={8}
-                style={[styles.send, !canSubmit && styles.sendOff]}
-                accessibilityLabel="Save this to your record"
-              >
-                {busy ? (
-                  <ActivityIndicator color={COLORS.paper} size="small" />
-                ) : (
-                  <Ionicons name="arrow-forward" size={17} color={COLORS.paper} />
-                )}
-              </Pressable>
+          <View style={styles.foot}>
+            <View style={styles.statusCol}>
+              <Text style={[TYPE.fine, mode === 'listening' && styles.live]}>{status}</Text>
+              {mode === 'listening' ? (
+                <Pressable onPress={voice.cancel} hitSlop={10}>
+                  <Text style={[TYPE.label, styles.cancel]}>CANCEL</Text>
+                </Pressable>
+              ) : null}
             </View>
+            <ComposeButton
+              mode={mode}
+              level={voice.level}
+              onPress={press}
+              disabled={!configured}
+              accessibilityLabel={
+                mode === 'send'
+                  ? 'Save this'
+                  : mode === 'listening'
+                    ? 'Stop and save'
+                    : 'Record with your voice'
+              }
+            />
           </View>
         </View>
 
-        {voice.error ? <Notice>{voice.error}</Notice> : null}
-
         {!configured ? (
-          <Notice>
-            No API key yet. Add EXPO_PUBLIC_GEMINI_API_KEY to .env, then restart
-            with npx expo start --clear.
-          </Notice>
+          <Notice>No API key yet. Add EXPO_PUBLIC_GEMINI_API_KEY to .env.</Notice>
         ) : null}
+        {problem ? <Notice>{problem}</Notice> : null}
 
-        {error ? <Notice>{error}</Notice> : null}
-
-        <View style={styles.examples}>
-          <Text style={TYPE.label}>TRY</Text>
-          {EXAMPLES.map((example) => (
-            <Pressable
-              key={example}
-              onPress={() => setText(example)}
-              disabled={busy}
-              style={({ pressed }) => [styles.example, pressed && styles.pressed]}
-            >
-              <Text style={TYPE.body}>{example}</Text>
-            </Pressable>
-          ))}
-        </View>
+        {saved ? (
+          <View style={styles.saved}>
+            <View style={styles.savedHead}>
+              <Text style={[TYPE.label, styles.kept]}>
+                {saved.memories.length === 1
+                  ? 'SAVED'
+                  : `SAVED ${saved.memories.length} ENTRIES`}
+              </Text>
+              <View style={styles.savedActions}>
+                <Pressable onPress={() => void undo()} hitSlop={10}>
+                  <Text style={[TYPE.label, styles.action]}>UNDO</Text>
+                </Pressable>
+                <Pressable onPress={() => void edit()} hitSlop={10}>
+                  <Text style={[TYPE.label, styles.action]}>EDIT</Text>
+                </Pressable>
+              </View>
+            </View>
+            {saved.memories.map((memory) => (
+              <MemoryRow key={memory.id} memory={memory} gutter="date" />
+            ))}
+          </View>
+        ) : (
+          <View style={styles.examples}>
+            <Text style={TYPE.label}>FOR EXAMPLE</Text>
+            {EXAMPLES.map((example) => (
+              <Pressable
+                key={example}
+                onPress={() => setText(example)}
+                disabled={mode !== 'voice' && mode !== 'send'}
+                style={({ pressed }) => [styles.example, pressed && styles.pressed]}
+              >
+                <Text style={TYPE.body}>{example}</Text>
+              </Pressable>
+            ))}
+          </View>
+        )}
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -153,15 +229,8 @@ function Notice({ children }: { children: React.ReactNode }) {
 
 const styles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: COLORS.paper },
-  content: {
-    padding: SPACE.page,
-    paddingTop: 72,
-    paddingBottom: 48,
-    gap: 22,
-  },
-  // No box. Both inputs in the app are a line of type over a hairline, so
-  // writing always looks the same whether you are recording or asking.
-  well: { gap: 14 },
+  content: { padding: SPACE.page, paddingTop: 72, paddingBottom: 48, gap: 22 },
+  composer: { gap: 14 },
   input: {
     fontFamily: FONTS.sans,
     fontSize: 19,
@@ -175,29 +244,22 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: COLORS.rule,
   },
-  controls: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  wellFoot: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  send: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: COLORS.moss,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  sendOff: { backgroundColor: COLORS.rule },
-  notice: {
-    borderLeftWidth: 2,
-    borderLeftColor: COLORS.alert,
-    paddingLeft: 12,
-    paddingVertical: 2,
-  },
+  foot: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  statusCol: { flex: 1, gap: 6 },
+  live: { color: COLORS.moss },
+  cancel: { color: COLORS.mist },
+  notice: { borderLeftWidth: 2, borderLeftColor: COLORS.alert, paddingLeft: 12, paddingVertical: 2 },
   noticeText: { color: COLORS.alert },
+  saved: {
+    gap: 4,
+    borderLeftWidth: 2,
+    borderLeftColor: COLORS.moss,
+    paddingLeft: 12,
+  },
+  savedHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  kept: { color: COLORS.moss },
+  savedActions: { flexDirection: 'row', gap: 20 },
+  action: { color: COLORS.graphite },
   examples: { gap: 2 },
   example: { paddingVertical: 9 },
   pressed: { opacity: 0.45 },

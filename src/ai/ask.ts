@@ -1,5 +1,6 @@
 import type { Memory } from '../types';
 import { CURRENCY_SYMBOLS } from '../constants';
+import { localTimestamp } from '../format';
 import { ASK_MODEL, requestJson } from './client';
 import { MAX_CONTEXT_MEMORIES, selectRelevantMemories } from './retrieval';
 
@@ -156,7 +157,7 @@ export async function askAI(
     model: ASK_MODEL,
     system: SYSTEM_PROMPT,
     user: [
-      `Current timestamp: ${nowISO} (${weekday})`,
+      `Current local time: ${localTimestamp(nowISO)} (${weekday})`,
       '',
       `MEMORIES — ${scope}`,
       '',

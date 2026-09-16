@@ -1,7 +1,5 @@
-import { Ionicons } from '@expo/vector-icons';
 import { useState } from 'react';
 import {
-  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -14,7 +12,7 @@ import {
 import { askAI, type AskResult } from '@/ai/ask';
 import { describeError, hasApiKey } from '@/ai/client';
 import { MemoryRow } from '@/components/MemoryRow';
-import { MicButton } from '@/components/MicButton';
+import { ComposeButton, type ComposeMode } from '@/components/ComposeButton';
 import { getAllMemories } from '@/db/queries';
 import { COLORS, FONTS, GUTTER, SPACE, TYPE } from '@/theme';
 import { useVoiceInput } from '@/useVoiceInput';
@@ -33,29 +31,45 @@ export default function AskScreen() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // A spoken question replaces the box rather than appending: you ask one
-  // thing at a time, and the previous question is already answered above.
-  const voice = useVoiceInput(setQuestion);
-
   const configured = hasApiKey();
-  const listening = voice.stage !== 'idle';
-  const canAsk = question.trim().length > 0 && !busy && !listening && configured;
 
-  async function ask() {
-    if (!canAsk) return;
-    const q = question.trim();
+  async function ask(raw: string) {
+    const q = raw.trim();
+    if (!q || busy || !configured) return;
 
     setBusy(true);
     setError(null);
     setResult(null);
     setAsked(q);
+    setQuestion('');
     try {
       setResult(await askAI(q, new Date().toISOString(), await getAllMemories()));
     } catch (err) {
+      // Leave the question in the box so it can be retried with one press.
+      setQuestion(q);
       setError(describeError(err));
     } finally {
       setBusy(false);
     }
+  }
+
+  // Speak the question and it is asked as soon as you stop talking. The
+  // question stays visible above the answer, so a mis-hearing is obvious.
+  const voice = useVoiceInput((spoken) => void ask(spoken));
+
+  const typed = question.trim().length > 0;
+  const mode: ComposeMode =
+    voice.stage === 'listening'
+      ? 'listening'
+      : voice.stage === 'transcribing' || busy
+        ? 'busy'
+        : typed
+          ? 'send'
+          : 'voice';
+
+  function press() {
+    if (mode === 'send') void ask(question);
+    else void voice.toggle();
   }
 
   const idle = !result && !busy && !error;
@@ -76,36 +90,34 @@ export default function AskScreen() {
           <TextInput
             value={question}
             onChangeText={setQuestion}
-            placeholder="When did I last…"
+            placeholder="Ask out loud or type"
             placeholderTextColor={COLORS.mist}
             style={styles.input}
-            editable={!busy}
+            editable={mode !== 'listening' && !busy}
             returnKeyType="search"
-            onSubmitEditing={ask}
+            onSubmitEditing={() => void ask(question)}
             multiline
           />
-          <MicButton stage={voice.stage} onPress={voice.toggle} disabled={busy} />
-          <Pressable
-            onPress={ask}
-            disabled={!canAsk}
-            hitSlop={8}
-            style={[styles.send, !canAsk && styles.sendOff]}
-            accessibilityLabel="Ask"
-          >
-            {busy ? (
-              <ActivityIndicator color={COLORS.paper} size="small" />
-            ) : (
-              <Ionicons name="arrow-forward" size={17} color={COLORS.paper} />
-            )}
-          </Pressable>
+          <ComposeButton
+            mode={mode}
+            level={voice.level}
+            onPress={press}
+            disabled={!configured}
+            accessibilityLabel={
+              mode === 'send' ? 'Ask' : mode === 'listening' ? 'Stop and ask' : 'Ask with your voice'
+            }
+          />
         </View>
 
-        {listening ? (
-          <Text style={TYPE.label}>
-            {voice.stage === 'listening'
-              ? 'LISTENING — PRESS AGAIN WHEN YOU FINISH'
-              : 'WRITING THAT DOWN'}
-          </Text>
+        {mode === 'listening' ? (
+          <View style={styles.listenRow}>
+            <Text style={[TYPE.label, styles.live]}>LISTENING. STOPS WHEN YOU PAUSE</Text>
+            <Pressable onPress={voice.cancel} hitSlop={10}>
+              <Text style={[TYPE.label, styles.cancel]}>CANCEL</Text>
+            </Pressable>
+          </View>
+        ) : voice.stage === 'transcribing' ? (
+          <Text style={TYPE.label}>WRITING THAT DOWN</Text>
         ) : null}
 
         {voice.error ? (
@@ -163,7 +175,7 @@ export default function AskScreen() {
             {SUGGESTIONS.map((suggestion) => (
               <Pressable
                 key={suggestion}
-                onPress={() => setQuestion(suggestion)}
+                onPress={() => void ask(suggestion)}
                 style={({ pressed }) => [styles.suggestion, pressed && styles.pressed]}
               >
                 <Text style={TYPE.body}>{suggestion}</Text>
@@ -188,7 +200,7 @@ const styles = StyleSheet.create({
     paddingBottom: 48,
     gap: 20,
   },
-  askBar: { flexDirection: 'row', alignItems: 'flex-end', gap: 10 },
+  askBar: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   input: {
     flex: 1,
     fontFamily: FONTS.sans,
@@ -201,16 +213,9 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: COLORS.rule,
   },
-  send: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: COLORS.moss,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 4,
-  },
-  sendOff: { backgroundColor: COLORS.rule },
+  listenRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  live: { color: COLORS.moss },
+  cancel: { color: COLORS.mist },
   notice: {
     borderLeftWidth: 2,
     borderLeftColor: COLORS.alert,

@@ -136,6 +136,13 @@ export async function deleteMemory(id: string): Promise<void> {
   await getDb().runAsync('DELETE FROM memories WHERE id = ?', [id]);
 }
 
+/** Remove several entries at once — used by Undo right after saving. */
+export async function deleteMemories(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const placeholders = ids.map(() => '?').join(',');
+  await getDb().runAsync(`DELETE FROM memories WHERE id IN (${placeholders})`, ids);
+}
+
 export async function deleteAllMemories(): Promise<void> {
   await getDb().runAsync('DELETE FROM memories');
 }

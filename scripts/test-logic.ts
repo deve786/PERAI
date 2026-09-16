@@ -9,7 +9,14 @@ import {
   selectRelevantMemories,
   tokenize,
 } from '../src/ai/retrieval';
-import { dayLabel, groupByDay, formatAmount } from '../src/format';
+import {
+  addedLabel,
+  dayLabel,
+  formatAmount,
+  groupByDay,
+  hasStatedTime,
+  localTimestamp,
+} from '../src/format';
 import type { Memory } from '../src/types';
 
 let passed = 0;
@@ -196,6 +203,39 @@ check('labels yesterday', dayLabel('2026-09-15T12:00:00+05:30', NOW) === 'Yester
   check(
     'every memory kept',
     sections.reduce((n, s) => n + s.data.length, 0) === CORPUS.length
+  );
+}
+
+section('stated time vs invented time');
+check('"2 days back" has no clock time', hasStatedTime('2 days back') === false);
+check('"yesterday" has no clock time', hasStatedTime('yesterday') === false);
+check('no expression has no clock time', hasStatedTime(null) === false);
+check('"Friday at 4pm" states a time', hasStatedTime('Friday at 4pm') === true);
+check('"tomorrow at 5:30" states a time', hasStatedTime('tomorrow at 5:30') === true);
+check('"at 9 a.m." states a time', hasStatedTime('at 9 a.m.') === true);
+check('"noon" states a time', hasStatedTime('today at noon') === true);
+check('"2 weeks ago" is not a time', hasStatedTime('2 weeks ago') === false);
+
+section('added date');
+check(
+  'car bought 2 days back, recorded today -> shows ADDED',
+  addedLabel({ eventDate: '2026-09-14T15:22:38.000Z', createdAt: '2026-09-16T15:22:38.000Z' }) === 'ADDED 16 SEPT' ||
+    addedLabel({ eventDate: '2026-09-14T15:22:38.000Z', createdAt: '2026-09-16T15:22:38.000Z' }) === 'ADDED 16 SEP',
+  addedLabel({ eventDate: '2026-09-14T15:22:38.000Z', createdAt: '2026-09-16T15:22:38.000Z' })
+);
+check(
+  'same day -> no ADDED label',
+  addedLabel({ eventDate: '2026-09-16T06:00:00.000Z', createdAt: '2026-09-16T09:00:00.000Z' }) === null
+);
+
+section('local timestamp sent to the model');
+{
+  const stamp = localTimestamp('2026-09-15T20:10:00.000Z');
+  check('has a UTC offset, not Z', /[+-]\d{2}:\d{2}$/.test(stamp), stamp);
+  check(
+    'names the same instant',
+    new Date(stamp).getTime() === new Date('2026-09-15T20:10:00.000Z').getTime(),
+    stamp
   );
 }
 

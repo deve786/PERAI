@@ -1,6 +1,6 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { COLORS, GUTTER, SPACE, TYPE } from '../theme';
-import { formatAmount, shortDate, timeLabel } from '../format';
+import { addedLabel, formatAmount, hasStatedTime, shortDate, timeLabel } from '../format';
 import type { Memory } from '../types';
 
 interface Props {
@@ -25,8 +25,15 @@ interface Props {
  */
 export function MemoryRow({ memory, gutter = 'time', onPress, onLongPress }: Props) {
   const amount = formatAmount(memory.amount, memory.currency);
+  // A clock time appears only if the note stated one; otherwise the gutter
+  // holds a dash rather than an invented time.
   const mark =
-    gutter === 'time' ? timeLabel(memory.eventDate) : shortDate(memory.eventDate);
+    gutter === 'date'
+      ? shortDate(memory.eventDate)
+      : hasStatedTime(memory.dateExpression)
+        ? timeLabel(memory.eventDate)
+        : '—';
+  const added = addedLabel(memory);
 
   return (
     <Pressable
@@ -47,6 +54,7 @@ export function MemoryRow({ memory, gutter = 'time', onPress, onLongPress }: Pro
             memory.category.toUpperCase(),
             memory.type !== 'memory' ? memory.type.toUpperCase() : null,
             memory.location?.toUpperCase(),
+            added,
           ]
             .filter(Boolean)
             .join('  ·  ')}
