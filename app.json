@@ -7,7 +7,6 @@
     "icon": "./assets/icon.png",
     "scheme": "perai",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.perai.app",
@@ -52,6 +51,12 @@
     ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "fb4c44a8-9650-45ba-a00a-f26929a1b5f0"
+      }
+    },
+    "owner": "ijasahmed"
   }
 }
