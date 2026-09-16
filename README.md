@@ -140,6 +140,45 @@ target earns its place.
 
 ---
 
+## Building and updating the Android app
+
+Builds run on EAS (Expo's cloud builder), so no Android SDK is needed locally.
+The Gemini key reaches the build as an EAS environment variable, because
+`.env` is gitignored and never uploaded.
+
+```bash
+npm run build:android    # new installable APK (preview profile)
+npm run update -- --message "what changed"    # ship JS changes to installed apps
+```
+
+### When you need which
+
+| You changed | Run | Why |
+| --- | --- | --- |
+| Screens, styles, prompts, logic — anything in `app/` or `src/` | `npm run update` | JavaScript only; phones pick it up automatically |
+| Added or upgraded a package with native code, app icon, permissions, `app.json` native settings | `npm run build:android` | The native app itself changed; reinstall the APK |
+
+If unsure, publish an update anyway: `runtimeVersion` uses the **fingerprint**
+policy, which hashes the native layer. An update built against different native
+code simply is not offered to incompatible installs, so a mistake cannot crash a
+phone — it just doesn't arrive, and that is your cue to rebuild. (The simpler
+`appVersion` policy was rejected for exactly this reason: it would happily send
+a native-incompatible update to an old build.)
+
+### How updates reach the phone
+
+1. On launch, the app downloads any new update in the background. Launch is
+   never delayed waiting for the network.
+2. Every time the app returns to the foreground, it checks again.
+3. A downloaded update is applied the next time you come back after being away
+   30 seconds or more — not the instant it arrives, which could wipe a note you
+   were halfway through. A full close and reopen also applies it.
+
+Updates do nothing in Expo Go or the dev server; they only affect installed
+builds. See `src/useAutoUpdate.ts`.
+
+---
+
 ## Voice
 
 There is a mic on both the Record and Ask tabs. Press to talk, press again to

@@ -14,10 +14,13 @@ import { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { COLORS, SPACE, TYPE } from '@/theme';
 import { initDatabase } from '@/db/client';
+import { useAutoUpdate } from '@/useAutoUpdate';
 
 export default function RootLayout() {
   const [dbReady, setDbReady] = useState(false);
   const [dbError, setDbError] = useState<string | null>(null);
+
+  useAutoUpdate();
 
   const [fontsReady] = useFonts({
     IBMPlexSans_400Regular,

@@ -17,6 +17,7 @@
     "expo-router": "~57.0.21",
     "expo-sqlite": "~57.0.3",
     "expo-status-bar": "~57.0.1",
+    "expo-updates": "~57.0.22",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.3",
@@ -40,7 +41,8 @@
     "test:schema": "tsx scripts/test-schema.ts",
     "test": "npm run test:schema && npm run test:logic",
     "web:export": "expo export --platform web --output-dir dist-web",
-    "build:android": "npx eas-cli build --platform android --profile preview"
+    "build:android": "npx eas-cli build --platform android --profile preview",
+    "update": "npx eas-cli update --channel preview --environment preview"
   },
   "private": true
 }
