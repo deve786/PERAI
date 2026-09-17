@@ -27,6 +27,8 @@ import { FONTS, SPACE, type Colors } from '@/theme';
 import type { Memory, MemoryDraft } from '@/types';
 import { useMemories } from '@/useMemories';
 import { useVoiceInput } from '@/useVoiceInput';
+import { DEFAULT_WAKE_PHRASES, useWakeWord } from '@/useWakeWord';
+import { WakeWordToggle } from '@/components/WakeWordToggle';
 
 interface Saved {
   rawInput: string;
@@ -92,6 +94,7 @@ export default function CaptureScreen() {
   }
 
   const voice = useVoiceInput((spoken) => void save(spoken));
+  const [wakeArmed, setWakeArmed] = useState(false);
 
   // Live view of the record; refreshes itself after every save, Undo or delete.
   const { memories, loading } = useMemories();
@@ -134,31 +137,45 @@ export default function CaptureScreen() {
     router.push('/preview');
   }
 
+  const listening = voice.stage === 'listening';
   const typed = text.trim().length > 0;
-  const mode: ComposeMode =
-    voice.stage === 'listening'
-      ? 'listening'
-      : voice.stage === 'transcribing' || saving
-        ? 'busy'
-        : typed
-          ? 'send'
-          : 'voice';
+  const mode: ComposeMode = listening
+    ? 'listening'
+    : saving
+      ? 'busy'
+      : typed
+        ? 'send'
+        : 'voice';
+
+  // Hands-free: say "start recording" and useVoiceInput's own mic session
+  // begins, exactly as if the button had been pressed. Only listens while the
+  // composer is genuinely idle (mode === 'voice'), so it never fights the mic
+  // with an in-progress capture, never overwrites text you're typing, and
+  // never fires again mid-save — see useWakeWord.ts for how it hands the mic
+  // back and forth with useVoiceInput's own session.
+  const wakeWord = useWakeWord(
+    wakeArmed && mode === 'voice',
+    DEFAULT_WAKE_PHRASES,
+    () => void voice.toggle()
+  );
 
   function press() {
     if (mode === 'send') void save(text);
     else void voice.toggle();
   }
 
-  const status =
-    voice.stage === 'transcribing'
-      ? 'Writing that down'
-      : saving
-        ? 'Saving'
-        : typed
-          ? 'One line can hold several events'
-          : 'Tap the mic and say what happened';
+  const status = saving
+    ? 'Saving'
+    : typed
+      ? 'One line can hold several events'
+      : wakeArmed
+        ? `Say "${DEFAULT_WAKE_PHRASES[0]}", or tap the mic`
+        : 'Tap the mic and say what happened';
 
-  const problem = voice.error ?? error;
+  const problem = voice.error ?? wakeWord.error ?? error;
+  // The box shows what's being heard, live, while listening; your typed text
+  // is untouched underneath and comes back the moment listening stops.
+  const displayText = listening ? voice.liveText : text;
 
   return (
     <KeyboardAvoidingView
@@ -169,12 +186,19 @@ export default function CaptureScreen() {
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <View style={styles.titleRow}>
           <Text style={type.display}>What happened?</Text>
-          <ThemeToggle />
+          <View style={styles.titleActions}>
+            <WakeWordToggle
+              armed={wakeArmed}
+              listening={wakeWord.stage === 'listening'}
+              onToggle={() => setWakeArmed((a) => !a)}
+            />
+            <ThemeToggle />
+          </View>
         </View>
 
         <View style={styles.composer}>
           <TextInput
-            value={text}
+            value={displayText}
             onChangeText={(value) => {
               setText(value);
               if (problem) {
@@ -182,16 +206,16 @@ export default function CaptureScreen() {
                 voice.clearError();
               }
             }}
-            placeholder="Speak or type"
+            placeholder={listening ? 'Listening…' : 'Speak or type'}
             placeholderTextColor={colors.mist}
             style={styles.input}
             multiline
-            editable={mode !== 'listening' && !saving}
+            editable={!listening && !saving}
           />
 
           <View style={styles.foot}>
             <View style={styles.statusCol}>
-              {mode === 'listening' ? (
+              {listening ? (
                 <>
                   <VoiceWaveform level={voice.level} />
                   <View style={styles.listeningMeta}>
@@ -199,7 +223,7 @@ export default function CaptureScreen() {
                       style={[type.label, styles.live]}
                       accessibilityLiveRegion="polite"
                     >
-                      LISTENING
+                      LISTENING · SAY "STOP" TO FINISH
                     </Text>
                     <Pressable onPress={voice.cancel} hitSlop={10}>
                       <Text style={[type.label, styles.cancel]}>CANCEL</Text>
@@ -312,6 +336,7 @@ function makeStyles(colors: Colors) {
       alignItems: 'center',
       justifyContent: 'space-between',
     },
+    titleActions: { flexDirection: 'row', alignItems: 'center', gap: 16 },
     composer: { gap: 14 },
     input: {
       fontFamily: FONTS.sans,

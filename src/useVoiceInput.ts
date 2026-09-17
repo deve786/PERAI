@@ -1,50 +1,73 @@
 import {
-  RecordingPresets,
-  requestRecordingPermissionsAsync,
-  setAudioModeAsync,
-  useAudioRecorder,
-  type RecordingOptions,
-} from 'expo-audio';
+  ExpoSpeechRecognitionModule,
+  useSpeechRecognitionEvent,
+  type ExpoSpeechRecognitionErrorCode,
+} from 'expo-speech-recognition';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { describeError } from './ai/client';
-import { transcribeRecording } from './ai/transcribe';
-import { newVoiceActivityState, processSample, SAMPLE_MS } from './voiceActivity';
+import { isStopCommand, shouldFinish, stripStopCommand } from './voiceStop';
 
-export type VoiceStage = 'idle' | 'listening' | 'transcribing';
+export type VoiceStage = 'idle' | 'listening';
 
-// Module-level so the recorder hook receives a stable options object.
-const OPTIONS: RecordingOptions = {
-  ...RecordingPresets.HIGH_QUALITY,
-  isMeteringEnabled: true,
-};
+const CHECK_MS = 250;
+
+/** Human-readable text for the codes the library defines, once each. */
+function describeSpeechError(code: ExpoSpeechRecognitionErrorCode): string {
+  switch (code) {
+    case 'not-allowed':
+      return 'Microphone or speech recognition access is off. Turn it on in Settings.';
+    case 'service-not-allowed':
+      return "This phone's speech recognizer is unavailable right now.";
+    case 'no-speech':
+    case 'speech-timeout':
+      return "Didn't hear anything. Press the mic and speak.";
+    case 'audio-capture':
+      return 'Could not read from the microphone.';
+    case 'network':
+      return 'Speech recognition needs a network connection here. Check your connection.';
+    case 'busy':
+      return 'Still finishing the last recording — try again in a moment.';
+    case 'language-not-supported':
+      return "This phone's speech recognizer doesn't support English here.";
+    case 'aborted':
+      return ''; // We asked for this (cancel/restart) — never shown as an error.
+    default:
+      return 'Voice input had a problem. Try again.';
+  }
+}
 
 /**
- * One press to talk. Recording ends by itself once you stop speaking (or press
- * again to end early), and the transcript is handed to `onTranscript`. The
- * actual stop/continue decision lives in `voiceActivity.ts`, which is unit
- * tested; this hook only drives the timer and the native recorder.
+ * Press to talk, with live captions.
  *
- * If the device reports no input level at all, auto-stop is skipped entirely
- * and a second press ends the recording. If it reports a level that never
- * moves (metering wired up but not actually live — seen on some Android
- * builds), that is treated the same way after a short check, rather than
- * mistaking "frozen" for "silent" and cutting the recording off immediately.
+ * Recording ends by itself once you stop speaking, or the moment you say a
+ * stop phrase ("stop listening"), or press the mic again to end it
+ * immediately. Uses the phone's own on-device speech recognizer
+ * (`expo-speech-recognition`) — free, and the transcript is already the text
+ * to use, so there is no separate transcription call afterward.
+ *
+ * Android's non-continuous recognition session ends after one completed
+ * utterance even mid-note, so this restarts it under the hood on every pause
+ * and stitches the segments back together; `liveText` always holds the full
+ * note so far, restart included.
  */
 export function useVoiceInput(onTranscript: (text: string) => void) {
-  const recorder = useAudioRecorder(OPTIONS);
   const [stage, setStage] = useState<VoiceStage>('idle');
-  const [error, setError] = useState<string | null>(null);
-  /** 0..1, for the live meter. */
+  const [liveText, setLiveText] = useState('');
   const [level, setLevel] = useState(0);
+  const [error, setError] = useState<string | null>(null);
 
   const stageRef = useRef<VoiceStage>('idle');
   const busy = useRef(false);
   const callback = useRef(onTranscript);
   callback.current = onTranscript;
 
-  const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Segments completed so far (each ended in a natural pause), plus whatever
+  // the current, still-in-progress segment is showing.
+  const segments = useRef<string[]>([]);
+  const currentSegment = useRef('');
   const startedAt = useRef(0);
-  const activity = useRef(newVoiceActivityState());
+  const lastEventAt = useRef(0);
+  const stopRequested = useRef(false);
+  const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const setStageBoth = (next: VoiceStage) => {
     stageRef.current = next;
@@ -57,88 +80,136 @@ export function useVoiceInput(onTranscript: (text: string) => void) {
     setLevel(0);
   };
 
-  /** End recording. `transcribe: false` discards it without sending anything. */
-  const finish = useCallback(
-    async (transcribe: boolean) => {
-      if (stageRef.current !== 'listening') return;
-      stopTimer();
-      try {
-        await recorder.stop();
-      } catch {
-        // already stopped
-      }
-
-      if (!transcribe) {
-        setStageBoth('idle');
-        return;
-      }
-
-      const uri = recorder.uri;
-      if (!uri) {
-        setStageBoth('idle');
-        setError('Nothing was recorded.');
-        return;
-      }
-
-      setStageBoth('transcribing');
-      try {
-        const text = await transcribeRecording(uri);
-        setStageBoth('idle');
-        callback.current(text);
-      } catch (err) {
-        setStageBoth('idle');
-        setError(describeError(err));
-      }
-    },
-    [recorder]
+  const fullText = useCallback(
+    () => [...segments.current, currentSegment.current].join(' ').replace(/\s+/g, ' ').trim(),
+    []
   );
 
-  const sample = useCallback(() => {
+  /** End the session. `use: false` discards whatever was said. */
+  const finish = useCallback(
+    (use: boolean) => {
+      if (stageRef.current !== 'listening') return;
+      stopRequested.current = true;
+      stopTimer();
+      setStageBoth('idle');
+      ExpoSpeechRecognitionModule.stop();
+
+      if (!use) {
+        setLiveText('');
+        segments.current = [];
+        currentSegment.current = '';
+        return;
+      }
+
+      const text = stripStopCommand(fullText(), currentSegment.current);
+      setLiveText('');
+      segments.current = [];
+      currentSegment.current = '';
+      if (text) callback.current(text);
+      else setError('Nothing was recorded.');
+    },
+    [fullText]
+  );
+
+  const check = useCallback(() => {
     if (stageRef.current !== 'listening') return;
-
-    const elapsedMs = Date.now() - startedAt.current;
-    const raw = recorder.getStatus().metering;
-    const rawMetering = typeof raw === 'number' && Number.isFinite(raw) ? raw : null;
-
-    const shouldStop = processSample(activity.current, rawMetering, elapsedMs);
-    setLevel(activity.current.level);
-
-    if (shouldStop) void finish(true);
-  }, [recorder, finish]);
+    const now = Date.now();
+    const hadSpeech = fullText().length > 0;
+    if (shouldFinish(hadSpeech, now - startedAt.current, now - lastEventAt.current)) {
+      finish(true);
+    }
+  }, [fullText, finish]);
 
   const start = useCallback(async () => {
     setError(null);
 
-    const { granted } = await requestRecordingPermissionsAsync();
+    const { granted } = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
     if (!granted) {
-      setError('Microphone access is off. Turn it on in Settings to use voice.');
+      setError('Microphone or speech recognition access is off. Turn it on in Settings.');
       return;
     }
 
-    await setAudioModeAsync({ playsInSilentMode: true, allowsRecording: true });
-    await recorder.prepareToRecordAsync();
-    recorder.record();
-
+    segments.current = [];
+    currentSegment.current = '';
+    setLiveText('');
+    stopRequested.current = false;
     startedAt.current = Date.now();
-    activity.current = newVoiceActivityState();
+    lastEventAt.current = Date.now();
     setStageBoth('listening');
-    timer.current = setInterval(sample, SAMPLE_MS);
-  }, [recorder, sample]);
 
-  /** Press the mic: start, or end early and send. */
+    ExpoSpeechRecognitionModule.start({
+      lang: 'en-US',
+      interimResults: true,
+      continuous: false, // we drive our own restart-on-pause loop below
+      volumeChangeEventOptions: { enabled: true, intervalMillis: 100 },
+      androidIntentOptions: {
+        // Best-effort hint to the recognizer; our own `check()` loop above
+        // is what actually enforces the pause-to-finish timing.
+        EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS: 5000,
+      },
+    });
+
+    timer.current = setInterval(check, CHECK_MS);
+  }, [check]);
+
+  useSpeechRecognitionEvent('volumechange', (event) => {
+    // event.value ranges roughly -2..10; below 0 is documented as inaudible.
+    setLevel(Math.max(0, Math.min(1, event.value / 10)));
+  });
+
+  useSpeechRecognitionEvent('result', (event) => {
+    if (stageRef.current !== 'listening') return;
+    lastEventAt.current = Date.now();
+
+    const transcript = event.results[0]?.transcript ?? '';
+    currentSegment.current = transcript;
+    setLiveText(fullText());
+
+    if (isStopCommand(transcript)) {
+      finish(true);
+      return;
+    }
+
+    if (event.isFinal) {
+      // This utterance is done, but we're not — fold it in and keep
+      // listening across the pause rather than ending the recording.
+      if (transcript.trim()) segments.current.push(transcript.trim());
+      currentSegment.current = '';
+      if (!stopRequested.current && stageRef.current === 'listening') {
+        ExpoSpeechRecognitionModule.start({
+          lang: 'en-US',
+          interimResults: true,
+          continuous: false,
+          volumeChangeEventOptions: { enabled: true, intervalMillis: 100 },
+          androidIntentOptions: { EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS: 5000 },
+        });
+      }
+    }
+  });
+
+  useSpeechRecognitionEvent('error', (event) => {
+    if (stageRef.current !== 'listening' || stopRequested.current) return;
+    const message = describeSpeechError(event.error);
+    // A no-speech/timeout mid-restart is routine, not a failure — the check()
+    // loop already decides whether that means "done" or "give up"; let it.
+    if (event.error === 'no-speech' || event.error === 'speech-timeout') return;
+    if (message) {
+      stopTimer();
+      setStageBoth('idle');
+      setError(message);
+    }
+  });
+
+  /** Press the mic: start, or end early and use whatever was said so far. */
   const toggle = useCallback(async () => {
-    if (busy.current || stageRef.current === 'transcribing') return;
+    if (busy.current) return;
     busy.current = true;
     try {
       if (stageRef.current === 'listening') {
-        await finish(true);
+        finish(true);
       } else {
         await start();
       }
-    } catch (err) {
-      stopTimer();
-      setStageBoth('idle');
-      setError(describeError(err));
     } finally {
       busy.current = false;
     }
@@ -146,22 +217,24 @@ export function useVoiceInput(onTranscript: (text: string) => void) {
 
   /** Throw the recording away. */
   const cancel = useCallback(() => {
-    void finish(false);
+    finish(false);
   }, [finish]);
 
-  // Never leave the mic open if the screen goes away mid-recording.
+  // Never leave the recognizer running if the screen goes away mid-session.
   useEffect(
     () => () => {
       if (stageRef.current === 'listening') {
+        stopRequested.current = true;
         stopTimer();
-        recorder.stop().catch(() => {});
+        ExpoSpeechRecognitionModule.abort();
       }
     },
-    [recorder]
+    []
   );
 
   return {
     stage,
+    liveText,
     level,
     error,
     toggle,

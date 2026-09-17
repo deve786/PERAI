@@ -6,7 +6,13 @@ import { hasStatedTime } from './format';
 import { APPOINTMENT_LEAD_MINUTES, reminderTime } from './reminderTime';
 import type { Memory } from './types';
 
-const CHANNEL_ID = 'reminders';
+// Versioned rather than 'reminders': Android locks a channel's settings the
+// moment it's first created on a device, and the original channel here was
+// created with no `sound` set — silent, on the phones that already had it.
+// Changing the settings on that same id would never reach them; a fresh id
+// guarantees everyone gets the version with sound.
+const CHANNEL_ID = 'reminders-v2';
+const OLD_CHANNEL_IDS = ['reminders'];
 const supported = Platform.OS !== 'web';
 
 let prepared = false;
@@ -30,10 +36,14 @@ export async function prepareNotifications(): Promise<void> {
   });
 
   if (Platform.OS === 'android') {
+    for (const id of OLD_CHANNEL_IDS) {
+      await Notifications.deleteNotificationChannelAsync(id).catch(() => {});
+    }
     await Notifications.setNotificationChannelAsync(CHANNEL_ID, {
       name: 'Reminders',
       importance: Notifications.AndroidImportance.HIGH,
       lightColor: '#2F5D45',
+      sound: 'default',
     });
   }
 }
@@ -87,6 +97,10 @@ async function syncNow(): Promise<void> {
         title: memory.title,
         body: bodyFor(memory),
         data: { memoryId: memory.id },
+        // On Android 8+ the channel's own `sound` above is what actually
+        // governs this; this field is what matters on iOS, which has no
+        // channels of its own.
+        sound: 'default',
       },
       trigger: {
         type: Notifications.SchedulableTriggerInputTypes.DATE,

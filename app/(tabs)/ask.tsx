@@ -129,15 +129,15 @@ export default function AskScreen() {
   // question stays visible above the answer, so a mis-hearing is obvious.
   const voice = useVoiceInput((spoken) => void ask(spoken));
 
+  const listening = voice.stage === 'listening';
   const typed = question.trim().length > 0;
-  const mode: ComposeMode =
-    voice.stage === 'listening'
-      ? 'listening'
-      : voice.stage === 'transcribing' || busy
-        ? 'busy'
-        : typed
-          ? 'send'
-          : 'voice';
+  const mode: ComposeMode = listening
+    ? 'listening'
+    : busy
+      ? 'busy'
+      : typed
+        ? 'send'
+        : 'voice';
 
   function press() {
     if (mode === 'send') void ask(question);
@@ -145,6 +145,8 @@ export default function AskScreen() {
   }
 
   const idle = !result && !busy && !error;
+  // The box shows what's being heard, live, while listening.
+  const displayQuestion = listening ? voice.liveText : question;
 
   // The question just answered is already shown above its answer.
   const otherQuestions = recentQuestions.filter((q) => !result || q !== asked);
@@ -163,12 +165,12 @@ export default function AskScreen() {
 
         <View style={styles.askBar}>
           <TextInput
-            value={question}
+            value={displayQuestion}
             onChangeText={setQuestion}
-            placeholder="Ask out loud or type"
+            placeholder={listening ? 'Listening…' : 'Ask out loud or type'}
             placeholderTextColor={colors.mist}
             style={styles.input}
-            editable={mode !== 'listening' && !busy}
+            editable={!listening && !busy}
             returnKeyType="search"
             onSubmitEditing={() => void ask(question)}
             multiline
@@ -184,24 +186,22 @@ export default function AskScreen() {
           />
         </View>
 
-        {scope && mode !== 'listening' && voice.stage !== 'transcribing' ? (
+        {scope && !listening ? (
           <Text style={[type.stamp, styles.scope]}>{scope}</Text>
         ) : null}
 
-        {mode === 'listening' ? (
+        {listening ? (
           <View style={styles.listening}>
             <VoiceWaveform level={voice.level} />
             <View style={styles.listenRow}>
               <Text style={[type.label, styles.live]} accessibilityLiveRegion="polite">
-                LISTENING
+                LISTENING · SAY "STOP" TO FINISH
               </Text>
               <Pressable onPress={voice.cancel} hitSlop={10}>
                 <Text style={[type.label, styles.cancel]}>CANCEL</Text>
               </Pressable>
             </View>
           </View>
-        ) : voice.stage === 'transcribing' ? (
-          <Text style={type.label}>WRITING THAT DOWN</Text>
         ) : null}
 
         {voice.error ? (

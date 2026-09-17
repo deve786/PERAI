@@ -2,7 +2,7 @@
   "expo": {
     "name": "PERAI",
     "slug": "PERAI",
-    "version": "1.2.0",
+    "version": "1.7.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "perai",
@@ -71,6 +71,13 @@
               "arm64-v8a"
             ]
           }
+        }
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Allow PERAI to hear you, for live voice notes and questions.",
+          "speechRecognitionPermission": "Allow PERAI to turn your speech into text on this phone."
         }
       ]
     ],
