@@ -73,14 +73,3 @@ export function isStopCommand(
 ): boolean {
   return matchesTrailingPhrase(segmentText, stopPhrases);
 }
-
-/** Remove a trailing stop command from the text that's about to be used, if present. */
-export function stripStopCommand(
-  fullText: string,
-  lastSegment: string,
-  stopPhrases: readonly string[] = DEFAULT_STOP_PHRASES
-): string {
-  if (!isStopCommand(lastSegment, stopPhrases)) return fullText.trim();
-  const withoutLastSegment = fullText.slice(0, fullText.length - lastSegment.length);
-  return withoutLastSegment.trim();
-}

@@ -21,6 +21,7 @@ import { FONTS, GUTTER, SPACE, type Colors } from '@/theme';
 import { formatAmount, shortDate } from '@/format';
 import { reminderTime } from '@/reminderTime';
 import { useMemories } from '@/useMemories';
+import { knownPeople } from '@/speechText';
 import { useVoiceInput } from '@/useVoiceInput';
 
 export default function AskScreen() {
@@ -127,13 +128,14 @@ export default function AskScreen() {
 
   // Speak the question and it is asked as soon as you stop talking. The
   // question stays visible above the answer, so a mis-hearing is obvious.
-  const voice = useVoiceInput((spoken) => void ask(spoken));
+  const people = useMemo(() => knownPeople(memories), [memories]);
+  const voice = useVoiceInput((spoken) => void ask(spoken), { contextualStrings: people });
 
   const listening = voice.stage === 'listening';
   const typed = question.trim().length > 0;
   const mode: ComposeMode = listening
     ? 'listening'
-    : busy
+    : busy || voice.stage === 'finishing'
       ? 'busy'
       : typed
         ? 'send'
@@ -146,7 +148,7 @@ export default function AskScreen() {
 
   const idle = !result && !busy && !error;
   // The box shows what's being heard, live, while listening.
-  const displayQuestion = listening ? voice.liveText : question;
+  const displayQuestion = voice.stage === 'idle' ? question : voice.liveText;
 
   // The question just answered is already shown above its answer.
   const otherQuestions = recentQuestions.filter((q) => !result || q !== asked);
@@ -170,7 +172,7 @@ export default function AskScreen() {
             placeholder={listening ? 'Listening…' : 'Ask out loud or type'}
             placeholderTextColor={colors.mist}
             style={styles.input}
-            editable={!listening && !busy}
+            editable={voice.stage === 'idle' && !busy}
             returnKeyType="search"
             onSubmitEditing={() => void ask(question)}
             multiline

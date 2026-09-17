@@ -27,8 +27,9 @@ import {
   matchesTrailingPhrase,
   SAFETY_STOP_MS,
   shouldFinish,
-  stripStopCommand,
 } from '../src/voiceStop';
+import { isFreshPartial, joinSpelledLetters, knownPeople, restatesEarlier } from '../src/speechText';
+import { widgetItems } from '../src/widget/widgetItems';
 
 let passed = 0;
 let failed = 0;
@@ -328,22 +329,55 @@ check(
 check('unrelated note text is not a stop command', isStopCommand('bought a shirt for 1200 rupees') === false);
 check('empty segment is not a stop command', isStopCommand('') === false);
 
+section('voice: spelled names');
 {
-  const full = 'bought a shirt for 1200 rupees stop listening';
-  const last = 'stop listening';
-  check(
-    'stripStopCommand removes the trailing command and keeps the note',
-    stripStopCommand(full, last) === 'bought a shirt for 1200 rupees',
-    stripStopCommand(full, last)
-  );
+  const cases: Array<[string, string, string]> = [
+    ['separate letters join into the name', 'call J O H N tomorrow', 'call John tomorrow'],
+    ['dotted letters', 'meet J. A. N. E. at noon', 'meet Jane at noon'],
+    ['hyphenated letters', 'lunch with R-A-H-U-L', 'lunch with Rahul'],
+    ['misheard name before the spelling is replaced', 'call Jon J O H N tomorrow', 'call John tomorrow'],
+    ['a different word before it is kept', 'talk to J I M later', 'talk to Jim later'],
+    ['trailing comma is kept', 'with A N N, then home', 'with Ann, then home'],
+    ['"I" and "a" alone are left alone', 'I bought a shirt', 'I bought a shirt'],
+    ['two letters are not joined', 'plan B A later', 'plan B A later'],
+  ];
+  for (const [name, input, expected] of cases) {
+    check(name, joinSpelledLetters(input) === expected, joinSpelledLetters(input));
+  }
 }
+
+section('voice: live transcript restarts');
+check(
+  'growing transcript is a revision',
+  isFreshPartial('remind me to call', 'remind me to call mom tomorrow') === false
+);
+check(
+  'revised wording of similar length is a revision',
+  isFreshPartial('buy milk and eggs from the shop', 'by milk and eggs from the shop') === false
+);
+check(
+  'much shorter, different opening is a restart',
+  isFreshPartial('remind me to call mom tomorrow at five', 'and also buy') === true
+);
+check('short texts are never a restart', isFreshPartial('buy milk', 'call') === false);
+check(
+  'final result repeating kept text is detected',
+  restatesEarlier('remind me to call mom and also buy milk', 'remind me to call mom tomorrow') === true
+);
+check(
+  'final result covering only new words is not',
+  restatesEarlier('and also buy milk', 'remind me to call mom tomorrow') === false
+);
+
+section('voice: known names');
 {
-  const full = 'remind me to stop listening to that podcast tonight';
-  check(
-    'stripStopCommand leaves ordinary text alone when the segment is not a command',
-    stripStopCommand(full, full) === full,
-    stripStopCommand(full, full)
-  );
+  const people = knownPeople([
+    { people: 'Rahul, Anjali', createdAt: '2026-09-10T10:00:00Z' },
+    { people: 'rahul', createdAt: '2026-09-01T10:00:00Z' },
+    { people: 'Fathima', createdAt: '2026-09-15T10:00:00Z' },
+    { people: null, createdAt: '2026-09-16T10:00:00Z' },
+  ]);
+  check('newest first, deduplicated ignoring case', people.join('|') === 'Fathima|Rahul|Anjali', people);
 }
 
 section('wake word: matches phrase');
@@ -368,6 +402,38 @@ check(
   matchesTrailingPhrase('bought a shirt for 1200 rupees', DEFAULT_WAKE_PHRASES) === false
 );
 check('empty segment does not wake', matchesTrailingPhrase('', DEFAULT_WAKE_PHRASES) === false);
+
+section('home screen widget');
+{
+  const now = new Date(2026, 8, 17, 14, 0);
+  const at = (d: number, h = 12) => new Date(2026, 8, d, h, 0).toISOString();
+  const entries: Memory[] = [
+    memory({ title: 'Low task', type: 'task', priority: 'low', eventDate: at(16) }),
+    memory({ title: 'No-priority reminder', type: 'reminder', eventDate: at(18), dateExpression: 'tomorrow' }),
+    memory({ title: 'High later', type: 'reminder', priority: 'high', eventDate: at(20, 16), dateExpression: 'sunday at 4pm' }),
+    memory({ title: 'High sooner', type: 'appointment', priority: 'high', eventDate: at(18, 10), dateExpression: 'tomorrow at 10am' }),
+    memory({ title: 'Medium task', type: 'task', priority: 'medium', eventDate: at(17) }),
+    memory({ title: 'Past reminder', type: 'reminder', priority: 'high', eventDate: at(15), dateExpression: 'tuesday' }),
+    memory({ title: 'Done task', type: 'task', priority: 'high', status: 'done', eventDate: at(17) }),
+    memory({ title: 'A purchase', type: 'purchase', priority: 'high', eventDate: at(17) }),
+  ];
+  const { items, total } = widgetItems(entries, now);
+  const titles = items.map((i) => i.title);
+
+  check(
+    'ordered by priority, then soonest',
+    titles.join('|') === 'High sooner|High later|Medium task|Low task|No-priority reminder',
+    titles
+  );
+  check('a reminder from an earlier day is dropped', !titles.includes('Past reminder'));
+  check('an old task stays until done', titles.includes('Low task'));
+  check('done items and purchases are left out', !titles.includes('Done task') && !titles.includes('A purchase'));
+  check('total counts every open item', total === 5, total);
+  check('stated time is shown', items[0].when === `Tomorrow ${new Date(at(18, 10)).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`, items[0].when);
+  check('date-only reminder shows the day without a time', items[4].when === 'Tomorrow', items[4].when);
+  check('a task with no stated date shows no date', items[2].when === null, items[2].when);
+  check('limit caps the list but not the total', widgetItems(entries, now, 2).items.length === 2 && widgetItems(entries, now, 2).total === 5);
+}
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

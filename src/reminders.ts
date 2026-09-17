@@ -6,13 +6,14 @@ import { hasStatedTime } from './format';
 import { APPOINTMENT_LEAD_MINUTES, reminderTime } from './reminderTime';
 import type { Memory } from './types';
 
-// Versioned rather than 'reminders': Android locks a channel's settings the
-// moment it's first created on a device, and the original channel here was
-// created with no `sound` set — silent, on the phones that already had it.
-// Changing the settings on that same id would never reach them; a fresh id
-// guarantees everyone gets the version with sound.
-const CHANNEL_ID = 'reminders-v2';
-const OLD_CHANNEL_IDS = ['reminders'];
+// Versioned: Android locks a channel's settings the moment it's first created
+// on a device, so any change to sound or importance needs a fresh id to reach
+// phones that already have the old channel.
+const CHANNEL_ID = 'reminders-v4';
+const OLD_CHANNEL_IDS = ['reminders', 'reminders-v2', 'reminders-v3'];
+// Bundled via the expo-notifications plugin's `sounds` in app.json, which
+// copies it into the Android app's res/raw at build time.
+const REMINDER_SOUND = 'reminder_chime.wav';
 const supported = Platform.OS !== 'web';
 
 let prepared = false;
@@ -41,9 +42,20 @@ export async function prepareNotifications(): Promise<void> {
     }
     await Notifications.setNotificationChannelAsync(CHANNEL_ID, {
       name: 'Reminders',
-      importance: Notifications.AndroidImportance.HIGH,
+      importance: Notifications.AndroidImportance.MAX,
       lightColor: '#2F5D45',
-      sound: 'default',
+      sound: REMINDER_SOUND,
+      // Played on the alarm stream rather than the notification stream, which
+      // follows the ringer and is silent whenever the phone is on vibrate or
+      // its notification volume is down. A reminder you asked for should be
+      // heard the way an alarm is.
+      audioAttributes: {
+        usage: Notifications.AndroidAudioUsage.ALARM,
+        contentType: Notifications.AndroidAudioContentType.SONIFICATION,
+      },
+      enableVibrate: true,
+      vibrationPattern: [0, 400, 250, 400],
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
     });
   }
 }
@@ -100,7 +112,7 @@ async function syncNow(): Promise<void> {
         // On Android 8+ the channel's own `sound` above is what actually
         // governs this; this field is what matters on iOS, which has no
         // channels of its own.
-        sound: 'default',
+        sound: REMINDER_SOUND,
       },
       trigger: {
         type: Notifications.SchedulableTriggerInputTypes.DATE,

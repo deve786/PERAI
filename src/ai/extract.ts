@@ -116,7 +116,13 @@ OTHER FIELDS:
 - tags: 1-3 short lowercase keywords useful for later search, comma-separated.
 - priority: one of ${PRIORITIES.join(', ')} — only when urgency is expressed.
 - status: "active" unless the note says it is already finished, then "done".
-- title: a short factual summary, no invented detail.`;
+- title: a short factual summary, no invented detail.
+
+NAMES — notes are often dictated, and speech recognition mishears names. When
+the user message lists people already known, and a name in the note is clearly
+a mishearing of one of them (it sounds alike, e.g. "Rahool" for "Rahul"), use
+the known spelling in people and title. Never swap in a known name for one that
+merely shares a letter or two; a new person keeps the name as written.`;
 
 /** Pull the first JSON value out of a response that may be fenced or padded. */
 function looseJsonParse(raw: string): unknown {
@@ -214,12 +220,14 @@ function normaliseDraft(item: unknown, nowISO: string): MemoryDraft | null {
 /**
  * Extract one or more structured memory drafts from a free-text note.
  *
- * @param text   exactly what the user typed
- * @param nowISO the moment relative dates are resolved against
+ * @param text        exactly what the user typed or said
+ * @param nowISO      the moment relative dates are resolved against
+ * @param knownPeople names already in the record, as spelled there
  */
 export async function extractMemories(
   text: string,
-  nowISO: string
+  nowISO: string,
+  knownPeople: string[] = []
 ): Promise<MemoryDraft[]> {
   const trimmed = text.trim();
   if (!trimmed) return [];
@@ -232,7 +240,10 @@ export async function extractMemories(
     await requestJson({
       model: EXTRACT_MODEL,
       system: SYSTEM_PROMPT,
-      user: `Current local time: ${localTimestamp(nowISO)} (${weekday})\n\nNote:\n${trimmed}`,
+      user:
+        `Current local time: ${localTimestamp(nowISO)} (${weekday})\n\n` +
+        (knownPeople.length > 0 ? `People already known: ${knownPeople.join(', ')}\n\n` : '') +
+        `Note:\n${trimmed}`,
       schemaName: 'extracted_memories',
       schema: EXTRACTION_SCHEMA,
     })

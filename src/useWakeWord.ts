@@ -3,7 +3,8 @@ import {
   useSpeechRecognitionEvent,
   type ExpoSpeechRecognitionErrorCode,
 } from 'expo-speech-recognition';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { disableContinuous, startSpeech, usingContinuous } from './speechSession';
 import { DEFAULT_WAKE_PHRASES, matchesTrailingPhrase } from './voiceStop';
 
 export type WakeWordStage = 'off' | 'listening';
@@ -20,22 +21,22 @@ function describeError(code: ExpoSpeechRecognitionErrorCode): string {
 /**
  * Listens hands-free for a spoken phrase and calls `onWake()` the moment it's
  * heard, then stops itself — the caller restarts it (via `armed`) once ready
- * to listen again. Reuses the same on-device recognizer and restart-on-pause
- * loop as useVoiceInput.ts, so there is no separate wake-word engine, account
- * or training step: the phrase is just matched as recognized text, so typing
- * a new one in Settings works immediately.
+ * to listen again. Same recognizer and session handling as useVoiceInput.ts:
+ * the phrase is matched as recognized text, and a session is only restarted
+ * after the previous one has sent `end`.
  *
- * Only one expo-speech-recognition session can run at a time. The caller is
- * responsible for setting `armed` to false while useVoiceInput's own session
- * is capturing a note (see app/(tabs)/index.tsx) — this hook stops itself as
- * soon as `armed` goes false, freeing the mic.
+ * Only one recognition session can run at a time. The caller sets `armed` to
+ * false while a note is being captured (see app/(tabs)/index.tsx). Stopping
+ * aborts rather than stops, so the wake phrase's own final result is never
+ * delivered — it would otherwise land inside the note that starts next.
  */
 export function useWakeWord(armed: boolean, phrases: readonly string[], onWake: () => void) {
   const [stage, setStage] = useState<WakeWordStage>('off');
   const [error, setError] = useState<string | null>(null);
 
   const stageRef = useRef<WakeWordStage>('off');
-  const stopRequested = useRef(true);
+  const heardAnything = useRef(false);
+  const sessionLive = useRef(false);
   const onWakeRef = useRef(onWake);
   onWakeRef.current = onWake;
   const phrasesRef = useRef(phrases);
@@ -46,62 +47,72 @@ export function useWakeWord(armed: boolean, phrases: readonly string[], onWake: 
     setStage(next);
   };
 
-  const restart = useCallback(() => {
-    if (stopRequested.current) return;
-    ExpoSpeechRecognitionModule.start({
-      lang: 'en-US',
-      interimResults: true,
-      continuous: false,
-    });
-  }, []);
+  const begin = () => {
+    sessionLive.current = false;
+    startSpeech();
+  };
 
-  const stop = useCallback(() => {
-    stopRequested.current = true;
-    if (stageRef.current === 'listening') ExpoSpeechRecognitionModule.stop();
+  const stop = () => {
+    if (stageRef.current === 'listening') ExpoSpeechRecognitionModule.abort();
     setStageBoth('off');
-  }, []);
+  };
 
-  const start = useCallback(async () => {
+  const start = async () => {
     setError(null);
     const { granted } = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
     if (!granted) {
       setError('Microphone or speech recognition access is off. Turn it on in Settings.');
       return;
     }
-    stopRequested.current = false;
+    heardAnything.current = false;
     setStageBoth('listening');
-    restart();
-  }, [restart]);
+    begin();
+  };
 
+  const armedRef = useRef(armed);
+  armedRef.current = armed;
   useEffect(() => {
-    if (armed) void start();
-    else stop();
+    if (armed) {
+      void start().then(() => {
+        // Disarmed while the permission prompt was open.
+        if (!armedRef.current) stop();
+      });
+    } else {
+      stop();
+    }
     return stop;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [armed]);
 
+  useSpeechRecognitionEvent('start', () => {
+    if (stageRef.current === 'listening') sessionLive.current = true;
+  });
+
   useSpeechRecognitionEvent('result', (event) => {
     if (stageRef.current !== 'listening') return;
+    heardAnything.current = true;
     const transcript = event.results[0]?.transcript ?? '';
-
     if (matchesTrailingPhrase(transcript, phrasesRef.current)) {
       stop();
       onWakeRef.current();
-      return;
     }
+  });
 
-    if (event.isFinal && !stopRequested.current) restart();
+  useSpeechRecognitionEvent('end', () => {
+    // A pause or the recognizer's own limit ended the session: listen again.
+    if (stageRef.current === 'listening' && sessionLive.current) begin();
   });
 
   useSpeechRecognitionEvent('error', (event) => {
-    if (stageRef.current !== 'listening' || stopRequested.current) return;
-    if (event.error === 'no-speech' || event.error === 'speech-timeout') {
-      // Android's non-continuous session timed out hearing nothing — normal
-      // while waiting for a wake phrase; just listen again.
-      restart();
+    if (stageRef.current !== 'listening') return;
+    sessionLive.current = true;
+    if (event.error === 'no-speech' || event.error === 'speech-timeout' || event.error === 'aborted') {
+      return; // `end` follows and restarts
+    }
+    if (usingContinuous() && !heardAnything.current && event.error !== 'not-allowed') {
+      disableContinuous();
       return;
     }
-    stopRequested.current = true;
     setStageBoth('off');
     setError(describeError(event.error));
   });

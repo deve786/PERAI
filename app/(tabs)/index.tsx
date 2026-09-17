@@ -26,6 +26,7 @@ import { useTheme } from '@/ThemeContext';
 import { FONTS, SPACE, type Colors } from '@/theme';
 import type { Memory, MemoryDraft } from '@/types';
 import { useMemories } from '@/useMemories';
+import { knownPeople } from '@/speechText';
 import { useVoiceInput } from '@/useVoiceInput';
 import { DEFAULT_WAKE_PHRASES, useWakeWord } from '@/useWakeWord';
 import { WakeWordToggle } from '@/components/WakeWordToggle';
@@ -62,6 +63,11 @@ export default function CaptureScreen() {
 
   const configured = hasApiKey();
 
+  // Live view of the record; refreshes itself after every save, Undo or delete.
+  const { memories, loading } = useMemories();
+  // Names already recorded: recognizer hints, and spellings the AI should keep.
+  const people = useMemo(() => knownPeople(memories), [memories]);
+
   async function save(raw: string) {
     const note = raw.trim();
     if (!note || saving || !configured) return;
@@ -70,7 +76,7 @@ export default function CaptureScreen() {
     setError(null);
     setSaved(null);
     try {
-      const drafts = await extractMemories(note, new Date().toISOString());
+      const drafts = await extractMemories(note, new Date().toISOString(), people);
       const memories: Memory[] = [];
       for (const draft of drafts) memories.push(await insertMemory(draft, note));
 
@@ -93,11 +99,8 @@ export default function CaptureScreen() {
     }
   }
 
-  const voice = useVoiceInput((spoken) => void save(spoken));
+  const voice = useVoiceInput((spoken) => void save(spoken), { contextualStrings: people });
   const [wakeArmed, setWakeArmed] = useState(false);
-
-  // Live view of the record; refreshes itself after every save, Undo or delete.
-  const { memories, loading } = useMemories();
 
   // Entries just saved are already shown with Undo and Edit, so neither list
   // below repeats them.
@@ -141,7 +144,7 @@ export default function CaptureScreen() {
   const typed = text.trim().length > 0;
   const mode: ComposeMode = listening
     ? 'listening'
-    : saving
+    : saving || voice.stage === 'finishing'
       ? 'busy'
       : typed
         ? 'send'
@@ -165,7 +168,7 @@ export default function CaptureScreen() {
     else void voice.toggle();
   }
 
-  const status = saving
+  const status = saving || voice.stage === 'finishing'
     ? 'Saving'
     : typed
       ? 'One line can hold several events'
@@ -176,7 +179,7 @@ export default function CaptureScreen() {
   const problem = voice.error ?? wakeWord.error ?? error;
   // The box shows what's being heard, live, while listening; your typed text
   // is untouched underneath and comes back the moment listening stops.
-  const displayText = listening ? voice.liveText : text;
+  const displayText = voice.stage === 'idle' ? text : voice.liveText;
 
   return (
     <KeyboardAvoidingView
@@ -211,7 +214,7 @@ export default function CaptureScreen() {
             placeholderTextColor={colors.mist}
             style={styles.input}
             multiline
-            editable={!listening && !saving}
+            editable={voice.stage === 'idle' && !saving}
           />
 
           <View style={styles.foot}>
