@@ -62,7 +62,7 @@ export function MemoryRow({ memory, gutter = 'time', onPress, onLongPress }: Pro
         </Text>
 
         {/* Its own line: sharing the category line got it truncated to "ADDED 16 …". */}
-        {added ? <Text style={TYPE.stamp}>{added}</Text> : null}
+        <Text style={TYPE.stamp}>{added}</Text>
 
         {remindsAt ? (
           <Text style={[TYPE.stamp, styles.reminds]}>

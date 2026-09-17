@@ -78,15 +78,15 @@ export function hasStatedTime(dateExpression: string | null): boolean {
 }
 
 /**
- * "ADDED 16 SEP" when an entry was recorded on a different day from when it
- * happened; null when they are the same day and the label would only repeat
- * the section heading.
+ * When the entry was recorded: "ADDED 16 SEPT, 23:04", or just "ADDED 23:04"
+ * when it was recorded on the same day it happened (the day heading already
+ * says which day). Always shown, because the time column often holds a dash
+ * for notes with no stated time, and then this is the only clock time there is.
  */
-export function addedLabel(
-  memory: Pick<Memory, 'eventDate' | 'createdAt'>
-): string | null {
-  if (dayKey(memory.createdAt) === dayKey(memory.eventDate)) return null;
-  return `ADDED ${shortDate(memory.createdAt).toUpperCase()}`;
+export function addedLabel(memory: Pick<Memory, 'eventDate' | 'createdAt'>): string {
+  const time = timeLabel(memory.createdAt);
+  if (dayKey(memory.createdAt) === dayKey(memory.eventDate)) return `ADDED ${time}`;
+  return `ADDED ${shortDate(memory.createdAt).toUpperCase()}, ${time}`;
 }
 
 /**

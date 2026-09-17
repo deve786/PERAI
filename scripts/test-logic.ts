@@ -218,16 +218,20 @@ check('"noon" states a time', hasStatedTime('today at noon') === true);
 check('"2 weeks ago" is not a time', hasStatedTime('2 weeks ago') === false);
 
 section('added date');
-check(
-  'car bought 2 days back, recorded today -> shows ADDED',
-  addedLabel({ eventDate: '2026-09-14T15:22:38.000Z', createdAt: '2026-09-16T15:22:38.000Z' }) === 'ADDED 16 SEPT' ||
-    addedLabel({ eventDate: '2026-09-14T15:22:38.000Z', createdAt: '2026-09-16T15:22:38.000Z' }) === 'ADDED 16 SEP',
-  addedLabel({ eventDate: '2026-09-14T15:22:38.000Z', createdAt: '2026-09-16T15:22:38.000Z' })
-);
-check(
-  'same day -> no ADDED label',
-  addedLabel({ eventDate: '2026-09-16T06:00:00.000Z', createdAt: '2026-09-16T09:00:00.000Z' }) === null
-);
+{
+  // Local-time fixtures so the expected clock time holds in any timezone.
+  const local = (d: number, h: number, m: number) => new Date(2026, 8, d, h, m).toISOString();
+
+  const car = addedLabel({ eventDate: local(14, 12, 0), createdAt: local(16, 23, 4) });
+  check(
+    'recorded on a later day -> date and time',
+    /^ADDED 16 SEPT?, 23:04$/.test(car),
+    car
+  );
+
+  const cream = addedLabel({ eventDate: local(16, 23, 4), createdAt: local(16, 23, 5) });
+  check('recorded the same day -> time only', cream === 'ADDED 23:05', cream);
+}
 
 section('local timestamp sent to the model');
 {

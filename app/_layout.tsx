@@ -13,6 +13,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { COLORS, SPACE, TYPE } from '@/theme';
+import { UpdateBanner } from '@/components/UpdateBanner';
 import { initDatabase } from '@/db/client';
 import { startReminderSync } from '@/reminders';
 import { useAutoUpdate } from '@/useAutoUpdate';
@@ -72,6 +73,7 @@ export default function RootLayout() {
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="preview" options={{ presentation: 'modal' }} />
       </Stack>
+      <UpdateBanner />
     </>
   );
 }
