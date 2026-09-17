@@ -3,11 +3,12 @@ import { Pressable } from 'react-native';
 import { useTheme } from '../ThemeContext';
 
 /**
- * One button that arms or disarms hands-free capture: while armed, saying
- * "start recording" (see useWakeWord.ts) begins a note without touching the
- * phone. `listening` (true while the wake phrase itself is actively being
- * listened for, as opposed to paused mid-capture) tints the icon to show it's
- * live, the same way the dark-mode button just flips a single state.
+ * One button that arms or disarms hands-free capture for a session: while
+ * armed, saying "start recording" (see useWakeWord.ts) begins a note without
+ * touching the phone. Deliberately session-scoped rather than always-on —
+ * Android shows a mic-in-use indicator the whole time a wake phrase is being
+ * listened for (an OS privacy feature, not something an app can suppress),
+ * so this keeps that indicator on only while you've chosen to have it on.
  */
 export function WakeWordToggle({
   armed,

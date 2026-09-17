@@ -147,12 +147,13 @@ export default function CaptureScreen() {
         ? 'send'
         : 'voice';
 
-  // Hands-free: say "start recording" and useVoiceInput's own mic session
-  // begins, exactly as if the button had been pressed. Only listens while the
-  // composer is genuinely idle (mode === 'voice'), so it never fights the mic
-  // with an in-progress capture, never overwrites text you're typing, and
-  // never fires again mid-save — see useWakeWord.ts for how it hands the mic
-  // back and forth with useVoiceInput's own session.
+  // Hands-free: tap the ear icon to arm, then say "start recording" and
+  // useVoiceInput's own mic session begins, exactly as if the button had
+  // been pressed. Only listens while armed AND the composer is genuinely
+  // idle (mode === 'voice'), so it never fights the mic with an in-progress
+  // capture, never overwrites text you're typing, and never fires again
+  // mid-save — see useWakeWord.ts for how it hands the mic back and forth
+  // with useVoiceInput's own session as mode changes.
   const wakeWord = useWakeWord(
     wakeArmed && mode === 'voice',
     DEFAULT_WAKE_PHRASES,
