@@ -12,9 +12,13 @@ import {
 import { DraftCard } from '@/components/DraftCard';
 import { insertMemory } from '@/db/queries';
 import { clearDrafts, removeDraft, updateDraft, usePendingDrafts } from '@/draftStore';
-import { COLORS, SPACE, TYPE } from '@/theme';
+import { useTheme } from '@/ThemeContext';
+import { SPACE, type Colors } from '@/theme';
 
 export default function PreviewScreen() {
+  const { colors, type } = useTheme();
+  const styles = makeStyles(colors);
+
   const router = useRouter();
   const { rawInput, drafts } = usePendingDrafts();
   const [savedCount, setSavedCount] = useState(0);
@@ -60,7 +64,7 @@ export default function PreviewScreen() {
   if (drafts.length === 0) {
     return (
       <View style={styles.done}>
-        <Text style={TYPE.label}>
+        <Text style={type.label}>
           {savedCount > 0
             ? `${savedCount} ${savedCount === 1 ? 'ENTRY' : 'ENTRIES'} KEPT`
             : 'NOTHING TO CONFIRM'}
@@ -79,16 +83,16 @@ export default function PreviewScreen() {
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.said}>
-          <Text style={TYPE.label}>YOU WROTE</Text>
-          <Text style={[TYPE.body, styles.saidText]}>{rawInput}</Text>
+          <Text style={type.label}>YOU WROTE</Text>
+          <Text style={[type.body, styles.saidText]}>{rawInput}</Text>
         </View>
 
-        <Text style={TYPE.display}>
+        <Text style={type.display}>
           {drafts.length === 1
             ? 'One event found'
             : `${drafts.length} events found`}
         </Text>
-        <Text style={[TYPE.body, styles.lead]}>
+        <Text style={[type.body, styles.lead]}>
           Check each one before it goes into your record. Edit anything that is
           wrong.
         </Text>
@@ -107,11 +111,11 @@ export default function PreviewScreen() {
 
         <View style={styles.bulk}>
           <Pressable onPress={discardAll} hitSlop={6} style={styles.bulkGhost}>
-            <Text style={[TYPE.label, styles.bulkGhostText]}>DISCARD ALL</Text>
+            <Text style={[type.label, styles.bulkGhostText]}>DISCARD ALL</Text>
           </Pressable>
           {drafts.length > 1 ? (
             <Pressable onPress={() => void saveAll()} style={styles.bulkAll}>
-              <Text style={[TYPE.label, styles.bulkAllText]}>
+              <Text style={[type.label, styles.bulkAllText]}>
                 KEEP ALL {drafts.length}
               </Text>
             </Pressable>
@@ -122,34 +126,36 @@ export default function PreviewScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: COLORS.paper },
-  content: { padding: SPACE.page, paddingTop: 28, paddingBottom: 48, gap: 14 },
-  said: {
-    gap: 7,
-    borderLeftWidth: 2,
-    borderLeftColor: COLORS.moss,
-    paddingLeft: 12,
-    marginBottom: 8,
-  },
-  saidText: { color: COLORS.ink },
-  lead: { marginTop: -6, marginBottom: 4, maxWidth: 330 },
-  bulk: { flexDirection: 'row', alignItems: 'center', paddingTop: 10 },
-  bulkGhost: { paddingVertical: 10, paddingRight: 16 },
-  bulkGhostText: { color: COLORS.mist },
-  bulkAll: {
-    marginLeft: 'auto',
-    paddingVertical: 10,
-    paddingHorizontal: 18,
-    borderRadius: 4,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: COLORS.moss,
-  },
-  bulkAllText: { color: COLORS.moss },
-  done: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: COLORS.paper,
-  },
-});
+function makeStyles(colors: Colors) {
+  return StyleSheet.create({
+    flex: { flex: 1, backgroundColor: colors.paper },
+    content: { padding: SPACE.page, paddingTop: 28, paddingBottom: 48, gap: 14 },
+    said: {
+      gap: 7,
+      borderLeftWidth: 2,
+      borderLeftColor: colors.moss,
+      paddingLeft: 12,
+      marginBottom: 8,
+    },
+    saidText: { color: colors.ink },
+    lead: { marginTop: -6, marginBottom: 4, maxWidth: 330 },
+    bulk: { flexDirection: 'row', alignItems: 'center', paddingTop: 10 },
+    bulkGhost: { paddingVertical: 10, paddingRight: 16 },
+    bulkGhostText: { color: colors.mist },
+    bulkAll: {
+      marginLeft: 'auto',
+      paddingVertical: 10,
+      paddingHorizontal: 18,
+      borderRadius: 4,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.moss,
+    },
+    bulkAllText: { color: colors.moss },
+    done: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.paper,
+    },
+  });
+}

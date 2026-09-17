@@ -19,6 +19,15 @@ import {
 } from '../src/format';
 import { reminderTime } from '../src/reminderTime';
 import type { Memory } from '../src/types';
+import {
+  END_OF_SPEECH_MS,
+  MAX_MS,
+  newVoiceActivityState,
+  processSample,
+  SAFETY_STOP_MS,
+  SAMPLE_MS,
+  UNRELIABLE_METERING_STOP_MS,
+} from '../src/voiceActivity';
 
 let passed = 0;
 let failed = 0;
@@ -296,6 +305,95 @@ section('when reminders notify');
     'done reminders never notify',
     reminderTime({ status: 'done', type: 'reminder', eventDate: at(2026, 9, 1), dateExpression: 'next month' }, now) === null
   );
+}
+
+section('voice auto-stop timing');
+{
+  /**
+   * Run a dB script through processSample tick by tick and return the
+   * elapsed time at which it first asked to stop, or null if it never did
+   * within `totalMs`. `dbAt(elapsedMs)` returns a metering value in dBFS, or
+   * null to simulate "device reports no level this tick".
+   */
+  function firstStopAt(dbAt: (elapsedMs: number) => number | null, totalMs: number): number | null {
+    const state = newVoiceActivityState();
+    for (let t = 0; t <= totalMs; t += SAMPLE_MS) {
+      if (processSample(state, dbAt(t), t)) return t;
+    }
+    return null;
+  }
+
+  // Real speech (and real background noise) always has a few dB of natural
+  // jitter tick to tick — mic self-noise, breathing, syllable boundaries.
+  // A perfectly flat synthetic level doesn't model that; it models *broken*
+  // metering, which is a different scenario this module deliberately also
+  // has to tell apart (see "frozen metering" below). So every "someone is
+  // recording normally" fixture here rides a small wobble on top of its base
+  // level, and only the dedicated frozen-metering fixture stays perfectly flat.
+  const wobble = (t: number) => 3 * Math.sin(t / 137) + 1.5 * Math.sin(t / 53);
+  const loud = (t: number) => -15 + wobble(t); // comfortably clears ABSOLUTE_SPEECH_DB
+  const quiet = (t: number) => -55 + wobble(t); // comfortably below any speech threshold
+
+  {
+    // The exact real-world bug this rewrite fixes: the person starts talking
+    // the instant they press the mic, so the calibration window measures
+    // speech, not silence — then they talk for a while and go quiet.
+    const LOUD_UNTIL = 2900; // a tick boundary, i.e. a multiple of SAMPLE_MS
+    const stopAt = firstStopAt((t) => (t <= LOUD_UNTIL ? loud(t) : quiet(t)), 15000);
+    check(
+      'immediate speech still auto-stops after the pause',
+      stopAt === LOUD_UNTIL + END_OF_SPEECH_MS,
+      stopAt
+    );
+  }
+
+  {
+    // A quiet room throughout — never confidently "loud" — stops at the
+    // safety timeout rather than running forever or discarding anything.
+    const stopAt = firstStopAt(quiet, SAFETY_STOP_MS + 2000);
+    check('never-loud audio stops at the safety timeout', stopAt === SAFETY_STOP_MS, stopAt);
+  }
+
+  {
+    // Metering that never moves at all — the one case that really is
+    // indistinguishable from "gone silent" unless watched for — must not
+    // stop the instant it starts, and must not run all the way to the 60s
+    // hard cap either.
+    const stopAt = firstStopAt(() => -40, UNRELIABLE_METERING_STOP_MS + 2000);
+    check(
+      'frozen metering stops at its own timeout, not immediately or never',
+      stopAt === UNRELIABLE_METERING_STOP_MS,
+      stopAt
+    );
+  }
+
+  {
+    // No level reported at all (device does not support metering) — only
+    // the hard cap can end it; never earlier.
+    const stopAt = firstStopAt(() => null, MAX_MS + 1000);
+    check('no metering at all only stops at the hard cap', stopAt === MAX_MS, stopAt);
+  }
+
+  {
+    // Continuous loud speech the whole time hits the hard cap, not an
+    // early/spurious stop from the pause logic.
+    const stopAt = firstStopAt(loud, MAX_MS + 1000);
+    check('continuous speech stops at the hard cap', stopAt === MAX_MS, stopAt);
+  }
+
+  {
+    // Talking, a short mid-sentence pause well under the 5s threshold, then
+    // more talking — must not cut off during an ordinary breath.
+    const stopAt = firstStopAt(
+      (t) => (t <= 1900 ? loud(t) : t <= 2900 ? quiet(t) : t <= 5900 ? loud(t) : quiet(t)),
+      12000
+    );
+    check(
+      'a short mid-sentence pause does not trigger an early stop',
+      stopAt === 5900 + END_OF_SPEECH_MS,
+      stopAt
+    );
+  }
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

@@ -16,13 +16,17 @@ import { ComposeButton, type ComposeMode } from '@/components/ComposeButton';
 import { Section } from '@/components/Section';
 import { VoiceWaveform } from '@/components/VoiceWaveform';
 import { forgetQuestion, getAllMemories, getRecentQuestions, saveQuestion } from '@/db/queries';
-import { COLORS, FONTS, GUTTER, SPACE, TYPE } from '@/theme';
+import { useTheme } from '@/ThemeContext';
+import { FONTS, GUTTER, SPACE, type Colors } from '@/theme';
 import { formatAmount, shortDate } from '@/format';
 import { reminderTime } from '@/reminderTime';
 import { useMemories } from '@/useMemories';
 import { useVoiceInput } from '@/useVoiceInput';
 
 export default function AskScreen() {
+  const { colors, type } = useTheme();
+  const styles = makeStyles(colors);
+
   const [question, setQuestion] = useState('');
   const [asked, setAsked] = useState('');
   const [result, setResult] = useState<AskResult | null>(null);
@@ -155,14 +159,14 @@ export default function AskScreen() {
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
       >
-        <Text style={TYPE.display}>Ask your record</Text>
+        <Text style={type.display}>Ask your record</Text>
 
         <View style={styles.askBar}>
           <TextInput
             value={question}
             onChangeText={setQuestion}
             placeholder="Ask out loud or type"
-            placeholderTextColor={COLORS.mist}
+            placeholderTextColor={colors.mist}
             style={styles.input}
             editable={mode !== 'listening' && !busy}
             returnKeyType="search"
@@ -181,34 +185,34 @@ export default function AskScreen() {
         </View>
 
         {scope && mode !== 'listening' && voice.stage !== 'transcribing' ? (
-          <Text style={[TYPE.stamp, styles.scope]}>{scope}</Text>
+          <Text style={[type.stamp, styles.scope]}>{scope}</Text>
         ) : null}
 
         {mode === 'listening' ? (
           <View style={styles.listening}>
             <VoiceWaveform level={voice.level} />
             <View style={styles.listenRow}>
-              <Text style={[TYPE.label, styles.live]} accessibilityLiveRegion="polite">
+              <Text style={[type.label, styles.live]} accessibilityLiveRegion="polite">
                 LISTENING
               </Text>
               <Pressable onPress={voice.cancel} hitSlop={10}>
-                <Text style={[TYPE.label, styles.cancel]}>CANCEL</Text>
+                <Text style={[type.label, styles.cancel]}>CANCEL</Text>
               </Pressable>
             </View>
           </View>
         ) : voice.stage === 'transcribing' ? (
-          <Text style={TYPE.label}>WRITING THAT DOWN</Text>
+          <Text style={type.label}>WRITING THAT DOWN</Text>
         ) : null}
 
         {voice.error ? (
           <View style={styles.notice}>
-            <Text style={[TYPE.body, styles.noticeText]}>{voice.error}</Text>
+            <Text style={[type.body, styles.noticeText]}>{voice.error}</Text>
           </View>
         ) : null}
 
         {!configured ? (
           <View style={styles.notice}>
-            <Text style={[TYPE.body, styles.noticeText]}>
+            <Text style={[type.body, styles.noticeText]}>
               No API key yet. Add EXPO_PUBLIC_GEMINI_API_KEY to .env to ask
               questions.
             </Text>
@@ -217,21 +221,21 @@ export default function AskScreen() {
 
         {error ? (
           <View style={styles.notice}>
-            <Text style={[TYPE.body, styles.noticeText]}>{error}</Text>
+            <Text style={[type.body, styles.noticeText]}>{error}</Text>
           </View>
         ) : null}
 
-        {busy ? <Text style={TYPE.label}>SEARCHING YOUR RECORD</Text> : null}
+        {busy ? <Text style={type.label}>SEARCHING YOUR RECORD</Text> : null}
 
         {result && !busy ? (
           <View style={styles.answerBlock}>
-            <Text style={[TYPE.stamp, styles.question]}>{asked.toUpperCase()}</Text>
+            <Text style={[type.stamp, styles.question]}>{asked.toUpperCase()}</Text>
 
-            <Text style={TYPE.answer}>{result.answer}</Text>
+            <Text style={type.answer}>{result.answer}</Text>
 
             {result.found ? (
               <View style={styles.evidence}>
-                <Text style={TYPE.label}>
+                <Text style={type.label}>
                   {result.evidence.length === 1
                     ? 'FROM 1 ENTRY'
                     : `FROM ${result.evidence.length} ENTRIES`}
@@ -242,7 +246,7 @@ export default function AskScreen() {
                 ))}
               </View>
             ) : (
-              <Text style={[TYPE.fine, styles.noEvidence]}>
+              <Text style={[type.fine, styles.noEvidence]}>
                 Nothing in your record matches this.
               </Text>
             )}
@@ -259,8 +263,8 @@ export default function AskScreen() {
                 style={({ pressed }) => [styles.fact, pressed && styles.pressed]}
                 accessibilityHint={`Asks: ${fact.question}`}
               >
-                <Text style={[TYPE.figure, styles.factFigure]}>{fact.figure}</Text>
-                <Text style={TYPE.body}>{fact.text}</Text>
+                <Text style={[type.figure, styles.factFigure]}>{fact.figure}</Text>
+                <Text style={type.body}>{fact.text}</Text>
               </Pressable>
             ))}
           </Section>
@@ -278,7 +282,7 @@ export default function AskScreen() {
                   style={({ pressed }) => [styles.recent, pressed && styles.pressed]}
                   accessibilityHint="Asks this again. Long-press to remove it."
                 >
-                  <Text style={TYPE.body} numberOfLines={2}>
+                  <Text style={type.body} numberOfLines={2}>
                     {q}
                   </Text>
                 </Pressable>
@@ -287,7 +291,7 @@ export default function AskScreen() {
         ) : null}
 
         {idle ? (
-          <Text style={[TYPE.fine, styles.disclaimer]}>
+          <Text style={[type.fine, styles.disclaimer]}>
             Answers come only from what you have recorded. When there is no
             entry for something, this says so instead of guessing.
           </Text>
@@ -297,51 +301,53 @@ export default function AskScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: COLORS.paper },
-  content: {
-    padding: SPACE.page,
-    paddingTop: 68,
-    paddingBottom: 48,
-    gap: 20,
-  },
-  askBar: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  input: {
-    flex: 1,
-    fontFamily: FONTS.sans,
-    fontSize: 16,
-    lineHeight: 23,
-    color: COLORS.ink,
-    maxHeight: 110,
-    paddingVertical: 10,
-    paddingHorizontal: 0,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: COLORS.rule,
-  },
-  listening: { gap: 8 },
-  listenRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  live: { color: COLORS.moss },
-  cancel: { color: COLORS.mist },
-  notice: {
-    borderLeftWidth: 2,
-    borderLeftColor: COLORS.alert,
-    paddingLeft: 12,
-    paddingVertical: 2,
-  },
-  noticeText: { color: COLORS.alert },
-  answerBlock: { gap: 14 },
-  question: { color: COLORS.mist },
-  evidence: { gap: 6, marginTop: 6 },
-  evidenceRule: {
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: COLORS.rule,
-    marginLeft: GUTTER,
-  },
-  noEvidence: { marginTop: -4 },
-  disclaimer: { maxWidth: 320 },
-  scope: { color: COLORS.mist, marginTop: -8 },
-  recent: { paddingVertical: 9 },
-  fact: { flexDirection: 'row', alignItems: 'baseline', gap: 10, paddingVertical: 8 },
-  factFigure: { minWidth: GUTTER - 10, fontSize: 16 },
-  pressed: { opacity: 0.45 },
-});
+function makeStyles(colors: Colors) {
+  return StyleSheet.create({
+    flex: { flex: 1, backgroundColor: colors.paper },
+    content: {
+      padding: SPACE.page,
+      paddingTop: 68,
+      paddingBottom: 48,
+      gap: 20,
+    },
+    askBar: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+    input: {
+      flex: 1,
+      fontFamily: FONTS.sans,
+      fontSize: 16,
+      lineHeight: 23,
+      color: colors.ink,
+      maxHeight: 110,
+      paddingVertical: 10,
+      paddingHorizontal: 0,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.rule,
+    },
+    listening: { gap: 8 },
+    listenRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+    live: { color: colors.moss },
+    cancel: { color: colors.mist },
+    notice: {
+      borderLeftWidth: 2,
+      borderLeftColor: colors.alert,
+      paddingLeft: 12,
+      paddingVertical: 2,
+    },
+    noticeText: { color: colors.alert },
+    answerBlock: { gap: 14 },
+    question: { color: colors.mist },
+    evidence: { gap: 6, marginTop: 6 },
+    evidenceRule: {
+      height: StyleSheet.hairlineWidth,
+      backgroundColor: colors.rule,
+      marginLeft: GUTTER,
+    },
+    noEvidence: { marginTop: -4 },
+    disclaimer: { maxWidth: 320 },
+    scope: { color: colors.mist, marginTop: -8 },
+    recent: { paddingVertical: 9 },
+    fact: { flexDirection: 'row', alignItems: 'baseline', gap: 10, paddingVertical: 8 },
+    factFigure: { minWidth: GUTTER - 10, fontSize: 16 },
+    pressed: { opacity: 0.45 },
+  });
+}

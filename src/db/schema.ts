@@ -37,6 +37,12 @@ CREATE TABLE IF NOT EXISTS questions (
   text TEXT PRIMARY KEY NOT NULL,
   asked_at TEXT NOT NULL
 );
+
+-- Small key/value store for app preferences (currently just the theme mode).
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY NOT NULL,
+  value TEXT NOT NULL
+);
 `;
 
 export const DATABASE_NAME = 'perai.db';

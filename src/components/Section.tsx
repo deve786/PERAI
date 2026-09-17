@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { COLORS, GUTTER, TYPE } from '../theme';
+import { useTheme } from '../ThemeContext';
+import { GUTTER, type Colors, type TypeScale } from '../theme';
 
 interface Props {
   label: string;
@@ -19,13 +20,16 @@ interface Props {
  * Ask tabs visually part of the same record rather than separate widgets.
  */
 export function Section({ label, action, tone, inset = true, children }: Props) {
+  const { colors, type } = useTheme();
+  const styles = makeStyles(colors, type);
+
   return (
     <View style={styles.section}>
       <View style={styles.head}>
-        <Text style={[TYPE.label, tone === 'ahead' && styles.ahead]}>{label}</Text>
+        <Text style={[type.label, tone === 'ahead' && styles.ahead]}>{label}</Text>
         {action ? (
           <Pressable onPress={action.onPress} hitSlop={10}>
-            <Text style={[TYPE.label, styles.action]}>{action.label}</Text>
+            <Text style={[type.label, styles.action]}>{action.label}</Text>
           </Pressable>
         ) : null}
       </View>
@@ -35,21 +39,23 @@ export function Section({ label, action, tone, inset = true, children }: Props) 
   );
 }
 
-const styles = StyleSheet.create({
-  section: { gap: 4 },
-  head: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 4,
-  },
-  ahead: { color: COLORS.moss },
-  action: { color: COLORS.mist },
-  rule: {
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: COLORS.rule,
-    marginLeft: GUTTER,
-    marginBottom: 2,
-  },
-  ruleFull: { marginLeft: 0 },
-});
+function makeStyles(colors: Colors, type: TypeScale) {
+  return StyleSheet.create({
+    section: { gap: 4 },
+    head: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 4,
+    },
+    ahead: { color: colors.moss },
+    action: { color: colors.mist },
+    rule: {
+      height: StyleSheet.hairlineWidth,
+      backgroundColor: colors.rule,
+      marginLeft: GUTTER,
+      marginBottom: 2,
+    },
+    ruleFull: { marginLeft: 0 },
+  });
+}

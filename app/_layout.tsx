@@ -12,10 +12,11 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { COLORS, SPACE, TYPE } from '@/theme';
 import { UpdateBanner } from '@/components/UpdateBanner';
 import { initDatabase } from '@/db/client';
 import { startReminderSync } from '@/reminders';
+import { ThemeProvider, useTheme } from '@/ThemeContext';
+import { COLORS, SPACE, TYPE } from '@/theme';
 import { useAutoUpdate } from '@/useAutoUpdate';
 
 export default function RootLayout() {
@@ -46,6 +47,9 @@ export default function RootLayout() {
       );
   }, []);
 
+  // The gate screens below run before the database (and so the saved theme
+  // preference) can be trusted, and only for well under a second — they use
+  // the static light tokens rather than waiting on ThemeProvider.
   if (dbError) {
     return (
       <View style={styles.gate}>
@@ -62,12 +66,23 @@ export default function RootLayout() {
   if (!dbReady || !fontsReady) return <View style={styles.gate} />;
 
   return (
+    <ThemeProvider>
+      <ThemedApp />
+    </ThemeProvider>
+  );
+}
+
+/** Split out so it can call `useTheme()` — only valid inside ThemeProvider. */
+function ThemedApp() {
+  const { colors, scheme } = useTheme();
+
+  return (
     <>
-      <StatusBar style="dark" />
+      <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
       <Stack
         screenOptions={{
           headerShown: false,
-          contentStyle: { backgroundColor: COLORS.paper },
+          contentStyle: { backgroundColor: colors.paper },
         }}
       >
         <Stack.Screen name="(tabs)" />

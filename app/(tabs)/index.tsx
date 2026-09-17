@@ -16,12 +16,14 @@ import { extractMemories } from '@/ai/extract';
 import { ComposeButton, type ComposeMode } from '@/components/ComposeButton';
 import { MemoryRow } from '@/components/MemoryRow';
 import { Section } from '@/components/Section';
+import { ThemeToggle } from '@/components/ThemeToggle';
 import { VoiceWaveform } from '@/components/VoiceWaveform';
 import { deleteMemories, insertMemory } from '@/db/queries';
 import { setPendingDrafts } from '@/draftStore';
 import { notificationsAllowed, syncReminders } from '@/reminders';
 import { reminderTime } from '@/reminderTime';
-import { COLORS, FONTS, SPACE, TYPE } from '@/theme';
+import { useTheme } from '@/ThemeContext';
+import { FONTS, SPACE, type Colors } from '@/theme';
 import type { Memory, MemoryDraft } from '@/types';
 import { useMemories } from '@/useMemories';
 import { useVoiceInput } from '@/useVoiceInput';
@@ -47,6 +49,9 @@ function toDraft({ id, createdAt, confirmed, rawInput, ...draft }: Memory): Memo
  * rather than every note costing one press to confirm.
  */
 export default function CaptureScreen() {
+  const { colors, type } = useTheme();
+  const styles = makeStyles(colors);
+
   const router = useRouter();
   const [text, setText] = useState('');
   const [saving, setSaving] = useState(false);
@@ -162,7 +167,10 @@ export default function CaptureScreen() {
       keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
     >
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <Text style={TYPE.display}>What happened?</Text>
+        <View style={styles.titleRow}>
+          <Text style={type.display}>What happened?</Text>
+          <ThemeToggle />
+        </View>
 
         <View style={styles.composer}>
           <TextInput
@@ -175,7 +183,7 @@ export default function CaptureScreen() {
               }
             }}
             placeholder="Speak or type"
-            placeholderTextColor={COLORS.mist}
+            placeholderTextColor={colors.mist}
             style={styles.input}
             multiline
             editable={mode !== 'listening' && !saving}
@@ -188,18 +196,18 @@ export default function CaptureScreen() {
                   <VoiceWaveform level={voice.level} />
                   <View style={styles.listeningMeta}>
                     <Text
-                      style={[TYPE.label, styles.live]}
+                      style={[type.label, styles.live]}
                       accessibilityLiveRegion="polite"
                     >
                       LISTENING
                     </Text>
                     <Pressable onPress={voice.cancel} hitSlop={10}>
-                      <Text style={[TYPE.label, styles.cancel]}>CANCEL</Text>
+                      <Text style={[type.label, styles.cancel]}>CANCEL</Text>
                     </Pressable>
                   </View>
                 </>
               ) : (
-                <Text style={TYPE.fine}>{status}</Text>
+                <Text style={type.fine}>{status}</Text>
               )}
             </View>
             <ComposeButton
@@ -226,17 +234,17 @@ export default function CaptureScreen() {
         {saved ? (
           <View style={styles.saved}>
             <View style={styles.savedHead}>
-              <Text style={[TYPE.label, styles.kept]}>
+              <Text style={[type.label, styles.kept]}>
                 {saved.memories.length === 1
                   ? 'SAVED'
                   : `SAVED ${saved.memories.length} ENTRIES`}
               </Text>
               <View style={styles.savedActions}>
                 <Pressable onPress={() => void undo()} hitSlop={10}>
-                  <Text style={[TYPE.label, styles.action]}>UNDO</Text>
+                  <Text style={[type.label, styles.action]}>UNDO</Text>
                 </Pressable>
                 <Pressable onPress={() => void edit()} hitSlop={10}>
-                  <Text style={[TYPE.label, styles.action]}>EDIT</Text>
+                  <Text style={[type.label, styles.action]}>EDIT</Text>
                 </Pressable>
               </View>
             </View>
@@ -244,7 +252,7 @@ export default function CaptureScreen() {
               <MemoryRow key={memory.id} memory={memory} gutter="date" />
             ))}
             {saved.alerts === false ? (
-              <Text style={[TYPE.body, styles.alertsOff]}>
+              <Text style={[type.body, styles.alertsOff]}>
                 Notifications are off, so this won't remind you. Turn them on in
                 Settings › Apps › PERAI › Notifications.
               </Text>
@@ -272,13 +280,13 @@ export default function CaptureScreen() {
         ) : null}
 
         {!loading && memories.length === 0 && !saved ? (
-          <Text style={[TYPE.body, styles.firstRun]}>
+          <Text style={[type.body, styles.firstRun]}>
             Everything you record shows up here and in your Timeline. Ask about
             any of it later from the Ask tab.
           </Text>
         ) : null}
 
-        <Text style={[TYPE.stamp, styles.version]}>PERAI {appVersion()}</Text>
+        <Text style={[type.stamp, styles.version]}>PERAI {appVersion()}</Text>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -286,53 +294,62 @@ export default function CaptureScreen() {
 
 /** A rule in the margin, not a coloured box. States the fact and the fix. */
 function Notice({ children }: { children: React.ReactNode }) {
+  const { colors, type } = useTheme();
+  const styles = makeStyles(colors);
   return (
     <View style={styles.notice}>
-      <Text style={[TYPE.body, styles.noticeText]}>{children}</Text>
+      <Text style={[type.body, styles.noticeText]}>{children}</Text>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: COLORS.paper },
-  content: { flexGrow: 1, padding: SPACE.page, paddingTop: 72, paddingBottom: 28, gap: 22 },
-  // Pinned to the bottom of the screen, out of the way of capturing.
-  version: { marginTop: 'auto', textAlign: 'center', color: COLORS.mist },
-  composer: { gap: 14 },
-  input: {
-    fontFamily: FONTS.sans,
-    fontSize: 19,
-    lineHeight: 28,
-    color: COLORS.ink,
-    minHeight: 56,
-    textAlignVertical: 'top',
-    paddingHorizontal: 0,
-    paddingTop: 4,
-    paddingBottom: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: COLORS.rule,
-  },
-  foot: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
-  statusCol: { flex: 1, gap: 6 },
-  listeningMeta: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  live: { color: COLORS.moss },
-  cancel: { color: COLORS.mist },
-  notice: { borderLeftWidth: 2, borderLeftColor: COLORS.alert, paddingLeft: 12, paddingVertical: 2 },
-  noticeText: { color: COLORS.alert },
-  saved: {
-    gap: 4,
-    borderLeftWidth: 2,
-    borderLeftColor: COLORS.moss,
-    paddingLeft: 12,
-  },
-  savedHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  kept: { color: COLORS.moss },
-  savedActions: { flexDirection: 'row', gap: 20 },
-  action: { color: COLORS.graphite },
-  alertsOff: { color: COLORS.alert, marginTop: 8 },
-  firstRun: { maxWidth: 320, marginTop: 8 },
-});
+function makeStyles(colors: Colors) {
+  return StyleSheet.create({
+    flex: { flex: 1, backgroundColor: colors.paper },
+    content: { flexGrow: 1, padding: SPACE.page, paddingTop: 72, paddingBottom: 28, gap: 22 },
+    titleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    composer: { gap: 14 },
+    input: {
+      fontFamily: FONTS.sans,
+      fontSize: 19,
+      lineHeight: 28,
+      color: colors.ink,
+      minHeight: 56,
+      textAlignVertical: 'top',
+      paddingHorizontal: 0,
+      paddingTop: 4,
+      paddingBottom: 12,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.rule,
+    },
+    foot: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+    statusCol: { flex: 1, gap: 6 },
+    listeningMeta: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    live: { color: colors.moss },
+    cancel: { color: colors.mist },
+    notice: { borderLeftWidth: 2, borderLeftColor: colors.alert, paddingLeft: 12, paddingVertical: 2 },
+    noticeText: { color: colors.alert },
+    saved: {
+      gap: 4,
+      borderLeftWidth: 2,
+      borderLeftColor: colors.moss,
+      paddingLeft: 12,
+    },
+    savedHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+    kept: { color: colors.moss },
+    savedActions: { flexDirection: 'row', gap: 20 },
+    action: { color: colors.graphite },
+    alertsOff: { color: colors.alert, marginTop: 8 },
+    firstRun: { maxWidth: 320, marginTop: 8 },
+    // Pinned to the bottom of the screen, out of the way of capturing.
+    version: { marginTop: 'auto', textAlign: 'center', color: colors.mist },
+  });
+}

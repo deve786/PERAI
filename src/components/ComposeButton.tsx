@@ -1,7 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useRef } from 'react';
 import { ActivityIndicator, Animated, Pressable, StyleSheet, View } from 'react-native';
-import { COLORS } from '../theme';
+import { useTheme } from '../ThemeContext';
+import type { Colors } from '../theme';
 
 export type ComposeMode = 'voice' | 'send' | 'listening' | 'busy';
 
@@ -25,6 +26,7 @@ const SIZE = 48;
  * make about what to press next.
  */
 export function ComposeButton({ mode, level = 0, onPress, disabled, accessibilityLabel }: Props) {
+  const { colors } = useTheme();
   const ring = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -36,6 +38,7 @@ export function ComposeButton({ mode, level = 0, onPress, disabled, accessibilit
   }, [mode, level, ring]);
 
   const off = disabled && mode !== 'listening';
+  const styles = makeStyles(colors);
 
   return (
     <View style={styles.wrap}>
@@ -67,14 +70,14 @@ export function ComposeButton({ mode, level = 0, onPress, disabled, accessibilit
         ]}
       >
         {mode === 'busy' ? (
-          <ActivityIndicator color={COLORS.paper} size="small" />
+          <ActivityIndicator color={colors.onAccent} size="small" />
         ) : (
           <Ionicons
             name={
               mode === 'listening' ? 'stop' : mode === 'send' ? 'arrow-up' : 'mic'
             }
             size={mode === 'listening' ? 18 : 22}
-            color={COLORS.paper}
+            color={colors.onAccent}
           />
         )}
       </Pressable>
@@ -82,23 +85,25 @@ export function ComposeButton({ mode, level = 0, onPress, disabled, accessibilit
   );
 }
 
-const styles = StyleSheet.create({
-  wrap: { width: SIZE, height: SIZE, alignItems: 'center', justifyContent: 'center' },
-  ring: {
-    position: 'absolute',
-    width: SIZE,
-    height: SIZE,
-    borderRadius: SIZE / 2,
-    backgroundColor: COLORS.moss,
-  },
-  button: {
-    width: SIZE,
-    height: SIZE,
-    borderRadius: SIZE / 2,
-    backgroundColor: COLORS.moss,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  off: { backgroundColor: COLORS.rule },
-  pressed: { opacity: 0.8 },
-});
+function makeStyles(colors: Colors) {
+  return StyleSheet.create({
+    wrap: { width: SIZE, height: SIZE, alignItems: 'center', justifyContent: 'center' },
+    ring: {
+      position: 'absolute',
+      width: SIZE,
+      height: SIZE,
+      borderRadius: SIZE / 2,
+      backgroundColor: colors.moss,
+    },
+    button: {
+      width: SIZE,
+      height: SIZE,
+      borderRadius: SIZE / 2,
+      backgroundColor: colors.moss,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    off: { backgroundColor: colors.rule },
+    pressed: { opacity: 0.8 },
+  });
+}

@@ -1,7 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Tabs } from 'expo-router/js-tabs';
 import { StyleSheet } from 'react-native';
-import { COLORS, FONTS } from '@/theme';
+import { useTheme } from '@/ThemeContext';
+import { FONTS } from '@/theme';
 
 /**
  * Icons survive the minimalist pass only here, where they earn their place:
@@ -12,15 +13,17 @@ import { COLORS, FONTS } from '@/theme';
  * the interface should not use that word for something else.
  */
 export default function TabsLayout() {
+  const { colors } = useTheme();
+
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: COLORS.moss,
-        tabBarInactiveTintColor: COLORS.mist,
+        tabBarActiveTintColor: colors.moss,
+        tabBarInactiveTintColor: colors.mist,
         tabBarStyle: {
-          backgroundColor: COLORS.paper,
-          borderTopColor: COLORS.rule,
+          backgroundColor: colors.paper,
+          borderTopColor: colors.rule,
           borderTopWidth: StyleSheet.hairlineWidth,
           height: 74,
           paddingTop: 10,
@@ -31,7 +34,7 @@ export default function TabsLayout() {
           letterSpacing: 0.9,
           marginTop: 3,
         },
-        sceneStyle: { backgroundColor: COLORS.paper },
+        sceneStyle: { backgroundColor: colors.paper },
       }}
     >
       <Tabs.Screen

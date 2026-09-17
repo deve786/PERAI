@@ -1,5 +1,6 @@
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { COLORS, FONTS, SPACE } from '../theme';
+import { useTheme } from '../ThemeContext';
+import { FONTS, SPACE, type Colors } from '../theme';
 
 interface ChipProps {
   label: string;
@@ -12,6 +13,9 @@ interface ChipProps {
  * record itself — selecting one is visually "pull the rows carrying this mark".
  */
 export function Chip({ label, selected, onPress }: ChipProps) {
+  const { colors } = useTheme();
+  const styles = makeChipStyles(colors);
+
   return (
     <Pressable
       onPress={onPress}
@@ -43,7 +47,7 @@ export function ChipRow<T extends string>({
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
-      contentContainerStyle={styles.row}
+      contentContainerStyle={layout.row}
     >
       {allLabel ? (
         <Chip label={allLabel} selected={value === null} onPress={() => onChange(null)} />
@@ -67,7 +71,7 @@ export function ChipWrap<T extends string>({
   onChange,
 }: Omit<ChipRowProps<T>, 'allLabel'>) {
   return (
-    <View style={styles.wrap}>
+    <View style={layout.wrap}>
       {options.map((option) => (
         <Chip
           key={option}
@@ -80,21 +84,27 @@ export function ChipWrap<T extends string>({
   );
 }
 
-const styles = StyleSheet.create({
+// Layout only — no colours, so this never needs to change with the theme.
+const layout = StyleSheet.create({
   row: { gap: 6, paddingHorizontal: SPACE.page, paddingVertical: 2 },
   wrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  chip: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 4,
-    backgroundColor: 'transparent',
-  },
-  chipSelected: { backgroundColor: COLORS.moss },
-  label: {
-    fontFamily: FONTS.mono,
-    fontSize: 10,
-    letterSpacing: 0.9,
-    color: COLORS.mist,
-  },
-  labelSelected: { color: COLORS.paper },
 });
+
+function makeChipStyles(colors: Colors) {
+  return StyleSheet.create({
+    chip: {
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 4,
+      backgroundColor: 'transparent',
+    },
+    chipSelected: { backgroundColor: colors.moss },
+    label: {
+      fontFamily: FONTS.mono,
+      fontSize: 10,
+      letterSpacing: 0.9,
+      color: colors.mist,
+    },
+    labelSelected: { color: colors.onAccent },
+  });
+}

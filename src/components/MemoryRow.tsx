@@ -1,5 +1,6 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { COLORS, GUTTER, SPACE, TYPE } from '../theme';
+import { useTheme } from '../ThemeContext';
+import { GUTTER, SPACE, type Colors } from '../theme';
 import { addedLabel, formatAmount, hasStatedTime, shortDate, timeLabel } from '../format';
 import { reminderLabel, reminderTime } from '../reminderTime';
 import type { Memory } from '../types';
@@ -33,6 +34,9 @@ export function MemoryRow({
   onLongPress,
   showAdded = true,
 }: Props) {
+  const { colors, type } = useTheme();
+  const styles = makeStyles(colors);
+
   const amount = formatAmount(memory.amount, memory.currency);
   // A clock time appears only if the note stated one; otherwise the gutter
   // holds a dash rather than an invented time.
@@ -51,15 +55,15 @@ export function MemoryRow({
       onLongPress={onLongPress}
       style={({ pressed }) => [styles.row, pressed && onPress ? styles.pressed : null]}
     >
-      <Text style={[TYPE.gutter, styles.mark]}>{mark}</Text>
+      <Text style={[type.gutter, styles.mark]}>{mark}</Text>
 
       <View style={styles.body}>
         <View style={styles.titleLine}>
-          <Text style={[TYPE.entry, styles.title]}>{memory.title}</Text>
-          {amount ? <Text style={TYPE.figure}>{amount}</Text> : null}
+          <Text style={[type.entry, styles.title]}>{memory.title}</Text>
+          {amount ? <Text style={type.figure}>{amount}</Text> : null}
         </View>
 
-        <Text style={TYPE.stamp}>
+        <Text style={type.stamp}>
           {[
             memory.category.toUpperCase(),
             memory.type !== 'memory' ? memory.type.toUpperCase() : null,
@@ -70,10 +74,10 @@ export function MemoryRow({
         </Text>
 
         {/* Its own line: sharing the category line got it truncated to "ADDED 16 …". */}
-        {showAdded ? <Text style={TYPE.stamp}>{added}</Text> : null}
+        {showAdded ? <Text style={type.stamp}>{added}</Text> : null}
 
         {remindsAt ? (
-          <Text style={[TYPE.stamp, styles.reminds]}>
+          <Text style={[type.stamp, styles.reminds]}>
             REMINDS YOU {reminderLabel(remindsAt)}
           </Text>
         ) : null}
@@ -82,24 +86,26 @@ export function MemoryRow({
   );
 }
 
-const styles = StyleSheet.create({
-  row: {
-    flexDirection: 'row',
-    paddingVertical: SPACE.tight + 4,
-    gap: 4,
-  },
-  pressed: { opacity: 0.45 },
-  mark: {
-    width: GUTTER,
-    paddingTop: 2,
-  },
-  body: { flex: 1, gap: 5 },
-  titleLine: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  title: { flex: 1, color: COLORS.ink },
-  reminds: { color: COLORS.moss },
-});
+function makeStyles(colors: Colors) {
+  return StyleSheet.create({
+    row: {
+      flexDirection: 'row',
+      paddingVertical: SPACE.tight + 4,
+      gap: 4,
+    },
+    pressed: { opacity: 0.45 },
+    mark: {
+      width: GUTTER,
+      paddingTop: 2,
+    },
+    body: { flex: 1, gap: 5 },
+    titleLine: {
+      flexDirection: 'row',
+      alignItems: 'baseline',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    title: { flex: 1, color: colors.ink },
+    reminds: { color: colors.moss },
+  });
+}

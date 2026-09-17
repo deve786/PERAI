@@ -8,6 +8,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { describeError } from './ai/client';
 import { transcribeRecording } from './ai/transcribe';
+import { newVoiceActivityState, processSample, SAMPLE_MS } from './voiceActivity';
 
 export type VoiceStage = 'idle' | 'listening' | 'transcribing';
 
@@ -17,38 +18,17 @@ const OPTIONS: RecordingOptions = {
   isMeteringEnabled: true,
 };
 
-const SAMPLE_MS = 100;
-/**
- * Quiet this long after speaking = finished, matching the pause-to-finish feel
- * of Gemini/ChatGPT voice input rather than cutting off the moment you take a
- * breath. Tapping the mic again still ends it immediately for anyone who
- * doesn't want to wait out the pause.
- */
-const END_OF_SPEECH_MS = 5000;
-/** Nothing said this long after pressing = give up without a model call. */
-const NO_SPEECH_TIMEOUT_MS = 8000;
-/** Hard cap on one note. */
-const MAX_MS = 60_000;
-/** First samples are room tone, used to set the bar for "speaking". */
-const CALIBRATION_MS = 400;
-/** How far above room tone counts as speech. */
-const SPEECH_ABOVE_FLOOR_DB = 10;
-
-/**
- * Metering is dBFS (≤ 0) on most devices, but some report linear amplitude.
- * Normalise both to dB so the silence logic works everywhere.
- */
-function toDb(value: number): number {
-  if (value > 0) return 20 * Math.log10(Math.max(value, 1) / 32767);
-  return value;
-}
-
 /**
  * One press to talk. Recording ends by itself once you stop speaking (or press
- * again to end early), and the transcript is handed to `onTranscript`.
+ * again to end early), and the transcript is handed to `onTranscript`. The
+ * actual stop/continue decision lives in `voiceActivity.ts`, which is unit
+ * tested; this hook only drives the timer and the native recorder.
  *
- * If the device reports no input level, auto-stop is skipped and a second press
- * ends the recording — voice still works, just one press longer.
+ * If the device reports no input level at all, auto-stop is skipped entirely
+ * and a second press ends the recording. If it reports a level that never
+ * moves (metering wired up but not actually live — seen on some Android
+ * builds), that is treated the same way after a short check, rather than
+ * mistaking "frozen" for "silent" and cutting the recording off immediately.
  */
 export function useVoiceInput(onTranscript: (text: string) => void) {
   const recorder = useAudioRecorder(OPTIONS);
@@ -63,14 +43,8 @@ export function useVoiceInput(onTranscript: (text: string) => void) {
   callback.current = onTranscript;
 
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
-  const session = useRef({
-    startedAt: 0,
-    samples: [] as number[],
-    floor: null as number | null,
-    heardSpeech: false,
-    lastSpeechAt: 0,
-    loudRun: 0,
-  });
+  const startedAt = useRef(0);
+  const activity = useRef(newVoiceActivityState());
 
   const setStageBoth = (next: VoiceStage) => {
     stageRef.current = next;
@@ -83,9 +57,9 @@ export function useVoiceInput(onTranscript: (text: string) => void) {
     setLevel(0);
   };
 
-  /** End recording. `transcribe: false` discards it. */
+  /** End recording. `transcribe: false` discards it without sending anything. */
   const finish = useCallback(
-    async (transcribe: boolean, message?: string) => {
+    async (transcribe: boolean) => {
       if (stageRef.current !== 'listening') return;
       stopTimer();
       try {
@@ -96,7 +70,6 @@ export function useVoiceInput(onTranscript: (text: string) => void) {
 
       if (!transcribe) {
         setStageBoth('idle');
-        if (message) setError(message);
         return;
       }
 
@@ -122,51 +95,15 @@ export function useVoiceInput(onTranscript: (text: string) => void) {
 
   const sample = useCallback(() => {
     if (stageRef.current !== 'listening') return;
-    const s = session.current;
-    const now = Date.now();
-    const elapsed = now - s.startedAt;
 
-    if (elapsed >= MAX_MS) {
-      void finish(true);
-      return;
-    }
-
+    const elapsedMs = Date.now() - startedAt.current;
     const raw = recorder.getStatus().metering;
-    if (typeof raw !== 'number' || !Number.isFinite(raw)) {
-      // No level on this device: rely on the second press.
-      return;
-    }
-    const db = toDb(raw);
+    const rawMetering = typeof raw === 'number' && Number.isFinite(raw) ? raw : null;
 
-    if (s.floor === null) {
-      s.samples.push(db);
-      setLevel(0.08);
-      if (elapsed >= CALIBRATION_MS && s.samples.length > 0) {
-        const sorted = [...s.samples].sort((a, b) => a - b);
-        s.floor = sorted[Math.floor(sorted.length / 2)];
-      }
-      return;
-    }
+    const shouldStop = processSample(activity.current, rawMetering, elapsedMs);
+    setLevel(activity.current.level);
 
-    const threshold = s.floor + SPEECH_ABOVE_FLOOR_DB;
-    setLevel(Math.max(0.08, Math.min(1, (db - s.floor) / 30)));
-
-    if (db > threshold) {
-      s.loudRun += 1;
-      // Two loud samples in a row, so a single click or bump doesn't count.
-      if (s.loudRun >= 2) {
-        s.heardSpeech = true;
-        s.lastSpeechAt = now;
-      }
-    } else {
-      s.loudRun = 0;
-    }
-
-    if (s.heardSpeech && now - s.lastSpeechAt >= END_OF_SPEECH_MS) {
-      void finish(true);
-    } else if (!s.heardSpeech && elapsed >= NO_SPEECH_TIMEOUT_MS) {
-      void finish(false, "Didn't hear anything. Press the mic and speak.");
-    }
+    if (shouldStop) void finish(true);
   }, [recorder, finish]);
 
   const start = useCallback(async () => {
@@ -182,14 +119,8 @@ export function useVoiceInput(onTranscript: (text: string) => void) {
     await recorder.prepareToRecordAsync();
     recorder.record();
 
-    session.current = {
-      startedAt: Date.now(),
-      samples: [],
-      floor: null,
-      heardSpeech: false,
-      lastSpeechAt: 0,
-      loudRun: 0,
-    };
+    startedAt.current = Date.now();
+    activity.current = newVoiceActivityState();
     setStageBoth('listening');
     timer.current = setInterval(sample, SAMPLE_MS);
   }, [recorder, sample]);

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
-import { COLORS } from '../theme';
+import { useTheme } from '../ThemeContext';
+import type { Colors } from '../theme';
 
 const BARS = 28;
 const MIN_HEIGHT = 3;
@@ -19,11 +20,14 @@ interface Props {
  * it read as live.
  */
 export function VoiceWaveform({ level }: Props) {
+  const { colors } = useTheme();
   const [heights, setHeights] = useState<number[]>(() => Array(BARS).fill(MIN_HEIGHT));
 
   useEffect(() => {
     setHeights((prev) => [...prev.slice(1), MIN_HEIGHT + level * (MAX_HEIGHT - MIN_HEIGHT)]);
   }, [level]);
+
+  const styles = makeStyles(colors);
 
   return (
     <View style={styles.row} accessibilityElementsHidden importantForAccessibility="no">
@@ -34,16 +38,18 @@ export function VoiceWaveform({ level }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    height: MAX_HEIGHT,
-  },
-  bar: {
-    width: 3,
-    borderRadius: 1.5,
-    backgroundColor: COLORS.moss,
-  },
-});
+function makeStyles(colors: Colors) {
+  return StyleSheet.create({
+    row: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 3,
+      height: MAX_HEIGHT,
+    },
+    bar: {
+      width: 3,
+      borderRadius: 1.5,
+      backgroundColor: colors.moss,
+    },
+  });
+}
