@@ -147,24 +147,25 @@ The Gemini key reaches the build as an EAS environment variable, because
 `.env` is gitignored and never uploaded.
 
 ```bash
-npm run build:android -- "what changed"   # new APK      1.1.x -> 1.2.0
-npm run update -- "what changed"          # OTA update   1.2.0 -> 1.2.1
+npm run update -- "fixed x"                  # OTA fix       1.2.0 (6) -> 1.2.0 (7)
+npm run update -- --feature "added y"        # OTA feature   1.2.0 (7) -> 1.3.0 (8)
+npm run build:android -- "what changed"      # new APK       1.3.0 (8) -> 1.4.0 (9)
 ```
 
 ### Version numbers
 
-Both commands bump the version before shipping and roll the bump back if EAS
-fails, so the number in the repo always matches what shipped. The version is
-shown at the bottom of the Record tab as `PERAI 1.2.1`.
+Shown at the bottom of the Record tab as `PERAI 1.2.0 · BUILD 6`.
 
-- **MAJOR.MINOR** is `version` in `app.json`. A build bumps MINOR.
-- **The last number** counts OTA updates on top of that build. It lives in
-  `src/release.json` and resets to 0 on the next build.
+- **Build number** goes up on every release of any kind and never resets.
+- **Version** goes up only for a new build or a release marked `--feature`.
+  Plain fixes leave it alone.
 
-They are split because `version` is part of the runtime fingerprint: bumping it
-in an OTA update would stop that update reaching installed phones.
-`src/release.json` ships in the JS bundle and does not affect the fingerprint.
-Both behaviours were checked with `npx expo-updates fingerprint:generate`.
+Both numbers live in `src/release.json`. `version` in `app.json` is part of the
+runtime fingerprint, so a feature update that bumped it there would never reach
+installed phones; `release.json` ships in the JS bundle and is not
+fingerprinted (checked with `npx expo-updates fingerprint:generate`). A new
+build also copies the version into `app.json` so Android's App info matches.
+Every number is rolled back if the EAS command fails.
 
 `fingerprint.config.js` also excludes npm scripts from the fingerprint. By
 default, editing any `package.json` script changes it — which would silently

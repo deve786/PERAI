@@ -1,21 +1,18 @@
-import Constants from 'expo-constants';
 import release from './release.json';
 
 /**
- * The version shown in the app: MAJOR.MINOR.UPDATE
+ * "1.2.0 · BUILD 6", shown at the bottom of the Record tab.
  *
- *  - MAJOR.MINOR come from `version` in app.json and change only with a new
- *    build (`npm run build:android` bumps MINOR).
- *  - UPDATE counts OTA updates published on top of that build
- *    (`npm run update` bumps it), and resets to 0 on the next build.
+ *  - The version changes only with a new app build or an update that adds a
+ *    feature.
+ *  - The build number goes up with every release of any kind, including
+ *    small OTA fixes, and never goes back down.
  *
- * Why two sources: `version` is part of the runtime fingerprint, so bumping it
- * for an OTA update would stop that update from reaching installed phones. The
- * counter lives in src/release.json, which ships in the JS bundle and does not
- * affect the fingerprint. Both were verified against `fingerprint:generate`.
+ * Both live in src/release.json rather than app.json: `version` in app.json is
+ * part of the runtime fingerprint, so a feature update that bumped it there
+ * would never reach installed phones. release.json ships inside the JS bundle
+ * and is not fingerprinted (verified with `fingerprint:generate`).
  */
 export function appVersion(): string {
-  const native = Constants.expoConfig?.version ?? '1.0.0';
-  const [major = '1', minor = '0'] = native.split('.');
-  return `${major}.${minor}.${release.update}`;
+  return `${release.version} · BUILD ${release.build}`;
 }

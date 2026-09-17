@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -15,12 +15,15 @@ import { appVersion } from '@/appVersion';
 import { extractMemories } from '@/ai/extract';
 import { ComposeButton, type ComposeMode } from '@/components/ComposeButton';
 import { MemoryRow } from '@/components/MemoryRow';
+import { Section } from '@/components/Section';
+import { VoiceWaveform } from '@/components/VoiceWaveform';
 import { deleteMemories, insertMemory } from '@/db/queries';
 import { setPendingDrafts } from '@/draftStore';
 import { notificationsAllowed, syncReminders } from '@/reminders';
 import { reminderTime } from '@/reminderTime';
 import { COLORS, FONTS, SPACE, TYPE } from '@/theme';
 import type { Memory, MemoryDraft } from '@/types';
+import { useMemories } from '@/useMemories';
 import { useVoiceInput } from '@/useVoiceInput';
 
 interface Saved {
@@ -85,6 +88,32 @@ export default function CaptureScreen() {
 
   const voice = useVoiceInput((spoken) => void save(spoken));
 
+  // Live view of the record; refreshes itself after every save, Undo or delete.
+  const { memories, loading } = useMemories();
+
+  // Entries just saved are already shown with Undo and Edit, so neither list
+  // below repeats them.
+  const justSaved = useMemo(() => new Set(saved?.memories.map((m) => m.id)), [saved]);
+
+  const upcoming = useMemo(() => {
+    const now = new Date();
+    return memories
+      .filter((memory) => !justSaved.has(memory.id))
+      .map((memory) => ({ memory, at: reminderTime(memory, now) }))
+      .filter((entry): entry is { memory: Memory; at: Date } => entry.at !== null)
+      .sort((a, b) => a.at.getTime() - b.at.getTime())
+      .slice(0, 3)
+      .map((entry) => entry.memory);
+  }, [memories, justSaved]);
+
+  const recent = useMemo(() => {
+    const ahead = new Set(upcoming.map((m) => m.id));
+    return [...memories]
+      .filter((m) => !justSaved.has(m.id) && !ahead.has(m.id))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, 4);
+  }, [memories, justSaved, upcoming]);
+
   async function undo() {
     if (!saved) return;
     await deleteMemories(saved.memories.map((m) => m.id));
@@ -116,15 +145,13 @@ export default function CaptureScreen() {
   }
 
   const status =
-    voice.stage === 'listening'
-      ? 'Listening. Stops when you pause'
-      : voice.stage === 'transcribing'
-        ? 'Writing that down'
-        : saving
-          ? 'Saving'
-          : typed
-            ? 'One line can hold several events'
-            : 'Tap the mic and say what happened';
+    voice.stage === 'transcribing'
+      ? 'Writing that down'
+      : saving
+        ? 'Saving'
+        : typed
+          ? 'One line can hold several events'
+          : 'Tap the mic and say what happened';
 
   const problem = voice.error ?? error;
 
@@ -156,12 +183,24 @@ export default function CaptureScreen() {
 
           <View style={styles.foot}>
             <View style={styles.statusCol}>
-              <Text style={[TYPE.fine, mode === 'listening' && styles.live]}>{status}</Text>
               {mode === 'listening' ? (
-                <Pressable onPress={voice.cancel} hitSlop={10}>
-                  <Text style={[TYPE.label, styles.cancel]}>CANCEL</Text>
-                </Pressable>
-              ) : null}
+                <>
+                  <VoiceWaveform level={voice.level} />
+                  <View style={styles.listeningMeta}>
+                    <Text
+                      style={[TYPE.label, styles.live]}
+                      accessibilityLiveRegion="polite"
+                    >
+                      LISTENING
+                    </Text>
+                    <Pressable onPress={voice.cancel} hitSlop={10}>
+                      <Text style={[TYPE.label, styles.cancel]}>CANCEL</Text>
+                    </Pressable>
+                  </View>
+                </>
+              ) : (
+                <Text style={TYPE.fine}>{status}</Text>
+              )}
             </View>
             <ComposeButton
               mode={mode}
@@ -213,6 +252,32 @@ export default function CaptureScreen() {
           </View>
         ) : null}
 
+        {upcoming.length > 0 ? (
+          <Section label="COMING UP" tone="ahead">
+            {upcoming.map((memory) => (
+              <MemoryRow key={memory.id} memory={memory} gutter="date" showAdded={false} />
+            ))}
+          </Section>
+        ) : null}
+
+        {recent.length > 0 ? (
+          <Section
+            label="RECENTLY ADDED"
+            action={{ label: 'ALL', onPress: () => router.push('/timeline') }}
+          >
+            {recent.map((memory) => (
+              <MemoryRow key={memory.id} memory={memory} gutter="date" />
+            ))}
+          </Section>
+        ) : null}
+
+        {!loading && memories.length === 0 && !saved ? (
+          <Text style={[TYPE.body, styles.firstRun]}>
+            Everything you record shows up here and in your Timeline. Ask about
+            any of it later from the Ask tab.
+          </Text>
+        ) : null}
+
         <Text style={[TYPE.stamp, styles.version]}>PERAI {appVersion()}</Text>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -239,7 +304,7 @@ const styles = StyleSheet.create({
     fontSize: 19,
     lineHeight: 28,
     color: COLORS.ink,
-    minHeight: 92,
+    minHeight: 56,
     textAlignVertical: 'top',
     paddingHorizontal: 0,
     paddingTop: 4,
@@ -249,6 +314,11 @@ const styles = StyleSheet.create({
   },
   foot: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
   statusCol: { flex: 1, gap: 6 },
+  listeningMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
   live: { color: COLORS.moss },
   cancel: { color: COLORS.mist },
   notice: { borderLeftWidth: 2, borderLeftColor: COLORS.alert, paddingLeft: 12, paddingVertical: 2 },
@@ -264,4 +334,5 @@ const styles = StyleSheet.create({
   savedActions: { flexDirection: 'row', gap: 20 },
   action: { color: COLORS.graphite },
   alertsOff: { color: COLORS.alert, marginTop: 8 },
+  firstRun: { maxWidth: 320, marginTop: 8 },
 });

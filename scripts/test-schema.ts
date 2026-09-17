@@ -126,6 +126,34 @@ const ordered = db
   .map((r) => (r as { id: string }).id);
 check('orders by event_date', ordered.length === 2, ordered);
 
+console.log('\nrecent questions');
+{
+  // Same statements as saveQuestion() in src/db/queries.ts.
+  const upsert = db.prepare(
+    `INSERT INTO questions (text, asked_at) VALUES (?, ?)
+     ON CONFLICT(text) DO UPDATE SET asked_at = excluded.asked_at`
+  );
+  upsert.run('When did I last cut my hair?', '2026-09-16T10:00:00.000Z');
+  upsert.run('How much did I spend?', '2026-09-16T11:00:00.000Z');
+  upsert.run('When did I last cut my hair?', '2026-09-16T12:00:00.000Z');
+
+  const rows = db
+    .prepare('SELECT text FROM questions ORDER BY asked_at DESC LIMIT 5')
+    .all()
+    .map((r) => (r as { text: string }).text);
+
+  check('asking again does not duplicate', rows.length === 2, rows);
+  check('asking again moves it to the top', rows[0] === 'When did I last cut my hair?', rows);
+
+  for (let i = 0; i < 25; i++) upsert.run(`question ${i}`, `2026-09-17T00:00:${String(i).padStart(2, '0')}.000Z`);
+  db.exec(
+    `DELETE FROM questions WHERE text NOT IN
+       (SELECT text FROM questions ORDER BY asked_at DESC LIMIT 20)`
+  );
+  const kept = (db.prepare('SELECT COUNT(*) AS n FROM questions').get() as { n: number }).n;
+  check('history is capped at 20', kept === 20, kept);
+}
+
 db.close();
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

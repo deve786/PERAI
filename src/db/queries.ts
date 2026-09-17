@@ -146,3 +146,32 @@ export async function deleteMemories(ids: string[]): Promise<void> {
 export async function deleteAllMemories(): Promise<void> {
   await getDb().runAsync('DELETE FROM memories');
 }
+
+/** Remember a question for the Ask tab's recent list. */
+export async function saveQuestion(text: string): Promise<void> {
+  const question = text.trim();
+  if (!question) return;
+  const db = getDb();
+  await db.runAsync(
+    `INSERT INTO questions (text, asked_at) VALUES (?, ?)
+     ON CONFLICT(text) DO UPDATE SET asked_at = excluded.asked_at`,
+    [question, new Date().toISOString()]
+  );
+  // Keep the table small; only the last few are ever shown.
+  await db.runAsync(
+    `DELETE FROM questions WHERE text NOT IN
+       (SELECT text FROM questions ORDER BY asked_at DESC LIMIT 20)`
+  );
+}
+
+export async function getRecentQuestions(limit = 5): Promise<string[]> {
+  const rows = await getDb().getAllAsync<{ text: string }>(
+    'SELECT text FROM questions ORDER BY asked_at DESC LIMIT ?',
+    [limit]
+  );
+  return rows.map((row) => row.text);
+}
+
+export async function forgetQuestion(text: string): Promise<void> {
+  await getDb().runAsync('DELETE FROM questions WHERE text = ?', [text]);
+}

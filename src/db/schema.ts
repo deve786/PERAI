@@ -30,6 +30,13 @@ CREATE TABLE IF NOT EXISTS memories (
 CREATE INDEX IF NOT EXISTS idx_memories_event_date ON memories (event_date DESC);
 CREATE INDEX IF NOT EXISTS idx_memories_category ON memories (category);
 CREATE INDEX IF NOT EXISTS idx_memories_type ON memories (type);
+
+-- Questions asked on the Ask tab, so they can be asked again with one tap.
+-- One row per distinct question; asking it again just moves it to the top.
+CREATE TABLE IF NOT EXISTS questions (
+  text TEXT PRIMARY KEY NOT NULL,
+  asked_at TEXT NOT NULL
+);
 `;
 
 export const DATABASE_NAME = 'perai.db';

@@ -18,10 +18,15 @@ const OPTIONS: RecordingOptions = {
 };
 
 const SAMPLE_MS = 100;
-/** Quiet this long after speaking = finished. */
-const END_OF_SPEECH_MS = 1600;
+/**
+ * Quiet this long after speaking = finished, matching the pause-to-finish feel
+ * of Gemini/ChatGPT voice input rather than cutting off the moment you take a
+ * breath. Tapping the mic again still ends it immediately for anyone who
+ * doesn't want to wait out the pause.
+ */
+const END_OF_SPEECH_MS = 5000;
 /** Nothing said this long after pressing = give up without a model call. */
-const NO_SPEECH_TIMEOUT_MS = 7000;
+const NO_SPEECH_TIMEOUT_MS = 8000;
 /** Hard cap on one note. */
 const MAX_MS = 60_000;
 /** First samples are room tone, used to set the bar for "speaking". */

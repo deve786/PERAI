@@ -14,6 +14,8 @@ interface Props {
   gutter?: 'time' | 'date';
   onPress?: () => void;
   onLongPress?: () => void;
+  /** Hide the ADDED line where it is noise, e.g. in Coming up. */
+  showAdded?: boolean;
 }
 
 /**
@@ -24,7 +26,13 @@ interface Props {
  * renders its evidence with this exact component, so the proof behind an
  * answer is visually continuous with the archive it came from.
  */
-export function MemoryRow({ memory, gutter = 'time', onPress, onLongPress }: Props) {
+export function MemoryRow({
+  memory,
+  gutter = 'time',
+  onPress,
+  onLongPress,
+  showAdded = true,
+}: Props) {
   const amount = formatAmount(memory.amount, memory.currency);
   // A clock time appears only if the note stated one; otherwise the gutter
   // holds a dash rather than an invented time.
@@ -62,7 +70,7 @@ export function MemoryRow({ memory, gutter = 'time', onPress, onLongPress }: Pro
         </Text>
 
         {/* Its own line: sharing the category line got it truncated to "ADDED 16 …". */}
-        <Text style={TYPE.stamp}>{added}</Text>
+        {showAdded ? <Text style={TYPE.stamp}>{added}</Text> : null}
 
         {remindsAt ? (
           <Text style={[TYPE.stamp, styles.reminds]}>
