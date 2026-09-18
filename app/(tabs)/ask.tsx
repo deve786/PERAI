@@ -128,8 +128,13 @@ export default function AskScreen() {
 
   // Speak the question and it is asked as soon as you stop talking. The
   // question stays visible above the answer, so a mis-hearing is obvious.
-  const people = useMemo(() => knownPeople(memories), [memories]);
-  const voice = useVoiceInput((spoken) => void ask(spoken), { contextualStrings: people });
+  // Names and list titles already recorded, so a question about them is heard
+  // the way they are spelled.
+  const hints = useMemo(
+    () => [...knownPeople(memories), ...memories.slice(0, 40).map((m) => m.title)],
+    [memories]
+  );
+  const voice = useVoiceInput((spoken) => void ask(spoken), { contextualStrings: hints });
 
   const listening = voice.stage === 'listening';
   const typed = question.trim().length > 0;

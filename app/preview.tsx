@@ -10,7 +10,7 @@ import {
   View,
 } from 'react-native';
 import { DraftCard } from '@/components/DraftCard';
-import { insertMemory } from '@/db/queries';
+import { insertMemory, rememberSpelling } from '@/db/queries';
 import { clearDrafts, removeDraft, updateDraft, usePendingDrafts } from '@/draftStore';
 import { useTheme } from '@/ThemeContext';
 import { SPACE, type Colors } from '@/theme';
@@ -37,10 +37,28 @@ export default function PreviewScreen() {
     }
   }, [drafts.length, router]);
 
+  // What each title looked like before it was edited here. A title corrected
+  // by hand is the best spelling there is — better than any search — so it is
+  // remembered and applied to every later note (see src/dictionary.ts).
+  const originalTitles = useRef(new Map<string, string>());
+  for (const entry of drafts) {
+    if (!originalTitles.current.has(entry.key)) {
+      originalTitles.current.set(entry.key, entry.draft.title);
+    }
+  }
+
+  async function keep(entry: (typeof drafts)[number]) {
+    const before = originalTitles.current.get(entry.key);
+    if (before && before !== entry.draft.title) {
+      await rememberSpelling(before, entry.draft.title, 'user');
+    }
+    await insertMemory(entry.draft, rawInput);
+  }
+
   async function save(key: string) {
     const entry = drafts.find((item) => item.key === key);
     if (!entry) return;
-    await insertMemory(entry.draft, rawInput);
+    await keep(entry);
     setSavedCount((count) => count + 1);
     removeDraft(key);
   }
@@ -54,7 +72,7 @@ export default function PreviewScreen() {
     // Sequential, not Promise.all: each insert fires a change event, and the
     // ordering keeps the Timeline's refreshes coherent.
     for (const entry of drafts) {
-      await insertMemory(entry.draft, rawInput);
+      await keep(entry);
     }
     setSavedCount((count) => count + drafts.length);
     clearDrafts();

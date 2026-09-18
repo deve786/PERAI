@@ -12,20 +12,21 @@ import {
 } from 'react-native';
 import { describeError, hasApiKey } from '@/ai/client';
 import { appVersion } from '@/appVersion';
-import { extractMemories } from '@/ai/extract';
-import { correctDraftSpellings } from '@/ai/spelling';
 import { ComposeButton, type ComposeMode } from '@/components/ComposeButton';
 import { MemoryRow } from '@/components/MemoryRow';
 import { Section } from '@/components/Section';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { VoiceWaveform } from '@/components/VoiceWaveform';
-import { deleteMemories, insertMemory } from '@/db/queries';
+import { deleteMemories, queueNote } from '@/db/queries';
 import { setPendingDrafts } from '@/draftStore';
+import { fileNote } from '@/fileNote';
+import { LISTS } from '@/lists';
+import { usePendingNotes } from '@/usePendingNotes';
 import { notificationsAllowed, syncReminders } from '@/reminders';
 import { reminderTime } from '@/reminderTime';
 import { useTheme } from '@/ThemeContext';
 import { FONTS, SPACE, type Colors } from '@/theme';
-import type { Memory, MemoryDraft } from '@/types';
+import type { Memory, MemoryDraft, MemoryType } from '@/types';
 import { useMemories } from '@/useMemories';
 import { knownPeople } from '@/speechText';
 import { useVoiceInput } from '@/useVoiceInput';
@@ -37,6 +38,8 @@ interface Saved {
   memories: Memory[];
   /** null when nothing saved is a reminder; otherwise whether alerts can fire. */
   alerts: boolean | null;
+  /** Titles a web search corrected, shown so a wrong one is obvious. */
+  changed: { from: string; to: string }[];
 }
 
 function toDraft({ id, createdAt, confirmed, rawInput, ...draft }: Memory): MemoryDraft {
@@ -68,6 +71,13 @@ export default function CaptureScreen() {
   const { memories, loading } = useMemories();
   // Names already recorded: recognizer hints, and spellings the AI should keep.
   const people = useMemo(() => knownPeople(memories), [memories]);
+  // Titles already on the lists: heard again, they cost no web search.
+  const listTitles = useMemo(() => {
+    const types = LISTS.map((list) => list.type as MemoryType);
+    return memories.filter((m) => types.includes(m.type)).map((m) => m.title);
+  }, [memories]);
+
+  const pending = usePendingNotes({ people, listTitles }, configured);
 
   async function save(raw: string) {
     const note = raw.trim();
@@ -77,33 +87,32 @@ export default function CaptureScreen() {
     setError(null);
     setSaved(null);
     try {
-      const drafts = await extractMemories(note, new Date().toISOString(), people);
-      // Names of games, films and products are checked against a web search:
-      // speech recognition rarely spells a title right on its own.
-      const checked = await correctDraftSpellings(drafts);
-      const memories: Memory[] = [];
-      for (const draft of checked) memories.push(await insertMemory(draft, note));
+      const { memories: kept, changed } = await fileNote(note, { people, listTitles });
 
       // Ask for notification permission here, the first time it matters —
       // right after saving something that is meant to remind you.
       let alerts: boolean | null = null;
-      if (memories.some((m) => reminderTime(m) !== null)) {
+      if (kept.some((m) => reminderTime(m) !== null)) {
         alerts = await notificationsAllowed(true);
         if (alerts) await syncReminders();
       }
 
       setText('');
-      setSaved({ rawInput: note, memories, alerts });
+      setSaved({ rawInput: note, memories: kept, alerts, changed });
     } catch (err) {
-      // Put a spoken note in the box so nothing said is lost.
-      setText(note);
-      setError(describeError(err));
+      // Nothing said is lost: the note is queued and filed automatically once
+      // whatever failed — the network, the daily quota — is working again.
+      await queueNote(note, describeError(err));
+      setText('');
+      setError(`${describeError(err)} Your note is kept below and will be filed automatically.`);
     } finally {
       setSaving(false);
     }
   }
 
-  const voice = useVoiceInput((spoken) => void save(spoken), { contextualStrings: people });
+  const voice = useVoiceInput((spoken) => void save(spoken), {
+    contextualStrings: [...people, ...listTitles],
+  });
   const [wakeArmed, setWakeArmed] = useState(false);
 
   // Entries just saved are already shown with Undo and Edit, so neither list
@@ -283,6 +292,11 @@ export default function CaptureScreen() {
             {saved.memories.map((memory) => (
               <MemoryRow key={memory.id} memory={memory} gutter="date" />
             ))}
+            {saved.changed.map((fix) => (
+              <Text key={fix.to} style={[type.stamp, styles.spelled]}>
+                HEARD "{fix.from.toUpperCase()}" · SAVED AS {fix.to.toUpperCase()}
+              </Text>
+            ))}
             {saved.alerts === false ? (
               <Text style={[type.body, styles.alertsOff]}>
                 Notifications are off, so this won't remind you. Turn them on in
@@ -290,6 +304,31 @@ export default function CaptureScreen() {
               </Text>
             ) : null}
           </View>
+        ) : null}
+
+        {pending.notes.length > 0 ? (
+          <Section label="WAITING TO BE FILED" inset={false}>
+            {pending.notes.map((note) => (
+              <View key={note.id} style={styles.pendingNote}>
+                <Text style={type.body} numberOfLines={3}>
+                  {note.text}
+                </Text>
+                <View style={styles.pendingFoot}>
+                  <Text style={[type.stamp, styles.pendingWhy]} numberOfLines={1}>
+                    {note.lastError ?? 'Waiting'}
+                  </Text>
+                  <View style={styles.savedActions}>
+                    <Pressable onPress={() => pending.retry(note.id)} hitSlop={10}>
+                      <Text style={[type.label, styles.action]}>RETRY</Text>
+                    </Pressable>
+                    <Pressable onPress={() => pending.forget(note.id)} hitSlop={10}>
+                      <Text style={[type.label, styles.action]}>DELETE</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              </View>
+            ))}
+          </Section>
         ) : null}
 
         {upcoming.length > 0 ? (
@@ -381,6 +420,15 @@ function makeStyles(colors: Colors) {
     savedActions: { flexDirection: 'row', gap: 20 },
     action: { color: colors.graphite },
     alertsOff: { color: colors.alert, marginTop: 8 },
+    spelled: { color: colors.moss, marginTop: 2 },
+    pendingNote: { gap: 6, paddingVertical: 8 },
+    pendingFoot: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    pendingWhy: { flex: 1, color: colors.alert },
     firstRun: { maxWidth: 320, marginTop: 8 },
     // Pinned to the bottom of the screen, out of the way of capturing.
     version: { marginTop: 'auto', textAlign: 'center', color: colors.mist },

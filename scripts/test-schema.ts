@@ -154,6 +154,57 @@ console.log('\nrecent questions');
   check('history is capped at 20', kept === 20, kept);
 }
 
+console.log('\nlearned spellings');
+{
+  // Same statement as rememberSpelling() in src/db/queries.ts.
+  const remember = db.prepare(
+    `INSERT INTO spellings (heard, correct, source, updated_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(heard) DO UPDATE SET
+       correct = excluded.correct,
+       source = excluded.source,
+       updated_at = excluded.updated_at
+     WHERE excluded.source = 'user' OR spellings.source = 'search'`
+  );
+  const correctFor = (heard: string) =>
+    (db.prepare('SELECT correct FROM spellings WHERE heard = ?').get(heard) as
+      | { correct: string }
+      | undefined)?.correct;
+
+  remember.run('ghost of yachty', 'Ghost of Yotei', 'search', '2026-09-18T10:00:00.000Z');
+  check('a searched spelling is stored', correctFor('ghost of yachty') === 'Ghost of Yotei');
+
+  remember.run('ghost of yachty', 'Ghost of Yōtei', 'user', '2026-09-18T11:00:00.000Z');
+  check('your own correction replaces it', correctFor('ghost of yachty') === 'Ghost of Yōtei');
+
+  remember.run('ghost of yachty', 'Ghost of Yotei', 'search', '2026-09-18T12:00:00.000Z');
+  check('a later search cannot undo your correction', correctFor('ghost of yachty') === 'Ghost of Yōtei');
+}
+
+console.log('\nnotes waiting to be filed');
+{
+  db.prepare(
+    `INSERT INTO pending_notes (id, text, created_at, attempts, last_attempt_at, last_error)
+     VALUES (?, ?, ?, 0, ?, ?)`
+  ).run('p1', 'remind me to call mom', '2026-09-18T10:00:00.000Z', '2026-09-18T10:00:00.000Z', 'quota');
+
+  db.prepare(
+    `UPDATE pending_notes SET attempts = attempts + 1, last_attempt_at = ?, last_error = ? WHERE id = ?`
+  ).run('2026-09-18T10:05:00.000Z', 'quota again', 'p1');
+
+  const row = db.prepare('SELECT * FROM pending_notes WHERE id = ?').get('p1') as {
+    text: string;
+    attempts: number;
+    last_error: string;
+  };
+  check('a queued note keeps its words', row.text === 'remind me to call mom');
+  check('a failed try is counted', row.attempts === 1, row.attempts);
+  check('the reason is kept for the screen', row.last_error === 'quota again');
+
+  db.prepare('DELETE FROM pending_notes WHERE id = ?').run('p1');
+  const left = (db.prepare('SELECT COUNT(*) AS n FROM pending_notes').get() as { n: number }).n;
+  check('filing it removes it from the queue', left === 0);
+}
+
 db.close();
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

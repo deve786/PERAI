@@ -14,7 +14,9 @@ import { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { UpdateBanner } from '@/components/UpdateBanner';
 import { initDatabase } from '@/db/client';
+import { getSetting } from '@/db/queries';
 import { startReminderSync } from '@/reminders';
+import { SPEECH_LANGUAGE_KEY, setSpeechLanguage } from '@/speechSession';
 import { ThemeProvider, useTheme } from '@/ThemeContext';
 import { COLORS, SPACE, TYPE } from '@/theme';
 import { useAutoUpdate } from '@/useAutoUpdate';
@@ -29,6 +31,11 @@ export default function RootLayout() {
   // Once the database is open, keep scheduled reminders in step with it.
   useEffect(() => (dbReady ? startReminderSync() : undefined), [dbReady]);
   useEffect(() => (dbReady ? startWidgetSync() : undefined), [dbReady]);
+
+  // The recognizer follows the phone's own English unless a language was saved.
+  useEffect(() => {
+    if (dbReady) void getSetting(SPEECH_LANGUAGE_KEY).then(setSpeechLanguage);
+  }, [dbReady]);
 
   const [fontsReady] = useFonts({
     IBMPlexSans_400Regular,

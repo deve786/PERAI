@@ -31,6 +31,8 @@ import {
 import { isFreshPartial, joinSpelledLetters, knownPeople, restatesEarlier } from '../src/speechText';
 import { listSections } from '../src/lists';
 import { acceptCorrection, similarity } from '../src/titleMatch';
+import { lookupSpelling, spellingHints, spellingKey } from '../src/dictionary';
+import { backoffFor, nextDue, shouldRetry, MAX_ATTEMPTS, type PendingNote } from '../src/pendingNotes';
 import { widgetItems } from '../src/widget/widgetItems';
 
 let passed = 0;
@@ -484,6 +486,67 @@ check('capitalisation alone is still worth taking', acceptCorrection('iphone 17 
 check('an empty answer is refused', acceptCorrection('Hollow Knight', '   ') === false);
 check('quotes around the answer are tolerated', acceptCorrection('ghost of yachty', '"Ghost of Yōtei"') === true);
 check('identical titles score 1', similarity('Dune: Part Two', 'dune part two') === 1);
+
+section('remembered spellings');
+{
+  const known = [
+    { heard: spellingKey('ghost of yachty'), correct: 'Ghost of Yōtei' },
+    { heard: spellingKey('fathima'), correct: 'Fathima' },
+  ];
+  check('the misheard form is corrected', lookupSpelling('ghost of yachty', known) === 'Ghost of Yōtei');
+  check('punctuation and case do not matter', lookupSpelling('Ghost of Yachty!', known) === 'Ghost of Yōtei');
+  check(
+    'the corrected form is recognised too, so it is never searched again',
+    lookupSpelling('ghost of yotei', known) === 'Ghost of Yōtei'
+  );
+  check('an exact match needs no change', lookupSpelling('Ghost of Yōtei', known) === null);
+  check('an unknown title is not guessed at', lookupSpelling('Elden Ring', known) === null);
+  check('an empty title is ignored', lookupSpelling('  ', known) === null);
+  check(
+    'hints list learned titles then the record, without repeats',
+    spellingHints(known, ['Ghost of Yōtei', 'Elden Ring']).join('|') === 'Ghost of Yōtei|Fathima|Elden Ring'
+  );
+}
+
+section('notes waiting to be filed');
+{
+  const note = (over: Partial<PendingNote> = {}): PendingNote => ({
+    id: 'n1',
+    text: 'remind me to call mom',
+    createdAt: '2026-09-18T10:00:00.000Z',
+    attempts: 0,
+    lastAttemptAt: null,
+    lastError: null,
+    ...over,
+  });
+  const at = (iso: string) => new Date(iso);
+
+  check('a freshly queued note is tried at once', shouldRetry(note()) === true);
+  check(
+    'a note tried a moment ago waits',
+    shouldRetry(note({ attempts: 1, lastAttemptAt: '2026-09-18T10:00:00.000Z' }), at('2026-09-18T10:00:30.000Z')) === false
+  );
+  check(
+    'it is tried again once the wait has passed',
+    shouldRetry(note({ attempts: 1, lastAttemptAt: '2026-09-18T10:00:00.000Z' }), at('2026-09-18T10:06:00.000Z')) === true
+  );
+  check('waits get longer, then level off', backoffFor(0) < backoffFor(2) && backoffFor(9) === backoffFor(3));
+  check(
+    'a note that keeps failing stops retrying itself',
+    shouldRetry(note({ attempts: MAX_ATTEMPTS, lastAttemptAt: '2026-09-18T10:00:00.000Z' }), at('2027-01-01T00:00:00.000Z')) === false
+  );
+  check(
+    'the oldest due note goes first',
+    nextDue([
+      note({ id: 'newer', createdAt: '2026-09-18T12:00:00.000Z' }),
+      note({ id: 'older', createdAt: '2026-09-18T09:00:00.000Z' }),
+    ])?.id === 'older'
+  );
+  check(
+    'nothing due means nothing to do',
+    nextDue([note({ attempts: 1, lastAttemptAt: '2026-09-18T10:00:00.000Z' })], at('2026-09-18T10:00:10.000Z')) === null
+  );
+}
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

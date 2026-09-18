@@ -38,10 +38,32 @@ CREATE TABLE IF NOT EXISTS questions (
   asked_at TEXT NOT NULL
 );
 
--- Small key/value store for app preferences (currently just the theme mode).
+-- Small key/value store for app preferences (theme mode, speech language).
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY NOT NULL,
   value TEXT NOT NULL
+);
+
+-- Spellings the app has learned, so a title is only ever looked up once.
+-- "heard" is the normalised form of what speech recognition produced, and
+-- "source" is 'user' for a correction typed in the preview screen, or
+-- 'search' for one confirmed by a web search.
+CREATE TABLE IF NOT EXISTS spellings (
+  heard TEXT PRIMARY KEY NOT NULL,
+  correct TEXT NOT NULL,
+  source TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+-- Notes that could not be filed yet (offline, or the AI quota ran out). They
+-- are retried automatically; nothing spoken is lost while one waits here.
+CREATE TABLE IF NOT EXISTS pending_notes (
+  id TEXT PRIMARY KEY NOT NULL,
+  text TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_attempt_at TEXT,
+  last_error TEXT
 );
 `;
 

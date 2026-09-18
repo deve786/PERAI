@@ -1,4 +1,6 @@
 import { getDb, toMemory, type RawRow } from './client';
+import { spellingKey, type Spelling } from '../dictionary';
+import type { PendingNote } from '../pendingNotes';
 import type { Category, Memory, MemoryDraft, MemoryType, Status } from '../types';
 
 /** RFC4122-ish v4 id. Avoids pulling in a uuid package for one call site. */
@@ -196,4 +198,79 @@ export async function setSetting(key: string, value: string): Promise<void> {
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
     [key, value]
   );
+}
+
+/**
+ * Remember how a title is really spelled. A correction typed by hand always
+ * wins over one found by search, so a name the web cannot know stays fixed.
+ */
+export async function rememberSpelling(
+  heard: string,
+  correct: string,
+  source: 'user' | 'search'
+): Promise<void> {
+  const key = spellingKey(heard);
+  if (!key || !correct.trim()) return;
+  await getDb().runAsync(
+    `INSERT INTO spellings (heard, correct, source, updated_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(heard) DO UPDATE SET
+       correct = excluded.correct,
+       source = excluded.source,
+       updated_at = excluded.updated_at
+     WHERE excluded.source = 'user' OR spellings.source = 'search'`,
+    [key, correct.trim(), source, new Date().toISOString()]
+  );
+}
+
+export async function getSpellings(limit = 300): Promise<Spelling[]> {
+  return getDb().getAllAsync<Spelling>(
+    'SELECT heard, correct FROM spellings ORDER BY updated_at DESC LIMIT ?',
+    [limit]
+  );
+}
+
+/** Queue a note the AI could not file yet, so nothing spoken is lost. */
+export async function queueNote(text: string, error: string): Promise<void> {
+  const note = text.trim();
+  if (!note) return;
+  const now = new Date().toISOString();
+  await getDb().runAsync(
+    `INSERT INTO pending_notes (id, text, created_at, attempts, last_attempt_at, last_error)
+     VALUES (?, ?, ?, 0, ?, ?)`,
+    [uuid(), note, now, now, error]
+  );
+}
+
+export async function getPendingNotes(): Promise<PendingNote[]> {
+  const rows = await getDb().getAllAsync<{
+    id: string;
+    text: string;
+    created_at: string;
+    attempts: number;
+    last_attempt_at: string | null;
+    last_error: string | null;
+  }>('SELECT * FROM pending_notes ORDER BY created_at ASC');
+
+  return rows.map((row) => ({
+    id: row.id,
+    text: row.text,
+    createdAt: row.created_at,
+    attempts: row.attempts,
+    lastAttemptAt: row.last_attempt_at,
+    lastError: row.last_error,
+  }));
+}
+
+/** Record a failed try, so the backoff in pendingNotes.ts can space the next one. */
+export async function markNoteTried(id: string, error: string): Promise<void> {
+  await getDb().runAsync(
+    `UPDATE pending_notes
+       SET attempts = attempts + 1, last_attempt_at = ?, last_error = ?
+     WHERE id = ?`,
+    [new Date().toISOString(), error, id]
+  );
+}
+
+export async function dropPendingNote(id: string): Promise<void> {
+  await getDb().runAsync('DELETE FROM pending_notes WHERE id = ?', [id]);
 }
