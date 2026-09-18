@@ -2,7 +2,7 @@
   "expo": {
     "name": "PERAI",
     "slug": "PERAI",
-    "version": "1.7.0",
+    "version": "1.8.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "perai",
@@ -59,7 +59,10 @@
         {
           "icon": "./assets/notification-icon.png",
           "color": "#2F5D45",
-          "defaultChannel": "reminders"
+          "defaultChannel": "reminders",
+          "sounds": [
+            "./assets/sounds/reminder_chime.wav"
+          ]
         }
       ],
       [
@@ -71,6 +74,29 @@
               "arm64-v8a"
             ]
           }
+        }
+      ],
+      [
+        "react-native-android-widget",
+        {
+          "fonts": [
+            "./node_modules/@expo-google-fonts/ibm-plex-sans/400Regular/IBMPlexSans_400Regular.ttf",
+            "./node_modules/@expo-google-fonts/ibm-plex-sans/500Medium/IBMPlexSans_500Medium.ttf",
+            "./node_modules/@expo-google-fonts/ibm-plex-mono/500Medium/IBMPlexMono_500Medium.ttf"
+          ],
+          "widgets": [
+            {
+              "name": "Priority",
+              "label": "PERAI priorities",
+              "description": "Open tasks and reminders, most important first",
+              "minWidth": "250dp",
+              "minHeight": "110dp",
+              "targetCellWidth": 4,
+              "targetCellHeight": 2,
+              "resizeMode": "horizontal|vertical",
+              "updatePeriodMillis": 1800000
+            }
+          ]
         }
       ],
       [

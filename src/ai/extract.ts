@@ -37,7 +37,8 @@ const EXTRACTION_SCHEMA = {
         properties: {
           title: {
             type: 'string',
-            description: 'Short third-person summary, max ~8 words.',
+            description:
+              'Short third-person summary, max ~8 words. For play/watch/wish: the name alone.',
           },
           type: { type: 'string', enum: [...MEMORY_TYPES] },
           category: { type: 'string', enum: [...CATEGORIES] },
@@ -126,7 +127,13 @@ OTHER FIELDS:
 - tags: 1-3 short lowercase keywords useful for later search, comma-separated.
 - priority: one of ${PRIORITIES.join(', ')} — only when urgency is expressed.
 - status: "active" unless the note says it is already finished, then "done".
-- title: a short factual summary, no invented detail.
+- title: a short factual summary, no invented detail. For "play", "watch" and
+  "wish" the title is the name by itself — the game, the film or series, or the
+  product — with no verb and nothing else: "I want to play Hollow Knight" ->
+  "Hollow Knight", "add Dune to my watchlist" -> "Dune", "I'd like to buy a
+  standing desk" -> "Standing desk". Never "Play Hollow Knight", "Watch Dune"
+  or "Wants to buy a standing desk". Keep the name as said, including any part
+  number or edition; only drop the words around it.
 
 NAMES — notes are often dictated, and speech recognition mishears names. When
 the user message lists people already known, and a name in the note is clearly
