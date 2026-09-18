@@ -248,7 +248,23 @@ export default function CaptureScreen() {
                   </View>
                 </>
               ) : (
-                <Text style={type.fine}>{status}</Text>
+                <View style={styles.statusRow}>
+                  <Text style={[type.fine, styles.statusText]}>{status}</Text>
+                  {typed && !saving ? (
+                    <Pressable
+                      onPress={() => {
+                        setText('');
+                        setError(null);
+                        voice.clearError();
+                      }}
+                      hitSlop={12}
+                      accessibilityRole="button"
+                      accessibilityLabel="Clear what you have written"
+                    >
+                      <Text style={[type.label, styles.cancel]}>CLEAR</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
               )}
             </View>
             <ComposeButton
@@ -405,6 +421,13 @@ function makeStyles(colors: Colors) {
       alignItems: 'center',
       justifyContent: 'space-between',
     },
+    statusRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    statusText: { flex: 1 },
     live: { color: colors.moss },
     cancel: { color: colors.mist },
     notice: { borderLeftWidth: 2, borderLeftColor: colors.alert, paddingLeft: 12, paddingVertical: 2 },
