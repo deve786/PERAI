@@ -17,6 +17,8 @@ interface Props {
   onLongPress?: () => void;
   /** Hide the ADDED line where it is noise, e.g. in Coming up. */
   showAdded?: boolean;
+  /** Struck through and dimmed: a list item already played, watched or bought. */
+  struck?: boolean;
 }
 
 /**
@@ -33,6 +35,7 @@ export function MemoryRow({
   onPress,
   onLongPress,
   showAdded = true,
+  struck = false,
 }: Props) {
   const { colors, type } = useTheme();
   const styles = makeStyles(colors);
@@ -53,13 +56,19 @@ export function MemoryRow({
     <Pressable
       onPress={onPress}
       onLongPress={onLongPress}
-      style={({ pressed }) => [styles.row, pressed && onPress ? styles.pressed : null]}
+      style={({ pressed }) => [
+        styles.row,
+        struck && styles.struckRow,
+        pressed && onPress ? styles.pressed : null,
+      ]}
     >
       <Text style={[type.gutter, styles.mark]}>{mark}</Text>
 
       <View style={styles.body}>
         <View style={styles.titleLine}>
-          <Text style={[type.entry, styles.title]}>{memory.title}</Text>
+          <Text style={[type.entry, styles.title, struck && styles.struckTitle]}>
+            {memory.title}
+          </Text>
           {amount ? <Text style={type.figure}>{amount}</Text> : null}
         </View>
 
@@ -106,6 +115,8 @@ function makeStyles(colors: Colors) {
       gap: 12,
     },
     title: { flex: 1, color: colors.ink },
+    struckRow: { opacity: 0.55 },
+    struckTitle: { textDecorationLine: 'line-through', color: colors.graphite },
     reminds: { color: colors.moss },
   });
 }

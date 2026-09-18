@@ -18,7 +18,6 @@ import { startReminderSync } from '@/reminders';
 import { ThemeProvider, useTheme } from '@/ThemeContext';
 import { COLORS, SPACE, TYPE } from '@/theme';
 import { useAutoUpdate } from '@/useAutoUpdate';
-import { startWidgetSync } from '@/widget/widgetSync';
 
 export default function RootLayout() {
   const [dbReady, setDbReady] = useState(false);
@@ -28,7 +27,6 @@ export default function RootLayout() {
 
   // Once the database is open, keep scheduled reminders in step with it.
   useEffect(() => (dbReady ? startReminderSync() : undefined), [dbReady]);
-  useEffect(() => (dbReady ? startWidgetSync() : undefined), [dbReady]);
 
   const [fontsReady] = useFonts({
     IBMPlexSans_400Regular,

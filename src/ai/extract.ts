@@ -88,7 +88,17 @@ TYPE — pick exactly one:
 - "task"        something the person still needs to do
 - "appointment" a scheduled event at a specific future time
 - "purchase"    something they bought
+- "play"        a game they want to play some day, not yet played
+- "watch"       a film, series or video they want to watch, not yet watched
+- "wish"        something they want to buy some day, not yet bought
 - "memory"      default: something that already happened
+
+"play", "watch" and "wish" are wishes with no date: "I want to play Hollow
+Knight", "add Dune to my watchlist", "I'd like to buy a standing desk". Once it
+has happened it is not a wish any more — "watched Dune last night" is a memory,
+"bought the desk for 12000" is a purchase, and a game night already arranged
+for Friday is an appointment. Leave eventDate as the current time and
+dateExpression null for these three unless a date really was stated.
 
 CATEGORY — pick the closest of: ${CATEGORIES.join(', ')}. Use "Other" only when
 nothing else fits.

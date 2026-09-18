@@ -1,5 +1,5 @@
 import { getDb, toMemory, type RawRow } from './client';
-import type { Category, Memory, MemoryDraft, MemoryType } from '../types';
+import type { Category, Memory, MemoryDraft, MemoryType, Status } from '../types';
 
 /** RFC4122-ish v4 id. Avoids pulling in a uuid package for one call site. */
 function uuid(): string {
@@ -130,6 +130,11 @@ export async function countMemories(): Promise<number> {
     'SELECT COUNT(*) AS n FROM memories WHERE confirmed = 1'
   );
   return row?.n ?? 0;
+}
+
+/** Tick a list item off, or put it back. */
+export async function setMemoryStatus(id: string, status: Status): Promise<void> {
+  await getDb().runAsync('UPDATE memories SET status = ? WHERE id = ?', [status, id]);
 }
 
 export async function deleteMemory(id: string): Promise<void> {

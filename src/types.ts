@@ -6,6 +6,11 @@ export const MEMORY_TYPES = [
   'reminder',
   'purchase',
   'appointment',
+  // Wants, not records: things to play, watch or buy one day. They fill the
+  // Lists tab and, unlike a task, carry no date and never notify.
+  'play',
+  'watch',
+  'wish',
 ] as const;
 export type MemoryType = (typeof MEMORY_TYPES)[number];
 

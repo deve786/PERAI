@@ -29,6 +29,7 @@ import {
   shouldFinish,
 } from '../src/voiceStop';
 import { isFreshPartial, joinSpelledLetters, knownPeople, restatesEarlier } from '../src/speechText';
+import { listSections } from '../src/lists';
 import { widgetItems } from '../src/widget/widgetItems';
 
 let passed = 0;
@@ -434,6 +435,41 @@ section('home screen widget');
   check('a task with no stated date shows no date', items[2].when === null, items[2].when);
   check('limit caps the list but not the total', widgetItems(entries, now, 2).items.length === 2 && widgetItems(entries, now, 2).total === 5);
 }
+
+section('play, watch and wish lists');
+{
+  const at = (d: number) => new Date(2026, 8, d, 12, 0).toISOString();
+  const entries: Memory[] = [
+    memory({ title: 'Hollow Knight', type: 'play', eventDate: at(10), createdAt: at(10) }),
+    memory({ title: 'Elden Ring', type: 'play', priority: 'high', eventDate: at(9), createdAt: at(9) }),
+    memory({ title: 'Doom', type: 'play', status: 'done', eventDate: at(8), createdAt: at(8) }),
+    memory({ title: 'Dune', type: 'watch', eventDate: at(11), createdAt: at(11) }),
+    memory({ title: 'Standing desk', type: 'wish', amount: 12000, eventDate: at(12), createdAt: at(12) }),
+    memory({ title: 'Watched Dune last night', type: 'memory', eventDate: at(12), createdAt: at(12) }),
+    memory({ title: 'Call the dentist', type: 'task', eventDate: at(12), createdAt: at(12) }),
+  ];
+  const [play, watch, wish] = listSections(entries);
+
+  check('three lists, in order', listSections(entries).map((s) => s.type).join('|') === 'play|watch|wish');
+  check('priority first, then newest', play.open.map((m) => m.title).join('|') === 'Elden Ring|Hollow Knight', play.open.map((m) => m.title));
+  check('done items are kept separately', play.done.map((m) => m.title).join('|') === 'Doom');
+  check('watchlist holds only what is still to watch', watch.open.length === 1 && watch.open[0].title === 'Dune');
+  check('a memory about watching is not on the watchlist', watch.open.concat(watch.done).every((m) => m.type === 'watch'));
+  check('wishlist keeps the amount', wish.open[0].amount === 12000);
+  check('tasks stay out of the lists', listSections(entries).every((s) => s.open.concat(s.done).every((m) => m.type === s.type)));
+  check('finished items are capped', listSections(entries, 0)[0].done.length === 0);
+}
+
+check(
+  'list items never reach the home screen widget',
+  widgetItems(
+    [
+      memory({ title: 'Dune', type: 'watch', eventDate: new Date().toISOString() }),
+      memory({ title: 'Standing desk', type: 'wish', eventDate: new Date().toISOString() }),
+    ],
+    new Date()
+  ).total === 0
+);
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
