@@ -2,11 +2,12 @@ import { useState } from 'react';
 import { Alert, SectionList, StyleSheet, Text, View } from 'react-native';
 import { ChipRow } from '@/components/Chip';
 import { MemoryRow } from '@/components/MemoryRow';
-import { deleteMemory } from '@/db/queries';
+import { deleteMemory, setMemoryStatus } from '@/db/queries';
 import { groupByDay } from '@/format';
+import { isStruck, sinkStruck } from '@/strike';
 import { useTheme } from '@/ThemeContext';
 import { GUTTER, SPACE, type Colors } from '@/theme';
-import { CATEGORIES, MEMORY_TYPES, type Category, type MemoryType } from '@/types';
+import { CATEGORIES, MEMORY_TYPES, type Category, type Memory, type MemoryType } from '@/types';
 import { useMemories } from '@/useMemories';
 
 export default function TimelineScreen() {
@@ -19,8 +20,19 @@ export default function TimelineScreen() {
 
   // Re-queries automatically on every write via addDatabaseChangeListener.
   const { memories, loading } = useMemories({ category, type: typeFilter });
-  const sections = groupByDay(memories);
   const filtered = category !== null || typeFilter !== null;
+
+  // Struck entries — ticked off, or past the moment they were for — sit under
+  // the rest of their day rather than in the middle of what is still open.
+  const now = new Date();
+  const sections = groupByDay(memories, now).map((section) => ({
+    ...section,
+    data: sinkStruck(section.data, now),
+  }));
+
+  function toggle(memory: Memory) {
+    void setMemoryStatus(memory.id, memory.status === 'active' ? 'done' : 'active');
+  }
 
   function confirmDelete(id: string, title: string) {
     Alert.alert('Delete this entry?', title, [
@@ -60,6 +72,8 @@ export default function TimelineScreen() {
           <MemoryRow
             memory={item}
             gutter="time"
+            struck={isStruck(item, now)}
+            onPress={() => toggle(item)}
             onLongPress={() => confirmDelete(item.id, item.title)}
           />
         )}

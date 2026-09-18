@@ -30,6 +30,7 @@ import {
 } from '../src/voiceStop';
 import { isFreshPartial, joinSpelledLetters, knownPeople, restatesEarlier } from '../src/speechText';
 import { listSections } from '../src/lists';
+import { hasPassed, isStruck, sinkStruck } from '../src/strike';
 import { acceptCorrection, similarity } from '../src/titleMatch';
 import { lookupSpelling, spellingHints, spellingKey } from '../src/dictionary';
 import { backoffFor, nextDue, shouldRetry, MAX_ATTEMPTS, type PendingNote } from '../src/pendingNotes';
@@ -545,6 +546,63 @@ section('notes waiting to be filed');
   check(
     'nothing due means nothing to do',
     nextDue([note({ attempts: 1, lastAttemptAt: '2026-09-18T10:00:00.000Z' })], at('2026-09-18T10:00:10.000Z')) === null
+  );
+}
+
+section('struck out: done, or the moment has gone');
+{
+  const now = new Date(2026, 8, 18, 14, 0);
+  const at = (d: number, h = 12) => new Date(2026, 8, d, h, 0).toISOString();
+
+  check(
+    'a stated time that has gone by strikes out',
+    hasPassed(memory({ title: 'Dentist', type: 'appointment', eventDate: at(18, 10), dateExpression: 'today at 10am' }), now) === true
+  );
+  check(
+    'a stated time still ahead does not',
+    hasPassed(memory({ title: 'Dentist', type: 'appointment', eventDate: at(18, 16), dateExpression: 'today at 4pm' }), now) === false
+  );
+  check(
+    'a day with no time lasts until the day is over',
+    hasPassed(memory({ title: 'Call the bank', type: 'task', eventDate: at(18), dateExpression: 'today' }), now) === false
+  );
+  check(
+    'yesterday, with no time stated, has gone by',
+    hasPassed(memory({ title: 'Call the bank', type: 'task', eventDate: at(17), dateExpression: 'yesterday' }), now) === true
+  );
+  check(
+    'an entry with no date given is never overdue',
+    hasPassed(memory({ title: 'Buy milk', type: 'task', eventDate: at(10), dateExpression: null }), now) === false
+  );
+  check(
+    'something that already happened is not overdue',
+    hasPassed(memory({ title: 'Bought a shirt', type: 'purchase', eventDate: at(10), dateExpression: 'last week' }), now) === false
+  );
+
+  check(
+    'ticking it off strikes it out whatever the date',
+    isStruck(memory({ title: 'Buy milk', type: 'task', status: 'done', eventDate: at(20), dateExpression: null }), now) === true
+  );
+  check(
+    'passing time does not mark it done, only strikes it',
+    isStruck(memory({ title: 'Call the bank', type: 'task', eventDate: at(17), dateExpression: 'yesterday' }), now) === true
+  );
+  check(
+    'an ordinary memory is never struck',
+    isStruck(memory({ title: 'Got a haircut', eventDate: at(10), dateExpression: 'last week' }), now) === false
+  );
+
+  const day = [
+    memory({ title: 'Done task', type: 'task', status: 'done', eventDate: at(18), dateExpression: null }),
+    memory({ title: 'Open task', type: 'task', eventDate: at(18), dateExpression: null }),
+    memory({ title: 'Missed appointment', type: 'appointment', eventDate: at(18, 9), dateExpression: 'today at 9am' }),
+    memory({ title: 'Later appointment', type: 'appointment', eventDate: at(18, 18), dateExpression: 'today at 6pm' }),
+  ];
+  check(
+    'struck entries sink below the rest, each keeping its order',
+    sinkStruck(day, now).map((m) => m.title).join('|') ===
+      'Open task|Later appointment|Done task|Missed appointment',
+    sinkStruck(day, now).map((m) => m.title)
   );
 }
 
