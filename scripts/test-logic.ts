@@ -30,6 +30,7 @@ import {
 } from '../src/voiceStop';
 import { isFreshPartial, joinSpelledLetters, knownPeople, restatesEarlier } from '../src/speechText';
 import { listSections } from '../src/lists';
+import { acceptCorrection, similarity } from '../src/titleMatch';
 import { widgetItems } from '../src/widget/widgetItems';
 
 let passed = 0;
@@ -470,6 +471,19 @@ check(
     new Date()
   ).total === 0
 );
+
+section('searched spellings');
+check('a misheard title is corrected', acceptCorrection('ghost of yachty', 'Ghost of Yōtei') === true);
+check('accents alone count as a correction', acceptCorrection('Pokemon Legends Z-A', 'Pokémon Legends: Z-A') === true);
+check('punctuation and case alone count', acceptCorrection('dune part two', 'Dune: Part Two') === true);
+check('a different title is refused', acceptCorrection('Hollow Knight', 'Elden Ring') === false);
+check('a sequel is refused', acceptCorrection('Hollow Knight', 'Hollow Knight: Silksong') === false);
+check('an explanation instead of a title is refused', acceptCorrection('ghost of yachty', 'The game you mean is Ghost of Yōtei, released in 2025.') === false);
+check('an identical answer is not a correction', acceptCorrection('Hollow Knight', 'Hollow Knight') === false);
+check('capitalisation alone is still worth taking', acceptCorrection('iphone 17 pro', 'iPhone 17 Pro') === true);
+check('an empty answer is refused', acceptCorrection('Hollow Knight', '   ') === false);
+check('quotes around the answer are tolerated', acceptCorrection('ghost of yachty', '"Ghost of Yōtei"') === true);
+check('identical titles score 1', similarity('Dune: Part Two', 'dune part two') === 1);
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

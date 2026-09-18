@@ -152,6 +152,41 @@ export async function requestTextFromAudio(options: {
   }
 }
 
+/**
+ * Ask a question that needs the live web, and get plain text back.
+ *
+ * Grounded in Google Search, which is what makes it useful for spellings the
+ * model cannot be expected to know. No response schema: search grounding and
+ * forced JSON do not combine, and the answer wanted here is one line anyway.
+ */
+export async function requestGroundedText(options: {
+  model: string;
+  system: string;
+  user: string;
+  retries?: number;
+}): Promise<string> {
+  try {
+    const interaction = await getClient().interactions.create({
+      model: options.model,
+      system_instruction: options.system,
+      input: options.user,
+      tools: [{ type: 'google_search' }],
+    } as Parameters<GoogleGenAI['interactions']['create']>[0]);
+
+    if (!interaction || typeof interaction !== 'object' || !('output_text' in interaction)) {
+      throw new Error('Gemini returned a streaming response, which is not supported here.');
+    }
+    return interaction.output_text ?? '';
+  } catch (err) {
+    const wait = retryDelayMs(err);
+    const remaining = options.retries ?? 1;
+    if (wait === null || remaining <= 0) throw err;
+
+    await sleep(wait);
+    return requestGroundedText({ ...options, retries: remaining - 1 });
+  }
+}
+
 async function sendOnce(options: {
   model: string;
   system: string;

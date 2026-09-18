@@ -13,6 +13,7 @@ import {
 import { describeError, hasApiKey } from '@/ai/client';
 import { appVersion } from '@/appVersion';
 import { extractMemories } from '@/ai/extract';
+import { correctDraftSpellings } from '@/ai/spelling';
 import { ComposeButton, type ComposeMode } from '@/components/ComposeButton';
 import { MemoryRow } from '@/components/MemoryRow';
 import { Section } from '@/components/Section';
@@ -77,8 +78,11 @@ export default function CaptureScreen() {
     setSaved(null);
     try {
       const drafts = await extractMemories(note, new Date().toISOString(), people);
+      // Names of games, films and products are checked against a web search:
+      // speech recognition rarely spells a title right on its own.
+      const checked = await correctDraftSpellings(drafts);
       const memories: Memory[] = [];
-      for (const draft of drafts) memories.push(await insertMemory(draft, note));
+      for (const draft of checked) memories.push(await insertMemory(draft, note));
 
       // Ask for notification permission here, the first time it matters —
       // right after saving something that is meant to remind you.
