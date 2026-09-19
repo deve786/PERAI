@@ -24,7 +24,12 @@ CREATE TABLE IF NOT EXISTS memories (
   tags TEXT,
   priority TEXT,
   status TEXT NOT NULL DEFAULT 'active',
-  confirmed INTEGER NOT NULL DEFAULT 0
+  confirmed INTEGER NOT NULL DEFAULT 0,
+  -- Sync bookkeeping. A deleted entry stays as a tombstone until the server has
+  -- seen it, or the delete would come straight back on the next pull.
+  updated_at TEXT NOT NULL DEFAULT '',
+  deleted INTEGER NOT NULL DEFAULT 0,
+  dirty INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE INDEX IF NOT EXISTS idx_memories_event_date ON memories (event_date DESC);
@@ -68,3 +73,21 @@ CREATE TABLE IF NOT EXISTS pending_notes (
 `;
 
 export const DATABASE_NAME = 'perai.db';
+
+/**
+ * Columns added to `memories` after the first release.
+ *
+ * CREATE TABLE IF NOT EXISTS does nothing to a table that already exists, so
+ * phones that have been running since before sync need these added by hand.
+ * Applied by migrate() in client.ts, which skips whatever is already there.
+ */
+export const ADDED_COLUMNS: { name: string; ddl: string }[] = [
+  { name: 'updated_at', ddl: "ALTER TABLE memories ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''" },
+  { name: 'deleted', ddl: 'ALTER TABLE memories ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0' },
+  { name: 'dirty', ddl: 'ALTER TABLE memories ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1' },
+];
+
+/** Entries from before sync existed still need a time and a push. */
+export const BACKFILL_SQL = `
+UPDATE memories SET updated_at = created_at WHERE updated_at = '';
+`;

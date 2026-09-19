@@ -31,6 +31,7 @@ import {
 import { isFreshPartial, joinSpelledLetters, knownPeople, restatesEarlier } from '../src/speechText';
 import { listSections } from '../src/lists';
 import { hasPassed, isStruck, sinkStruck } from '../src/strike';
+import { nextCursor, shouldApplyRemote, toLocal, toRemote } from '../src/sync/mapping';
 import { acceptCorrection, similarity } from '../src/titleMatch';
 import { lookupSpelling, spellingHints, spellingKey } from '../src/dictionary';
 import { backoffFor, nextDue, shouldRetry, MAX_ATTEMPTS, type PendingNote } from '../src/pendingNotes';
@@ -603,6 +604,67 @@ section('struck out: done, or the moment has gone');
     sinkStruck(day, now).map((m) => m.title).join('|') ===
       'Open task|Later appointment|Done task|Missed appointment',
     sinkStruck(day, now).map((m) => m.title)
+  );
+}
+
+section('syncing with the server');
+{
+  check(
+    'a row the phone has never seen is taken',
+    shouldApplyRemote(null, '2026-09-18T10:00:00.000Z') === true
+  );
+  check(
+    'a newer copy from the server wins',
+    shouldApplyRemote('2026-09-18T10:00:00.000Z', '2026-09-18T11:00:00.000Z') === true
+  );
+  check(
+    'an older copy from the server is ignored',
+    shouldApplyRemote('2026-09-18T11:00:00.000Z', '2026-09-18T10:00:00.000Z') === false
+  );
+  check(
+    'the same moment leaves the phone alone',
+    shouldApplyRemote('2026-09-18T10:00:00.000Z', '2026-09-18T10:00:00.000Z') === false
+  );
+  check(
+    'a differently written but equal time is still a tie',
+    shouldApplyRemote('2026-09-18T10:00:00.000Z', '2026-09-18T10:00:00+00:00') === false
+  );
+
+  check(
+    'the cursor moves to the newest row read',
+    nextCursor(
+      [{ updated_at: '2026-09-18T10:00:00.000Z' }, { updated_at: '2026-09-18T12:00:00.000Z' }],
+      null
+    ) === '2026-09-18T12:00:00.000Z'
+  );
+  check(
+    'the cursor never moves backwards',
+    nextCursor([{ updated_at: '2026-09-01T10:00:00.000Z' }], '2026-09-18T12:00:00.000Z') ===
+      '2026-09-18T12:00:00.000Z'
+  );
+  check('an empty page leaves the cursor alone', nextCursor([], '2026-09-18T12:00:00.000Z') === '2026-09-18T12:00:00.000Z');
+
+  const local = {
+    ...memory({
+      title: 'Bought a shirt',
+      type: 'purchase',
+      eventDate: '2026-09-18T12:00:00.000Z',
+      amount: 1200,
+      currency: 'INR',
+      people: 'Rahul',
+      dateExpression: 'yesterday',
+      priority: 'high' as const,
+    }),
+    updatedAt: '2026-09-18T12:30:00.000Z',
+    deleted: false,
+  };
+  const round = toLocal({ ...toRemote(local), updated_at: local.updatedAt });
+  const sorted = (value: object) =>
+    JSON.stringify(Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b))));
+  check(
+    'a row survives the trip to the server and back unchanged',
+    sorted(round) === sorted(local),
+    sorted(round)
   );
 }
 

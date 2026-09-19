@@ -32,6 +32,7 @@ import { knownPeople } from '@/speechText';
 import { useVoiceInput } from '@/useVoiceInput';
 import { DEFAULT_WAKE_PHRASES, useWakeWord } from '@/useWakeWord';
 import { WakeWordToggle } from '@/components/WakeWordToggle';
+import { SyncButton } from '@/components/SyncButton';
 
 interface Saved {
   rawInput: string;
@@ -204,6 +205,7 @@ export default function CaptureScreen() {
         <View style={styles.titleRow}>
           <Text style={type.display}>What happened?</Text>
           <View style={styles.titleActions}>
+            <SyncButton />
             <WakeWordToggle
               armed={wakeArmed}
               listening={wakeWord.stage === 'listening'}

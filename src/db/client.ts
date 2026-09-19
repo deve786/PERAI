@@ -1,5 +1,5 @@
 import * as SQLite from 'expo-sqlite';
-import { CREATE_TABLE_SQL, DATABASE_NAME } from './schema';
+import { ADDED_COLUMNS, BACKFILL_SQL, CREATE_TABLE_SQL, DATABASE_NAME } from './schema';
 import type { Category, Memory, MemoryType, Priority, Status } from '../types';
 
 /**
@@ -26,6 +26,7 @@ export function initDatabase(): Promise<SQLite.SQLiteDatabase> {
         enableChangeListener: true,
       });
       await db.execAsync(CREATE_TABLE_SQL);
+      await migrate(db);
       database = db;
       return db;
     })().catch((err) => {
@@ -35,6 +36,22 @@ export function initDatabase(): Promise<SQLite.SQLiteDatabase> {
     });
   }
   return opening;
+}
+
+/**
+ * Bring an older `memories` table up to date.
+ *
+ * Only ever adds columns and fills in blanks, so it is safe to run on every
+ * launch and on a table that is already current.
+ */
+async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
+  const columns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(memories)');
+  const present = new Set(columns.map((column) => column.name));
+
+  for (const column of ADDED_COLUMNS) {
+    if (!present.has(column.name)) await db.execAsync(column.ddl);
+  }
+  await db.execAsync(BACKFILL_SQL);
 }
 
 export function getDb(): SQLite.SQLiteDatabase {

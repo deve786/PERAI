@@ -52,8 +52,8 @@ export async function insertMemory(
     `INSERT INTO memories (
        id, raw_input, title, type, category, event_date, date_expression,
        created_at, amount, currency, people, location, tags, priority,
-       status, confirmed
-     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+       status, confirmed, updated_at, deleted, dirty
+     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,1)`,
     [
       memory.id,
       memory.rawInput,
@@ -71,6 +71,7 @@ export async function insertMemory(
       memory.priority,
       memory.status,
       1,
+      memory.createdAt,
     ]
   );
 
@@ -86,7 +87,7 @@ export interface TimelineFilters {
 export async function getTimeline(
   filters: TimelineFilters = {}
 ): Promise<Memory[]> {
-  const clauses = ['confirmed = 1'];
+  const clauses = ['confirmed = 1', 'deleted = 0'];
   const params: (string | number)[] = [];
 
   if (filters.category) {
@@ -120,7 +121,7 @@ export async function getMemoriesInRange(
 ): Promise<Memory[]> {
   const rows = await getDb().getAllAsync<RawRow>(
     `SELECT ${COLUMNS} FROM memories
-     WHERE confirmed = 1 AND event_date >= ? AND event_date <= ?
+     WHERE confirmed = 1 AND deleted = 0 AND event_date >= ? AND event_date <= ?
      ORDER BY event_date DESC`,
     [fromISO, toISO]
   );
@@ -129,29 +130,45 @@ export async function getMemoriesInRange(
 
 export async function countMemories(): Promise<number> {
   const row = await getDb().getFirstAsync<{ n: number }>(
-    'SELECT COUNT(*) AS n FROM memories WHERE confirmed = 1'
+    'SELECT COUNT(*) AS n FROM memories WHERE confirmed = 1 AND deleted = 0'
   );
   return row?.n ?? 0;
 }
 
 /** Tick a list item off, or put it back. */
 export async function setMemoryStatus(id: string, status: Status): Promise<void> {
-  await getDb().runAsync('UPDATE memories SET status = ? WHERE id = ?', [status, id]);
+  await getDb().runAsync(
+    'UPDATE memories SET status = ?, updated_at = ?, dirty = 1 WHERE id = ?',
+    [status, new Date().toISOString(), id]
+  );
 }
 
+/**
+ * Deleting marks the row deleted rather than removing it.
+ *
+ * The row has to outlive the delete long enough for the server to hear about
+ * it; a row that simply vanished here would be handed back on the next pull.
+ * Sync clears old tombstones once they have been sent.
+ */
 export async function deleteMemory(id: string): Promise<void> {
-  await getDb().runAsync('DELETE FROM memories WHERE id = ?', [id]);
+  await deleteMemories([id]);
 }
 
 /** Remove several entries at once — used by Undo right after saving. */
 export async function deleteMemories(ids: string[]): Promise<void> {
   if (ids.length === 0) return;
   const placeholders = ids.map(() => '?').join(',');
-  await getDb().runAsync(`DELETE FROM memories WHERE id IN (${placeholders})`, ids);
+  await getDb().runAsync(
+    `UPDATE memories SET deleted = 1, updated_at = ?, dirty = 1
+     WHERE id IN (${placeholders})`,
+    [new Date().toISOString(), ...ids]
+  );
 }
 
 export async function deleteAllMemories(): Promise<void> {
-  await getDb().runAsync('DELETE FROM memories');
+  await getDb().runAsync('UPDATE memories SET deleted = 1, updated_at = ?, dirty = 1', [
+    new Date().toISOString(),
+  ]);
 }
 
 /** Remember a question for the Ask tab's recent list. */

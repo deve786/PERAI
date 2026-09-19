@@ -8,7 +8,7 @@
  * this catches DDL and column-name mistakes without an emulator.
  */
 import { DatabaseSync } from 'node:sqlite';
-import { CREATE_TABLE_SQL } from '../src/db/schema';
+import { ADDED_COLUMNS, BACKFILL_SQL, CREATE_TABLE_SQL } from '../src/db/schema';
 
 let passed = 0;
 let failed = 0;
@@ -52,10 +52,11 @@ const EXPECTED = [
   'id', 'raw_input', 'title', 'type', 'category', 'event_date',
   'date_expression', 'created_at', 'amount', 'currency', 'people',
   'location', 'tags', 'priority', 'status', 'confirmed',
+  'updated_at', 'deleted', 'dirty',
 ];
 
 check(
-  'all 16 columns present',
+  'all 19 columns present',
   EXPECTED.every((c) => columns.includes(c)) && columns.length === EXPECTED.length,
   columns
 );
@@ -203,6 +204,61 @@ console.log('\nnotes waiting to be filed');
   db.prepare('DELETE FROM pending_notes WHERE id = ?').run('p1');
   const left = (db.prepare('SELECT COUNT(*) AS n FROM pending_notes').get() as { n: number }).n;
   check('filing it removes it from the queue', left === 0);
+}
+
+console.log('\nupgrading a phone that predates sync');
+{
+  // The table exactly as it shipped before syncing existed.
+  const old = new DatabaseSync(':memory:');
+  old.exec(`
+    CREATE TABLE memories (
+      id TEXT PRIMARY KEY NOT NULL, raw_input TEXT NOT NULL, title TEXT NOT NULL,
+      type TEXT NOT NULL, category TEXT NOT NULL, event_date TEXT NOT NULL,
+      date_expression TEXT, created_at TEXT NOT NULL, amount REAL, currency TEXT,
+      people TEXT, location TEXT, tags TEXT, priority TEXT,
+      status TEXT NOT NULL DEFAULT 'active', confirmed INTEGER NOT NULL DEFAULT 0
+    );
+  `);
+  old.prepare(
+    `INSERT INTO memories (id, raw_input, title, type, category, event_date, created_at, status, confirmed)
+     VALUES ('old-1', 'got a haircut', 'Got a haircut', 'memory', 'Personal Care',
+             '2026-09-01T12:00:00.000Z', '2026-09-01T12:05:00.000Z', 'active', 1)`
+  ).run();
+
+  // Same steps as migrate() in src/db/client.ts.
+  const columnsOf = () =>
+    old.prepare('PRAGMA table_info(memories)').all().map((r) => (r as { name: string }).name);
+  const before = columnsOf();
+  for (const column of ADDED_COLUMNS) {
+    if (!before.includes(column.name)) old.exec(column.ddl);
+  }
+  old.exec(BACKFILL_SQL);
+
+  const after = columnsOf();
+  check(
+    'the sync columns are added to an existing table',
+    ['updated_at', 'deleted', 'dirty'].every((c) => after.includes(c)),
+    after
+  );
+
+  const row = old.prepare('SELECT * FROM memories WHERE id = ?').get('old-1') as {
+    title: string;
+    updated_at: string;
+    deleted: number;
+    dirty: number;
+  };
+  check('the entry itself is untouched', row.title === 'Got a haircut');
+  check('it is given a time to sort by', row.updated_at === '2026-09-01T12:05:00.000Z', row.updated_at);
+  check('it is not treated as deleted', row.deleted === 0);
+  check('it is queued to go up on the first sync', row.dirty === 1);
+
+  // Running it twice must change nothing, since it runs on every launch.
+  for (const column of ADDED_COLUMNS) {
+    if (!columnsOf().includes(column.name)) old.exec(column.ddl);
+  }
+  old.exec(BACKFILL_SQL);
+  check('running the upgrade again is harmless', columnsOf().length === after.length);
+  old.close();
 }
 
 db.close();
