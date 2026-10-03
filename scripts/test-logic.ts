@@ -474,6 +474,18 @@ check('a misheard title is corrected', acceptCorrection('ghost of yachty', 'Ghos
 check('accents alone count as a correction', acceptCorrection('Pokemon Legends Z-A', 'Pokémon Legends: Z-A') === true);
 check('punctuation and case alone count', acceptCorrection('dune part two', 'Dune: Part Two') === true);
 check('a different title is refused', acceptCorrection('Hollow Knight', 'Elden Ring') === false);
+check(
+  'a publisher in front of the real title is tolerated',
+  acceptCorrection('spider man my smallers', "Marvel's Spider-Man: Miles Morales") === true
+);
+check(
+  'but a sequel behind a publisher is still refused',
+  acceptCorrection('Hollow Knight', "Team Cherry's Hollow Knight: Silksong") === false
+);
+check(
+  'and a different game behind a publisher is still refused',
+  acceptCorrection('Hollow Knight', "FromSoftware's Elden Ring") === false
+);
 check('a sequel is refused', acceptCorrection('Hollow Knight', 'Hollow Knight: Silksong') === false);
 check('an explanation instead of a title is refused', acceptCorrection('ghost of yachty', 'The game you mean is Ghost of Yōtei, released in 2025.') === false);
 check('an identical answer is not a correction', acceptCorrection('Hollow Knight', 'Hollow Knight') === false);

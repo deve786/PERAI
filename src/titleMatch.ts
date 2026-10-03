@@ -73,6 +73,19 @@ export function acceptCorrection(heard: string, suggested: string): boolean {
   // The heard title plus a tail is a sequel or edition, not a spelling:
   // "Hollow Knight" must never be saved as "Hollow Knight: Silksong".
   if (offered.startsWith(wanted) && offered.length - wanted.length >= SEQUEL_SUFFIX) return false;
+  if (similarity(wanted, offered) >= MIN_SIMILARITY) return true;
 
-  return similarity(heard, candidate) >= MIN_SIMILARITY;
+  // Official titles often carry a publisher or studio in front — "Marvel's
+  // Spider-Man: Miles Morales" for what you said as "spider man my smallers".
+  // The extra words drag the comparison below the bar, so try again from each
+  // later word; the sequel rule still applies to whatever is left.
+  const laterWords = words(candidate);
+  for (let start = 1; start < laterWords.length; start += 1) {
+    const window = normalize(laterWords.slice(start).join(' '));
+    if (!window) continue;
+    if (window.startsWith(wanted) && window.length - wanted.length >= SEQUEL_SUFFIX) continue;
+    if (window === wanted || similarity(wanted, window) >= MIN_SIMILARITY) return true;
+  }
+
+  return false;
 }

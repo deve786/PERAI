@@ -1,12 +1,11 @@
 import { acceptCorrection } from '../titleMatch';
 import type { MemoryType } from '../types';
-import { EXTRACT_MODEL, requestGroundedText, requestText } from './client';
-import { isQuotaError, quotaWait } from './quota';
+import { EXTRACT_MODEL, requestText } from './client';
 
 export const SPELLING_MODEL =
   process.env.EXPO_PUBLIC_GEMINI_SPELLING_MODEL || EXTRACT_MODEL;
 
-/** What each list holds, in the words the search prompt uses. */
+/** What each list holds, in the words the prompt uses. */
 const KIND: Partial<Record<MemoryType, string>> = {
   play: 'video game',
   watch: 'film, series or show',
@@ -18,51 +17,45 @@ export function canSearch(type: MemoryType): boolean {
   return KIND[type] !== undefined;
 }
 
+/**
+ * Asked without a web search.
+ *
+ * Grounding the question in a live Google search was the original design, and
+ * it is the better authority for something released last week. But on this key
+ * every grounded request is refused — measured repeatedly, spaced apart — and
+ * each refusal costs about 35 seconds before anything useful can happen. The
+ * model's own knowledge answers in about 4 seconds and has been right every
+ * time, including a 2025 title, so it is the whole of the job now.
+ *
+ * What this gives up: a name too new or too obscure for the model's training.
+ * Those keep the spelling as dictated, which is what happened anyway while
+ * search was failing.
+ */
 const SYSTEM = `You correct names that were dictated to a phone and written down by speech recognition, so the spelling is often wrong ("ghost of yachty" for "Ghost of Yōtei").
 
-Search the web for the real thing the person means, then give ONLY its official
-title — no quotes, no explanation, nothing before or after it.
+Give ONLY the official title of the thing the person means — no quotes, no
+explanation, nothing before or after it.
 
-Keep it the same thing: correct the spelling, accents and capitalisation, but
-never answer with a different title, a sequel, or a longer description. If
-search does not turn up a title that is clearly the same one, repeat the text
-exactly as you received it.`;
+Answer from what you already know. Keep it the same thing: correct the
+spelling, accents and capitalisation, but never answer with a different title,
+a sequel, or a longer description. If you do not actually recognise what they
+mean, repeat the text exactly as you received it rather than guessing.`;
 
-/** The same job, from memory rather than the web. */
-const KNOWLEDGE_SYSTEM = `${SYSTEM}
-
-You cannot search right now, so answer from what you already know. Only correct
-a title you actually recognise; if you are not sure what the person means,
-repeat the text exactly as you received it rather than guessing.`;
-
-/** The search is slow by nature, but it must not hang on for ever. */
-const SEARCH_TIMEOUT_MS = 120_000;
-
-/**
- * Searching the web has its own small allowance, and once it is gone every
- * further attempt costs a slow refusal before the fallback can even start —
- * which is most of the minute people wait. So the first refusal stands for the
- * rest of the day: until this moment passes, lookups go straight to the
- * model's own knowledge.
- */
-let searchBlockedUntil = 0;
-
-export function searchAvailable(now: Date = new Date()): boolean {
-  return now.getTime() >= searchBlockedUntil;
-}
+/** Long enough for a slow network, short enough not to hang on. */
+const TIMEOUT_MS = 60_000;
 
 function withTimeout<T>(work: Promise<T>): Promise<T> {
   return Promise.race([
     work,
     new Promise<T>((_, fail) =>
-      setTimeout(() => fail(new Error('Spelling search timed out.')), SEARCH_TIMEOUT_MS)
+      setTimeout(() => fail(new Error('Spelling check timed out.')), TIMEOUT_MS)
     ),
   ]);
 }
 
 /** One attempt made while looking a name up, for the activity log. */
 export interface LookupStep {
-  route: 'web search' | 'model knowledge';
+  route: 'model knowledge';
   seconds: number;
   /** Why this route gave nothing, when it did not. */
   failure?: string;
@@ -71,8 +64,7 @@ export interface LookupStep {
 export interface TitleLookup {
   /** Every attempt, in order, so the time spent is never unexplained. */
   steps: LookupStep[];
-  /** Whether the answer came from a web search or the model's own knowledge. */
-  source: 'web search' | 'model knowledge';
+  source: 'model knowledge';
   model: string;
   /** Exactly what the model replied, before any judgement. */
   replied: string;
@@ -85,80 +77,50 @@ export interface TitleLookup {
 /**
  * Look up how a dictated name is really spelled.
  *
- * Reports what actually happened — which route answered, what it said, and
- * whether that was accepted — so the activity log can show the work rather
- * than only the verdict. `acceptCorrection` is what stops an answer that
- * wandered off to a different title from being saved over yours.
+ * Reports what actually happened — what was asked, what it said, and whether
+ * that was accepted — so the activity log can show the work rather than only
+ * the verdict. `acceptCorrection` is what stops an answer that wandered off to
+ * a different title from being saved over yours.
  *
- * Throws if both routes fail — offline, out of quota, timed out — so the
- * caller can try again later rather than mistaking a failure for "the
- * spelling was already right".
+ * Throws if the call fails — offline, out of quota, timed out — so the caller
+ * can try again later rather than mistaking a failure for "the spelling was
+ * already right".
  */
 export async function lookUpTitle(
   title: string,
   type: MemoryType
 ): Promise<TitleLookup | null> {
   if (!canSearch(type) || !title.trim()) return null;
-  const user = `This is meant to be the name of a ${KIND[type]}, heard through speech recognition: "${title}"`;
-  const started = Date.now();
 
-  let replied = '';
-  let source: TitleLookup['source'] = 'web search';
-  const steps: LookupStep[] = [];
-  const since = (from: number) => Math.round((Date.now() - from) / 1000);
+  const began = Date.now();
+  const since = () => Math.round((Date.now() - began) / 1000);
 
-  if (searchAvailable()) {
-    const began = Date.now();
-    try {
-      replied = await withTimeout(
-        // No retry: a refusal here is answered by asking the model directly,
-        // which is faster than waiting out a rate limit for a second refusal.
-        requestGroundedText({ model: SPELLING_MODEL, system: SYSTEM, user, retries: 0 })
-      );
-      steps.push({ route: 'web search', seconds: since(began) });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (isQuotaError(message)) searchBlockedUntil = quotaWait(message).retryAt.getTime();
-      steps.push({ route: 'web search', seconds: since(began), failure: message.slice(0, 120) });
-      source = 'model knowledge';
-    }
-  } else {
-    steps.push({
-      route: 'web search',
-      seconds: 0,
-      failure: 'skipped — no search allowance left today',
+  let replied: string;
+  try {
+    replied = await withTimeout(
+      requestText({
+        model: SPELLING_MODEL,
+        system: SYSTEM,
+        user: `This is meant to be the name of a ${KIND[type]}, heard through speech recognition: "${title}"`,
+      })
+    );
+  } catch (err) {
+    const failure = err instanceof Error ? err.message.slice(0, 120) : String(err);
+    throw Object.assign(err instanceof Error ? err : new Error(String(err)), {
+      steps: [{ route: 'model knowledge', seconds: since(), failure }] as LookupStep[],
     });
-    source = 'model knowledge';
-  }
-
-  if (source === 'model knowledge') {
-    // The model knows most titles without looking them up. If this fails too,
-    // the caller retries later.
-    const began = Date.now();
-    try {
-      replied = await withTimeout(
-        requestText({ model: SPELLING_MODEL, system: KNOWLEDGE_SYSTEM, user })
-      );
-      steps.push({ route: 'model knowledge', seconds: since(began) });
-    } catch (err) {
-      steps.push({
-        route: 'model knowledge',
-        seconds: since(began),
-        failure: err instanceof Error ? err.message.slice(0, 120) : String(err),
-      });
-      throw Object.assign(err instanceof Error ? err : new Error(String(err)), { steps });
-    }
   }
 
   const suggestion = replied.trim();
+  const seconds = since();
   return {
-    steps,
-    source,
+    steps: [{ route: 'model knowledge', seconds }],
+    source: 'model knowledge',
     model: SPELLING_MODEL,
     replied: suggestion,
     accepted: acceptCorrection(title, suggestion)
       ? suggestion.replace(/^["']|["']$/g, '')
       : null,
-    seconds: Math.round((Date.now() - started) / 1000),
+    seconds,
   };
 }
