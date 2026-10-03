@@ -238,7 +238,24 @@ export default function AskScreen() {
           <View style={styles.answerBlock}>
             <Text style={[type.stamp, styles.question]}>{asked.toUpperCase()}</Text>
 
+            {result.headline ? (
+              <Text style={[type.figure, styles.headline]}>{result.headline}</Text>
+            ) : null}
+
             <Text style={type.answer}>{result.answer}</Text>
+
+            {/* The substance as a list: a phone screen makes a paragraph of
+                dates and amounts almost unreadable. */}
+            {result.items.length > 0 ? (
+              <View style={styles.items}>
+                {result.items.map((item, index) => (
+                  <View key={`${item}-${index}`} style={styles.item}>
+                    <Text style={[type.gutter, styles.itemMark]}>{index + 1}</Text>
+                    <Text style={[type.body, styles.itemText]}>{item}</Text>
+                  </View>
+                ))}
+              </View>
+            ) : null}
 
             {result.found ? (
               <View style={styles.evidence}>
@@ -342,6 +359,11 @@ function makeStyles(colors: Colors) {
     },
     noticeText: { color: colors.alert },
     answerBlock: { gap: 14 },
+    headline: { fontSize: 30, lineHeight: 36, color: colors.ink, marginBottom: -6 },
+    items: { gap: 2, marginTop: -4 },
+    item: { flexDirection: 'row', alignItems: 'baseline', gap: 10, paddingVertical: 5 },
+    itemMark: { width: 18, color: colors.mist },
+    itemText: { flex: 1, color: colors.ink },
     question: { color: colors.mist },
     evidence: { gap: 6, marginTop: 6 },
     evidenceRule: {

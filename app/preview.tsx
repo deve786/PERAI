@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { DraftCard } from '@/components/DraftCard';
 import { insertMemory, rememberSpelling } from '@/db/queries';
+import { logOk } from '@/log';
 import { clearDrafts, removeDraft, updateDraft, usePendingDrafts } from '@/draftStore';
 import { useTheme } from '@/ThemeContext';
 import { SPACE, type Colors } from '@/theme';
@@ -51,6 +52,7 @@ export default function PreviewScreen() {
     const before = originalTitles.current.get(entry.key);
     if (before && before !== entry.draft.title) {
       await rememberSpelling(before, entry.draft.title, 'user');
+      logOk('Learned your spelling', `${before} → ${entry.draft.title}`);
     }
     await insertMemory(entry.draft, rawInput);
   }

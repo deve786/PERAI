@@ -10,6 +10,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { logFail, logOk } from '@/log';
 import { getSupabase, isConfigured } from '@/sync/client';
 import { useSync } from '@/sync/useSync';
 import { useTheme } from '@/ThemeContext';
@@ -60,9 +61,12 @@ export default function AccountScreen() {
       }
 
       setPassword('');
+      logOk('Signed in for backup', address);
       await sync.syncNow();
     } catch (err) {
-      setProblem(err instanceof Error ? err.message : String(err));
+      const reason = err instanceof Error ? err.message : String(err);
+      logFail('Could not sign in', reason);
+      setProblem(reason);
     } finally {
       setBusy(false);
     }
@@ -72,6 +76,7 @@ export default function AccountScreen() {
     setBusy(true);
     try {
       await getSupabase().auth.signOut();
+      logOk('Signed out of backup');
       await sync.refreshStatus();
     } finally {
       setBusy(false);

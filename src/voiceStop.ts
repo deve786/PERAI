@@ -30,9 +30,6 @@ export function shouldFinish(
 
 const DEFAULT_STOP_PHRASES = ['stop listening', 'stop recording', 'stop'];
 
-/** Said on its own (a short lead-in is fine) to start recording hands-free — see useWakeWord.ts. */
-export const DEFAULT_WAKE_PHRASES = ['start recording', 'hey perai', 'ok perai'];
-
 function normalize(text: string): string {
   return text
     .toLowerCase()
@@ -46,8 +43,7 @@ function normalize(text: string): string {
  * conservative: the phrase must be close to the whole segment, not merely
  * contained in it — "remind me to stop listening to that podcast" must never
  * match "stop listening" just because it mentions the words. Used for both
- * the stop phrase (useVoiceInput.ts) and the wake phrase (useWakeWord.ts) —
- * matching a phrase you just spoke is the same problem either way.
+ * the stop phrase in useVoiceInput.ts.
  *
  * @param segmentText the text recognized since the last pause (not the whole
  *                     accumulated note — see useVoiceInput.ts)

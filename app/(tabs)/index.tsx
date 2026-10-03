@@ -21,6 +21,7 @@ import { deleteMemories, queueNote } from '@/db/queries';
 import { setPendingDrafts } from '@/draftStore';
 import { fileNote } from '@/fileNote';
 import { LISTS } from '@/lists';
+import { logFail, logOk } from '@/log';
 import { usePendingNotes } from '@/usePendingNotes';
 import { useTitleChecks } from '@/useTitleChecks';
 import { notificationsAllowed, syncReminders } from '@/reminders';
@@ -31,8 +32,6 @@ import type { Memory, MemoryDraft, MemoryType } from '@/types';
 import { useMemories } from '@/useMemories';
 import { knownPeople } from '@/speechText';
 import { useVoiceInput } from '@/useVoiceInput';
-import { DEFAULT_WAKE_PHRASES, useWakeWord } from '@/useWakeWord';
-import { WakeWordToggle } from '@/components/WakeWordToggle';
 import { SyncButton } from '@/components/SyncButton';
 
 interface Saved {
@@ -91,6 +90,7 @@ export default function CaptureScreen() {
     setSaving(true);
     setError(null);
     setSaved(null);
+    const started = Date.now();
     try {
       const kept = await fileNote(note, { people, listTitles });
 
@@ -104,10 +104,15 @@ export default function CaptureScreen() {
 
       setText('');
       setSaved({ rawInput: note, memories: kept, alerts, changed: [] });
+      logOk(
+        kept.length === 1 ? 'Saved an entry' : `Saved ${kept.length} entries`,
+        `${Math.round((Date.now() - started) / 1000)}s · ${kept.map((m) => m.title).join(', ')}`
+      );
     } catch (err) {
       // Nothing said is lost: the note is queued and filed automatically once
       // whatever failed — the network, the daily quota — is working again.
       await queueNote(note, describeError(err));
+      logFail('Could not save, note queued', describeError(err));
       setText('');
       setError(`${describeError(err)} Your note is kept below and will be filed automatically.`);
     } finally {
@@ -135,7 +140,6 @@ export default function CaptureScreen() {
         : current
     );
   }, [titles.lastFix]);
-  const [wakeArmed, setWakeArmed] = useState(false);
 
   // Entries just saved are already shown with Undo and Edit, so neither list
   // below repeats them.
@@ -185,19 +189,6 @@ export default function CaptureScreen() {
         ? 'send'
         : 'voice';
 
-  // Hands-free: tap the ear icon to arm, then say "start recording" and
-  // useVoiceInput's own mic session begins, exactly as if the button had
-  // been pressed. Only listens while armed AND the composer is genuinely
-  // idle (mode === 'voice'), so it never fights the mic with an in-progress
-  // capture, never overwrites text you're typing, and never fires again
-  // mid-save — see useWakeWord.ts for how it hands the mic back and forth
-  // with useVoiceInput's own session as mode changes.
-  const wakeWord = useWakeWord(
-    wakeArmed && mode === 'voice',
-    DEFAULT_WAKE_PHRASES,
-    () => void voice.toggle()
-  );
-
   function press() {
     if (mode === 'send') void save(text);
     else void voice.toggle();
@@ -207,11 +198,9 @@ export default function CaptureScreen() {
     ? 'Saving'
     : typed
       ? 'One line can hold several events'
-      : wakeArmed
-        ? `Say "${DEFAULT_WAKE_PHRASES[0]}", or tap the mic`
-        : 'Tap the mic and say what happened';
+      : 'Tap the mic and say what happened';
 
-  const problem = voice.error ?? wakeWord.error ?? error;
+  const problem = voice.error ?? error;
   // The box shows what's being heard, live, while listening; your typed text
   // is untouched underneath and comes back the moment listening stops.
   const displayText = voice.stage === 'idle' ? text : voice.liveText;
@@ -227,11 +216,6 @@ export default function CaptureScreen() {
           <Text style={type.display}>What happened?</Text>
           <View style={styles.titleActions}>
             <SyncButton />
-            <WakeWordToggle
-              armed={wakeArmed}
-              listening={wakeWord.stage === 'listening'}
-              onToggle={() => setWakeArmed((a) => !a)}
-            />
             <ThemeToggle />
           </View>
         </View>
@@ -346,15 +330,27 @@ export default function CaptureScreen() {
         ) : null}
 
         {titles.checking.length > 0 ? (
-          <Section label="CHECKING SPELLING" inset={false}>
+          <Section
+            label="CHECKING SPELLING"
+            inset={false}
+            action={{ label: 'STOP ALL', onPress: titles.stopAll }}
+          >
             {titles.checking.map((item) => (
-              <View key={item.id} style={styles.checkingRow}>
-                <Text style={type.body} numberOfLines={1}>
-                  {item.title}
-                </Text>
-                <Text style={[type.stamp, styles.checkingWhy]}>
-                  {item.attempts > 0 ? 'WILL TRY AGAIN' : 'LOOKING IT UP'}
-                </Text>
+              <View key={item.id} style={styles.checkingNote}>
+                <View style={styles.checkingRow}>
+                  <Text style={[type.body, styles.checkingTitle]} numberOfLines={1}>
+                    {item.title}
+                  </Text>
+                  <Text style={[type.stamp, styles.checkingWhy]}>
+                    {item.lastError ? 'WAITING' : 'LOOKING IT UP'}
+                  </Text>
+                  <Pressable onPress={() => titles.stop(item)} hitSlop={10}>
+                    <Text style={[type.label, styles.action]}>STOP</Text>
+                  </Pressable>
+                </View>
+                {item.lastError ? (
+                  <Text style={[type.fine, styles.checkingReason]}>{item.lastError}</Text>
+                ) : null}
               </View>
             ))}
           </Section>
@@ -411,7 +407,11 @@ export default function CaptureScreen() {
           </Text>
         ) : null}
 
-        <Text style={[type.stamp, styles.version]}>PERAI {appVersion()}</Text>
+        {/* The version line doubles as the way in to the activity log: the
+            place you look when something quietly did not work. */}
+        <Pressable onPress={() => router.push('/logs')} hitSlop={10} style={styles.versionRow}>
+          <Text style={[type.stamp, styles.version]}>PERAI {appVersion()} · ACTIVITY</Text>
+        </Pressable>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -482,14 +482,16 @@ function makeStyles(colors: Colors) {
     action: { color: colors.graphite },
     alertsOff: { color: colors.alert, marginTop: 8 },
     spelled: { color: colors.moss, marginTop: 2 },
+    checkingNote: { gap: 2, paddingVertical: 8 },
     checkingRow: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
       gap: 12,
-      paddingVertical: 8,
     },
+    checkingTitle: { flex: 1 },
     checkingWhy: { color: colors.mist },
+    checkingReason: { color: colors.graphite },
     pendingNote: { gap: 6, paddingVertical: 8 },
     pendingFoot: {
       flexDirection: 'row',
@@ -500,6 +502,7 @@ function makeStyles(colors: Colors) {
     pendingWhy: { flex: 1, color: colors.alert },
     firstRun: { maxWidth: 320, marginTop: 8 },
     // Pinned to the bottom of the screen, out of the way of capturing.
-    version: { marginTop: 'auto', textAlign: 'center', color: colors.mist },
+    versionRow: { marginTop: 'auto' },
+    version: { textAlign: 'center', color: colors.mist },
   });
 }

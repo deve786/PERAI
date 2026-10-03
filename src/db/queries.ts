@@ -1,6 +1,6 @@
 import { getDb, toMemory, type RawRow } from './client';
 import { spellingKey, type Spelling } from '../dictionary';
-import type { PendingNote, PendingTitle } from '../pendingNotes';
+import { backoffFor, type PendingNote, type PendingTitle } from '../pendingNotes';
 import type { Category, Memory, MemoryDraft, MemoryType, Status } from '../types';
 
 /** RFC4122-ish v4 id. Avoids pulling in a uuid package for one call site. */
@@ -299,6 +299,27 @@ export async function getPendingTitles(): Promise<PendingTitle[]> {
   }));
 }
 
+/**
+ * Hold a title back until a given moment, without spending one of its tries.
+ *
+ * Used when the AI has simply run out for the day: the wait is hours, not the
+ * minutes the ordinary backoff deals in, and it would otherwise use up every
+ * attempt against a wall and give up before the quota ever returned. The
+ * pretend "last attempt" is placed so the ordinary backoff makes it due
+ * exactly when the quota comes back.
+ */
+export async function deferTitleCheck(
+  id: string,
+  notBefore: Date,
+  reason: string
+): Promise<void> {
+  const pretendLastTry = new Date(notBefore.getTime() - backoffFor(0)).toISOString();
+  await getDb().runAsync(
+    'UPDATE pending_titles SET last_attempt_at = ?, last_error = ? WHERE id = ?',
+    [pretendLastTry, reason, id]
+  );
+}
+
 export async function markTitleTried(id: string, error: string): Promise<void> {
   await getDb().runAsync(
     `UPDATE pending_titles
@@ -310,6 +331,24 @@ export async function markTitleTried(id: string, error: string): Promise<void> {
 
 export async function dropPendingTitle(id: string): Promise<void> {
   await getDb().runAsync('DELETE FROM pending_titles WHERE id = ?', [id]);
+}
+
+/** Stop checking everything that is waiting. */
+export async function clearPendingTitles(): Promise<void> {
+  await getDb().runAsync('DELETE FROM pending_titles');
+}
+
+/**
+ * Forget titles that have been waiting for days.
+ *
+ * A name that could not be checked in that time is not going to be, and a
+ * list of them sitting on the Record tab for ever is worse than the entry
+ * simply keeping the spelling you gave it.
+ */
+export async function dropStaleTitles(before: Date): Promise<void> {
+  await getDb().runAsync('DELETE FROM pending_titles WHERE created_at < ?', [
+    before.toISOString(),
+  ]);
 }
 
 /** Queue a note the AI could not file yet, so nothing spoken is lost. */
@@ -345,6 +384,19 @@ export async function getPendingNotes(): Promise<PendingNote[]> {
 }
 
 /** Record a failed try, so the backoff in pendingNotes.ts can space the next one. */
+/** As deferTitleCheck, for a note waiting to be filed. */
+export async function deferPendingNote(
+  id: string,
+  notBefore: Date,
+  reason: string
+): Promise<void> {
+  const pretendLastTry = new Date(notBefore.getTime() - backoffFor(0)).toISOString();
+  await getDb().runAsync(
+    'UPDATE pending_notes SET last_attempt_at = ?, last_error = ? WHERE id = ?',
+    [pretendLastTry, reason, id]
+  );
+}
+
 export async function markNoteTried(id: string, error: string): Promise<void> {
   await getDb().runAsync(
     `UPDATE pending_notes

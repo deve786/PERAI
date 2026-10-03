@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 import { onDatabaseChange } from '../db/client';
+import { logFail, logOk } from '../log';
 import { currentEmail, isConfigured } from './client';
 import { lastSyncedAt, pendingCount, syncNow } from './sync';
 
@@ -44,10 +45,15 @@ export function useSync() {
       if (!mounted.current) return;
       setError(null);
       setState(outcome === null ? 'off' : 'idle');
+      if (outcome && outcome.pushed + outcome.pulled > 0) {
+        logOk('Backed up', `${outcome.pushed} sent, ${outcome.pulled} received`);
+      }
     } catch (err) {
       if (!mounted.current) return;
-      setError(err instanceof Error ? err.message : String(err));
+      const reason = err instanceof Error ? err.message : String(err);
+      setError(reason);
       setState('error');
+      logFail('Backup failed', reason);
     } finally {
       await refreshStatus();
     }

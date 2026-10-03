@@ -5,7 +5,16 @@ import { ASK_MODEL, requestJson } from './client';
 import { MAX_CONTEXT_MEMORIES, selectRelevantMemories } from './retrieval';
 
 export interface AskResult {
+  /** One short sentence: the answer itself. */
   answer: string;
+  /**
+   * The things the answer is made of, one per line — "3 Sept · Haircut · ₹300".
+   * Shown as a list, because a run-on paragraph of dates and amounts is the
+   * hardest possible way to read what is really a table.
+   */
+  items: string[];
+  /** A figure the question asked for, e.g. a total. Shown large above the list. */
+  headline: string | null;
   /** The memories the model said it used, in the order it cited them. */
   evidence: Memory[];
   /** False when nothing relevant was recorded — the UI shows a "not found" state. */
@@ -20,14 +29,25 @@ const ANSWER_SCHEMA = {
       description:
         'True only if the provided memories actually answer the question.',
     },
-    answer: { type: 'string' },
+    answer: { type: 'string', description: 'One short sentence answering the question.' },
+    headline: {
+      type: ['string', 'null'],
+      description:
+        'The single figure the question asked for — a total, a count, a date — or null.',
+    },
+    items: {
+      type: 'array',
+      description:
+        'One line per thing the answer covers, newest first. Each line is short and factual: date, what it was, amount if any.',
+      items: { type: 'string' },
+    },
     usedMemoryIds: {
       type: 'array',
       description: 'The reference ids (e.g. "M3") of every memory used.',
       items: { type: 'string' },
     },
   },
-  required: ['found', 'answer', 'usedMemoryIds'],
+  required: ['found', 'answer', 'headline', 'items', 'usedMemoryIds'],
   additionalProperties: false,
 } as const;
 
@@ -47,17 +67,23 @@ information about them.
   reference id of each memory you used in usedMemoryIds, in the order you
   relied on them. If found=false, usedMemoryIds must be empty.
 
-WHEN THE ANSWER IS PRESENT:
-- Be direct and specific. Lead with the answer, then the supporting detail.
+WHEN THE ANSWER IS PRESENT — this is read on a phone, so answer as a list, not
+a paragraph:
+- answer: ONE short sentence. "You spent ₹4,300 on six things last month."
+  Never a paragraph, never a restatement of the question.
+- headline: the single figure asked for, written as it should be read — a
+  total ("₹4,300"), a count ("6 times"), a date ("3 March 2026"). Null when the
+  question does not ask for one figure.
+- items: one line per thing, newest first, each one short and factual in the
+  form "3 March · Haircut · ₹300". Include every memory you used, and nothing
+  that is not in them. No sentences, no commentary, no bullet characters.
 - Quote concrete dates, amounts and names from the memories rather than
-  paraphrasing them vaguely. Say "on 3 March 2026", not "recently".
-- For "how much did I spend" questions, add up only the amounts present in the
-  provided memories, show the total, and say how many entries it covers.
-- For "how often do I..." questions, compute the gaps between the matching
-  events you were given, report the typical (median) gap and the date of the
-  most recent one. Base this only on the events provided — if there is just one
-  matching event, say so instead of inferring a frequency.
-- Keep it to a few sentences. This is a phone screen.`;
+  paraphrasing vaguely. Say "3 March 2026", not "recently".
+- For "how much did I spend", add up only the amounts present, put the total in
+  headline, and list each entry in items.
+- For "how often do I...", put the typical gap in headline, and list the
+  matching events in items. With only one event, say so in answer rather than
+  inferring a frequency.`;
 
 /** One compact line per memory. Null fields are omitted rather than sent as "null". */
 function renderMemory(memory: Memory, ref: string): string {
@@ -117,13 +143,15 @@ export async function askAI(
   all: Memory[]
 ): Promise<AskResult> {
   const trimmed = question.trim();
-  if (!trimmed) return { answer: '', evidence: [], found: false };
+  if (!trimmed) return { answer: '', items: [], headline: null, evidence: [], found: false };
 
   const now = new Date(nowISO);
 
   if (all.length === 0) {
     return {
       answer: 'Nothing has been recorded yet. Capture a memory first.',
+      items: [],
+      headline: null,
       evidence: [],
       found: false,
     };
@@ -135,6 +163,8 @@ export async function askAI(
   if (memories.length === 0) {
     return {
       answer: `No recorded memory found${range ? ` for ${range.label}` : ''}.`,
+      items: [],
+      headline: null,
       evidence: [],
       found: false,
     };
@@ -170,16 +200,36 @@ export async function askAI(
   });
 
   const parsed = looseJsonParse(body) as
-    | { found?: unknown; answer?: unknown; usedMemoryIds?: unknown }
+    | {
+        found?: unknown;
+        answer?: unknown;
+        headline?: unknown;
+        items?: unknown;
+        usedMemoryIds?: unknown;
+      }
     | null;
 
   if (!parsed || typeof parsed.answer !== 'string') {
     return {
       answer: "Couldn't read the answer — try rephrasing the question.",
+      items: [],
+      headline: null,
       evidence: [],
       found: false,
     };
   }
+
+  const items = Array.isArray(parsed.items)
+    ? parsed.items
+        .filter((item): item is string => typeof item === 'string')
+        // Models like to decorate a list even when asked not to.
+        .map((item) => item.replace(/^\s*[-•*–]\s*/, '').trim())
+        .filter(Boolean)
+    : [];
+  const headline =
+    typeof parsed.headline === 'string' && parsed.headline.trim().length > 0
+      ? parsed.headline.trim()
+      : null;
 
   const refs = Array.isArray(parsed.usedMemoryIds) ? parsed.usedMemoryIds : [];
   const evidence: Memory[] = [];
@@ -204,6 +254,10 @@ export async function askAI(
       : parsed.found === true
         ? "Found something, but couldn't tie it back to a specific memory."
         : parsed.answer,
+    // A list with nothing behind it would be the ungrounded output this app
+    // must not produce, so it goes only with an answer that was traced back.
+    items: found ? items : [],
+    headline: found ? headline : null,
     evidence,
     found,
   };

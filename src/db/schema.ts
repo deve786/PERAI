@@ -60,6 +60,17 @@ CREATE TABLE IF NOT EXISTS spellings (
   updated_at TEXT NOT NULL
 );
 
+-- A short diary of what the app actually did: saves, backups, name checks and
+-- anything that failed, with the reason. Only things worth reading — this is
+-- for answering "why did that not work", not a developer trace.
+CREATE TABLE IF NOT EXISTS logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  at TEXT NOT NULL,
+  level TEXT NOT NULL,
+  event TEXT NOT NULL,
+  detail TEXT
+);
+
 -- Titles waiting to be checked against a web search. The entry is already
 -- saved and usable; this is only its spelling catching up, and it survives the
 -- app being closed so a slow search is never simply lost.

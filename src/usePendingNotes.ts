@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { describeError } from './ai/client';
 import { onDatabaseChange } from './db/client';
-import { dropPendingNote, getPendingNotes, markNoteTried } from './db/queries';
+import { isQuotaError, quotaWait } from './ai/quota';
+import { deferPendingNote, dropPendingNote, getPendingNotes, markNoteTried } from './db/queries';
 import { fileNote, type FilingContext } from './fileNote';
+import { logFail, logOk } from './log';
 import { nextDue, RETRY_TICK_MS, type PendingNote } from './pendingNotes';
 
 /**
@@ -43,8 +45,20 @@ export function usePendingNotes(context: FilingContext, enabled: boolean) {
         try {
           await fileNote(note.text, latest.current);
           await dropPendingNote(note.id);
+          logOk('Filed a waiting note', note.text.slice(0, 60));
         } catch (err) {
-          await markNoteTried(note.id, describeError(err));
+          const reason = describeError(err);
+          const raw = err instanceof Error ? err.message : String(err);
+
+          // Same as a title check: when the day's AI is spent, wait for it to
+          // come back instead of using up every try in the meantime.
+          if (isQuotaError(raw)) {
+            await deferPendingNote(note.id, quotaWait(raw).retryAt, reason);
+            logFail('Waiting on quota to file a note', reason);
+          } else {
+            await markNoteTried(note.id, reason);
+            logFail('Waiting note still failing', reason);
+          }
         }
         await refresh();
       } finally {

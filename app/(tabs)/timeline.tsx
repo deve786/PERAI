@@ -4,6 +4,7 @@ import { ChipRow } from '@/components/Chip';
 import { MemoryRow } from '@/components/MemoryRow';
 import { deleteMemory, setMemoryStatus } from '@/db/queries';
 import { groupByDay } from '@/format';
+import { logOk } from '@/log';
 import { isStruck, sinkStruck } from '@/strike';
 import { useTheme } from '@/ThemeContext';
 import { GUTTER, SPACE, type Colors } from '@/theme';
@@ -31,13 +32,22 @@ export default function TimelineScreen() {
   }));
 
   function toggle(memory: Memory) {
-    void setMemoryStatus(memory.id, memory.status === 'active' ? 'done' : 'active');
+    const next = memory.status === 'active' ? 'done' : 'active';
+    void setMemoryStatus(memory.id, next);
+    logOk(next === 'done' ? 'Struck out' : 'Put back', memory.title);
   }
 
   function confirmDelete(id: string, title: string) {
     Alert.alert('Delete this entry?', title, [
       { text: 'Keep', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => void deleteMemory(id) },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () => {
+          void deleteMemory(id);
+          logOk('Deleted an entry', title);
+        },
+      },
     ]);
   }
 

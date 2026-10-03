@@ -20,7 +20,6 @@ import {
 import { reminderTime } from '../src/reminderTime';
 import type { Memory } from '../src/types';
 import {
-  DEFAULT_WAKE_PHRASES,
   END_OF_SPEECH_MS,
   isStopCommand,
   MAX_MS,
@@ -32,6 +31,7 @@ import { isFreshPartial, joinSpelledLetters, knownPeople, restatesEarlier } from
 import { listSections } from '../src/lists';
 import { hasPassed, isStruck, overdueToClose, sinkStruck } from '../src/strike';
 import { nextCursor, shouldApplyRemote, toLocal, toRemote } from '../src/sync/mapping';
+import { isQuotaError, nextDailyReset, quotaMessage, quotaWait } from '../src/ai/quota';
 import { acceptCorrection, similarity } from '../src/titleMatch';
 import { lookupSpelling, spellingHints, spellingKey } from '../src/dictionary';
 import { backoffFor, nextDue, shouldRetry, MAX_ATTEMPTS, type PendingNote } from '../src/pendingNotes';
@@ -387,28 +387,19 @@ section('voice: known names');
   check('newest first, deduplicated ignoring case', people.join('|') === 'Fathima|Rahul|Anjali', people);
 }
 
-section('wake word: matches phrase');
-check(
-  '"start recording" alone wakes',
-  matchesTrailingPhrase('start recording', DEFAULT_WAKE_PHRASES) === true
-);
-check('"hey PERAI" (case) wakes', matchesTrailingPhrase('hey PERAI', DEFAULT_WAKE_PHRASES) === true);
-check(
-  '"okay, start recording" (short lead-in) wakes',
-  matchesTrailingPhrase('okay, start recording', DEFAULT_WAKE_PHRASES) === true
-);
-check(
-  'a note that happens to end with the phrase after a long sentence does NOT wake',
-  matchesTrailingPhrase(
-    'remind me every single week to start recording',
-    DEFAULT_WAKE_PHRASES
-  ) === false
-);
-check(
-  'unrelated note text does not wake',
-  matchesTrailingPhrase('bought a shirt for 1200 rupees', DEFAULT_WAKE_PHRASES) === false
-);
-check('empty segment does not wake', matchesTrailingPhrase('', DEFAULT_WAKE_PHRASES) === false);
+section('spoken phrases are matched conservatively');
+{
+  const phrases = ['stop listening', 'that is all'];
+  check('the phrase alone matches', matchesTrailingPhrase('that is all', phrases) === true);
+  check('case and punctuation do not matter', matchesTrailingPhrase('That is all.', phrases) === true);
+  check('a short lead-in still matches', matchesTrailingPhrase('okay that is all', phrases) === true);
+  check(
+    'a sentence that merely ends with it does not',
+    matchesTrailingPhrase('tell him the money he gave me is that is all', phrases) === false
+  );
+  check('unrelated text does not', matchesTrailingPhrase('bought a shirt', phrases) === false);
+  check('nothing said does not', matchesTrailingPhrase('', phrases) === false);
+}
 
 section('home screen widget');
 {
@@ -695,6 +686,49 @@ section('syncing with the server');
     'a row survives the trip to the server and back unchanged',
     sorted(round) === sorted(local),
     sorted(round)
+  );
+}
+
+section('running out of AI for the day');
+{
+  const QUOTA = '429 You exceeded your current quota, please check your plan and billing details.';
+  check('a quota refusal is recognised', isQuotaError(QUOTA) === true);
+  check('a 429 by any wording is recognised', isQuotaError('Too Many Requests') === true);
+  check('an ordinary failure is not', isQuotaError('Could not reach the network') === false);
+
+  // Midnight in California, from a known instant: 2026-10-03T12:00Z is
+  // 05:00 Pacific (daylight time), so 19 hours remain.
+  const noon = new Date('2026-10-03T12:00:00.000Z');
+  check(
+    'the daily reset is the next midnight Pacific',
+    nextDailyReset(noon).toISOString() === '2026-10-04T07:00:00.000Z',
+    nextDailyReset(noon).toISOString()
+  );
+  check('the reset is always ahead', nextDailyReset(noon).getTime() > noon.getTime());
+  check(
+    'and never more than a day ahead',
+    nextDailyReset(noon).getTime() - noon.getTime() <= 24 * 3_600_000
+  );
+
+  const burst = quotaWait('429 rate limit exceeded, retry in 23s', noon);
+  check('a short wait the API asks for is taken as a burst limit', burst.kind === 'burst');
+  check('and honoured exactly', burst.retryAt.toISOString() === '2026-10-03T12:00:23.000Z');
+
+  check('anything else is treated as the daily allowance', quotaWait(QUOTA, noon).kind === 'day');
+  check(
+    'a long wait is the daily allowance too',
+    quotaWait('429 quota exceeded, retry in 4000s', noon).kind === 'day'
+  );
+  check(
+    'a per-day message is the daily allowance even with a short wait',
+    quotaWait('429 quota exceeded for requests per day, retry in 5s', noon).kind === 'day'
+  );
+
+  check('the message says it is the day that ran out', /quota is used up/i.test(quotaMessage(QUOTA, noon)));
+  check('and says when it comes back', /comes back at about/i.test(quotaMessage(QUOTA, noon)));
+  check(
+    'a burst limit reads differently',
+    /busy for a moment/i.test(quotaMessage('429 retry in 23s', noon))
   );
 }
 

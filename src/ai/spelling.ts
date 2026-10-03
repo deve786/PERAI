@@ -1,6 +1,6 @@
 import { acceptCorrection } from '../titleMatch';
 import type { MemoryType } from '../types';
-import { EXTRACT_MODEL, requestGroundedText } from './client';
+import { EXTRACT_MODEL, requestGroundedText, requestText } from './client';
 
 export const SPELLING_MODEL =
   process.env.EXPO_PUBLIC_GEMINI_SPELLING_MODEL || EXTRACT_MODEL;
@@ -27,6 +27,13 @@ never answer with a different title, a sequel, or a longer description. If
 search does not turn up a title that is clearly the same one, repeat the text
 exactly as you received it.`;
 
+/** The same job, from memory rather than the web. */
+const KNOWLEDGE_SYSTEM = `${SYSTEM}
+
+You cannot search right now, so answer from what you already know. Only correct
+a title you actually recognise; if you are not sure what the person means,
+repeat the text exactly as you received it rather than guessing.`;
+
 /** The search is slow by nature, but it must not hang on for ever. */
 const SEARCH_TIMEOUT_MS = 120_000;
 
@@ -39,27 +46,63 @@ function withTimeout<T>(work: Promise<T>): Promise<T> {
   ]);
 }
 
+export interface TitleLookup {
+  /** Whether the answer came from a web search or the model's own knowledge. */
+  source: 'web search' | 'model knowledge';
+  model: string;
+  /** Exactly what the model replied, before any judgement. */
+  replied: string;
+  /** The reply, if it was judged to be the same title properly spelled. */
+  accepted: string | null;
+  /** How long the call took, in seconds. */
+  seconds: number;
+}
+
 /**
- * The properly spelled name for something dictated, or null when the search
- * cannot better it.
+ * Look up how a dictated name is really spelled.
  *
- * Throws if the search itself fails — offline, out of quota, timed out — so
- * the caller can try again later rather than mistaking a failure for "the
- * spelling was already right". `acceptCorrection` is what stops a search that
+ * Reports what actually happened — which route answered, what it said, and
+ * whether that was accepted — so the activity log can show the work rather
+ * than only the verdict. `acceptCorrection` is what stops an answer that
  * wandered off to a different title from being saved over yours.
+ *
+ * Throws if both routes fail — offline, out of quota, timed out — so the
+ * caller can try again later rather than mistaking a failure for "the
+ * spelling was already right".
  */
-export async function searchTitle(title: string, type: MemoryType): Promise<string | null> {
+export async function lookUpTitle(
+  title: string,
+  type: MemoryType
+): Promise<TitleLookup | null> {
   if (!canSearch(type) || !title.trim()) return null;
+  const user = `This is meant to be the name of a ${KIND[type]}, heard through speech recognition: "${title}"`;
+  const started = Date.now();
 
-  const answer = await withTimeout(
-    requestGroundedText({
-      model: SPELLING_MODEL,
-      system: SYSTEM,
-      user: `This is meant to be the name of a ${KIND[type]}, heard through speech recognition: "${title}"`,
-    })
-  );
+  let replied: string;
+  let source: TitleLookup['source'] = 'web search';
+  try {
+    replied = await withTimeout(
+      requestGroundedText({ model: SPELLING_MODEL, system: SYSTEM, user })
+    );
+  } catch {
+    // Searching the web has its own, much smaller allowance than ordinary
+    // calls, and it is the first thing to run out. The model knows most
+    // titles without looking them up, so ask it directly rather than leaving
+    // the name misspelled. If this fails too, the caller retries later.
+    source = 'model knowledge';
+    replied = await withTimeout(
+      requestText({ model: SPELLING_MODEL, system: KNOWLEDGE_SYSTEM, user })
+    );
+  }
 
-  const suggestion = answer.trim();
-  if (!acceptCorrection(title, suggestion)) return null;
-  return suggestion.replace(/^["']|["']$/g, '');
+  const suggestion = replied.trim();
+  return {
+    source,
+    model: SPELLING_MODEL,
+    replied: suggestion,
+    accepted: acceptCorrection(title, suggestion)
+      ? suggestion.replace(/^["']|["']$/g, '')
+      : null,
+    seconds: Math.round((Date.now() - started) / 1000),
+  };
 }

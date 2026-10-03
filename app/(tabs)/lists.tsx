@@ -3,6 +3,7 @@ import { MemoryRow } from '@/components/MemoryRow';
 import { Section } from '@/components/Section';
 import { deleteMemory, setMemoryStatus } from '@/db/queries';
 import { listSections } from '@/lists';
+import { logOk } from '@/log';
 import { useTheme } from '@/ThemeContext';
 import { SPACE, type Colors } from '@/theme';
 import type { Memory } from '@/types';
@@ -25,13 +26,22 @@ export default function ListsScreen() {
   const anything = sections.some((section) => section.open.length + section.done.length > 0);
 
   function toggle(memory: Memory) {
-    void setMemoryStatus(memory.id, memory.status === 'active' ? 'done' : 'active');
+    const next = memory.status === 'active' ? 'done' : 'active';
+    void setMemoryStatus(memory.id, next);
+    logOk(next === 'done' ? 'Ticked off' : 'Put back on the list', memory.title);
   }
 
   function confirmDelete(memory: Memory) {
     Alert.alert('Delete this entry?', memory.title, [
       { text: 'Keep', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => void deleteMemory(memory.id) },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () => {
+          void deleteMemory(memory.id);
+          logOk('Deleted an entry', memory.title);
+        },
+      },
     ]);
   }
 

@@ -100,6 +100,7 @@ function ThemedApp() {
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="preview" options={{ presentation: 'modal' }} />
         <Stack.Screen name="account" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="logs" options={{ presentation: 'modal' }} />
       </Stack>
       <UpdateBanner />
     </>

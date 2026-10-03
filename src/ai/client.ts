@@ -1,4 +1,5 @@
 import { GoogleGenAI } from '@google/genai';
+import { isQuotaError, quotaMessage } from './quota';
 
 /**
  * Read the key injected by app.config.ts.
@@ -187,6 +188,40 @@ export async function requestGroundedText(options: {
   }
 }
 
+/**
+ * Ask a plain question and get plain text back, with no tools.
+ *
+ * The same shape as requestGroundedText without the search, because searching
+ * has its own much smaller allowance: when that runs out, the model's own
+ * knowledge is still worth asking.
+ */
+export async function requestText(options: {
+  model: string;
+  system: string;
+  user: string;
+  retries?: number;
+}): Promise<string> {
+  try {
+    const interaction = await getClient().interactions.create({
+      model: options.model,
+      system_instruction: options.system,
+      input: options.user,
+    } as Parameters<GoogleGenAI['interactions']['create']>[0]);
+
+    if (!interaction || typeof interaction !== 'object' || !('output_text' in interaction)) {
+      throw new Error('Gemini returned a streaming response, which is not supported here.');
+    }
+    return interaction.output_text ?? '';
+  } catch (err) {
+    const wait = retryDelayMs(err);
+    const remaining = options.retries ?? 0;
+    if (wait === null || remaining <= 0) throw err;
+
+    await sleep(wait);
+    return requestText({ ...options, retries: remaining - 1 });
+  }
+}
+
 async function sendOnce(options: {
   model: string;
   system: string;
@@ -226,9 +261,7 @@ export function describeError(err: unknown): string {
   if (status === 401 || status === 403 || /API key/i.test(message)) {
     return 'That API key was rejected. Check EXPO_PUBLIC_GEMINI_API_KEY.';
   }
-  if (status === 429 || /quota|rate limit/i.test(message)) {
-    return 'Hit the Gemini rate limit. Wait a minute and try again.';
-  }
+  if (status === 429 || isQuotaError(message)) return quotaMessage(message);
   if (/fetch|network|ENOTFOUND|ECONNREFUSED/i.test(message)) {
     return 'Could not reach Gemini. Check your network connection.';
   }

@@ -1,5 +1,6 @@
 import { onDatabaseChange } from './db/client';
 import { getAllMemories, setMemoryStatus } from './db/queries';
+import { logOk } from './log';
 import { overdueToClose } from './strike';
 
 /** Times move on slowly; there is no point checking more often than this. */
@@ -14,8 +15,17 @@ const SWEEP_MS = 5 * 60_000;
  * alone anything touched after it fell due.
  */
 export async function sweepOverdue(now: Date = new Date()): Promise<number> {
-  const ids = overdueToClose(await getAllMemories(), now);
+  const memories = await getAllMemories();
+  const ids = overdueToClose(memories, now);
   for (const id of ids) await setMemoryStatus(id, 'done');
+
+  if (ids.length > 0) {
+    const titles = memories.filter((memory) => ids.includes(memory.id)).map((m) => m.title);
+    logOk(
+      ids.length === 1 ? 'Struck out, its time passed' : `Struck out ${ids.length}, their time passed`,
+      titles.join(', ')
+    );
+  }
   return ids.length;
 }
 
