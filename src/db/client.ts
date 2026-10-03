@@ -85,6 +85,7 @@ export interface RawRow {
   priority: string | null;
   status: string;
   confirmed: number;
+  updatedAt: string;
 }
 
 /** Widen a raw row into the app's domain type. */

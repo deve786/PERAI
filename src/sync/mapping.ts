@@ -28,9 +28,8 @@ export interface RemoteRow {
   updated_at: string;
 }
 
-/** A local row, including the columns the app's Memory type does not carry. */
+/** A local row, including the one column the app's Memory type does not carry. */
 export interface LocalRow extends Memory {
-  updatedAt: string;
   deleted: boolean;
 }
 

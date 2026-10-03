@@ -30,7 +30,7 @@ import {
 } from '../src/voiceStop';
 import { isFreshPartial, joinSpelledLetters, knownPeople, restatesEarlier } from '../src/speechText';
 import { listSections } from '../src/lists';
-import { hasPassed, isStruck, sinkStruck } from '../src/strike';
+import { hasPassed, isStruck, overdueToClose, sinkStruck } from '../src/strike';
 import { nextCursor, shouldApplyRemote, toLocal, toRemote } from '../src/sync/mapping';
 import { acceptCorrection, similarity } from '../src/titleMatch';
 import { lookupSpelling, spellingHints, spellingKey } from '../src/dictionary';
@@ -67,6 +67,7 @@ function memory(partial: Partial<Memory> & { title: string; eventDate: string })
     category: 'Other',
     dateExpression: null,
     createdAt: partial.eventDate,
+    updatedAt: partial.createdAt ?? partial.eventDate,
     amount: null,
     currency: null,
     people: null,
@@ -591,6 +592,35 @@ section('struck out: done, or the moment has gone');
   check(
     'an ordinary memory is never struck',
     isStruck(memory({ title: 'Got a haircut', eventDate: at(10), dateExpression: 'last week' }), now) === false
+  );
+
+  check(
+    'tapping an overdue entry back to active keeps it active',
+    hasPassed(
+      memory({
+        title: 'Call the bank',
+        type: 'task',
+        eventDate: at(17),
+        dateExpression: 'yesterday',
+        // Touched after it fell due: you said you still mean to do it.
+        updatedAt: new Date(2026, 8, 18, 13, 0).toISOString(),
+      }),
+      now
+    ) === false
+  );
+
+  const sweep = [
+    memory({ title: 'Missed', type: 'task', eventDate: at(17), dateExpression: 'yesterday' }),
+    memory({ title: 'Still ahead', type: 'task', eventDate: at(20), dateExpression: 'sunday' }),
+    memory({ title: 'Already done', type: 'task', status: 'done', eventDate: at(17), dateExpression: 'yesterday' }),
+    memory({ title: 'No date', type: 'task', eventDate: at(10), dateExpression: null }),
+    memory({ title: 'Old memory', eventDate: at(10), dateExpression: 'last week' }),
+  ];
+  const closing = overdueToClose(sweep, now);
+  check(
+    'only overdue, still-active, dated things are recorded as done',
+    closing.length === 1 && closing[0] === sweep[0].id,
+    closing
   );
 
   const day = [

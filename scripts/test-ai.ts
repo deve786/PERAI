@@ -188,6 +188,7 @@ async function main() {
       category: 'Other',
       dateExpression: null,
       createdAt: partial.eventDate,
+      updatedAt: partial.eventDate,
       amount: null,
       currency: null,
       people: null,

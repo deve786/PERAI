@@ -4,39 +4,64 @@ import type { Memory, MemoryType } from './types';
 /** Types that can fall due. A memory or a purchase already happened. */
 const ACTIONABLE: readonly MemoryType[] = ['task', 'reminder', 'appointment'];
 
-type Timed = Pick<Memory, 'type' | 'eventDate' | 'dateExpression' | 'status'>;
+type Timed = Pick<
+  Memory,
+  'type' | 'eventDate' | 'dateExpression' | 'status' | 'updatedAt'
+>;
 
 /**
- * Has the moment this was meant for gone by?
+ * The moment this entry was for, or null when it was never due.
  *
- * Only for things you meant to do. An entry with no date was never due, so it
- * waits until you strike it yourself. A day with no clock time is not past
- * until that day is over — "call the bank on Friday" is not overdue at 9am on
- * Friday.
+ * Only things you meant to do can fall due. An entry with no date given waits
+ * until you strike it yourself. A day with no clock time lasts until the day is
+ * over — "call the bank on Friday" is not overdue at 9am on Friday.
  */
-export function hasPassed(memory: Timed, now: Date = new Date()): boolean {
-  if (!ACTIONABLE.includes(memory.type)) return false;
-  if (!memory.dateExpression) return false;
+export function dueAt(memory: Timed): Date | null {
+  if (!ACTIONABLE.includes(memory.type)) return null;
+  if (!memory.dateExpression) return null;
 
   const event = new Date(memory.eventDate);
-  if (Number.isNaN(event.getTime())) return false;
-
-  if (hasStatedTime(memory.dateExpression)) return event.getTime() <= now.getTime();
+  if (Number.isNaN(event.getTime())) return null;
+  if (hasStatedTime(memory.dateExpression)) return event;
 
   const endOfDay = new Date(event);
   endOfDay.setHours(23, 59, 59, 999);
-  return endOfDay.getTime() <= now.getTime();
+  return endOfDay;
 }
 
 /**
- * Should this entry be shown struck through?
+ * Has its moment gone by, without you saying otherwise since?
  *
- * Either you ticked it off, or its time has gone by. Passing time only draws
- * the line — the entry stays active in the record, so tapping puts it back and
- * nothing is marked done behind your back.
+ * Touching an entry after it fell due — tapping it back to active — means you
+ * still intend to do it, so it is left alone from then on. Without that, an
+ * overdue entry could never be un-struck: it would be marked done again on the
+ * next sweep.
  */
+export function hasPassed(memory: Timed, now: Date = new Date()): boolean {
+  const due = dueAt(memory);
+  if (!due || due.getTime() > now.getTime()) return false;
+
+  const touched = new Date(memory.updatedAt).getTime();
+  return Number.isNaN(touched) || touched <= due.getTime();
+}
+
+/** Struck through: ticked off, or its moment has gone by. */
 export function isStruck(memory: Timed, now: Date = new Date()): boolean {
   return memory.status !== 'active' || hasPassed(memory, now);
+}
+
+/**
+ * Entries whose time has gone by and that are still marked active — the ones a
+ * sweep should now record as done, so the strike is in the record itself and
+ * reaches every device, rather than being redrawn from the date each time.
+ */
+export function overdueToClose<T extends Timed & { id: string }>(
+  memories: T[],
+  now: Date = new Date()
+): string[] {
+  return memories
+    .filter((memory) => memory.status === 'active' && hasPassed(memory, now))
+    .map((memory) => memory.id);
 }
 
 /**

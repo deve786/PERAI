@@ -55,6 +55,8 @@ export interface Memory {
   priority: Priority | null;
   status: Status;
   confirmed: boolean;
+  /** Last change to this entry, and what sync compares. */
+  updatedAt: string;
 }
 
 /**
@@ -64,7 +66,7 @@ export interface Memory {
  */
 export type MemoryDraft = Omit<
   Memory,
-  'id' | 'createdAt' | 'confirmed' | 'rawInput'
+  'id' | 'createdAt' | 'confirmed' | 'rawInput' | 'updatedAt'
 >;
 
 /** A draft carrying a local key so the preview list can track it per-card. */

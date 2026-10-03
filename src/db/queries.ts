@@ -32,7 +32,8 @@ const COLUMNS = `
   tags,
   priority,
   status,
-  confirmed
+  confirmed,
+  updated_at       AS updatedAt
 `;
 
 /** Persist a user-confirmed draft. Returns the stored row. */
@@ -40,12 +41,14 @@ export async function insertMemory(
   draft: MemoryDraft,
   rawInput: string
 ): Promise<Memory> {
+  const createdAt = new Date().toISOString();
   const memory: Memory = {
     ...draft,
     id: uuid(),
     rawInput,
-    createdAt: new Date().toISOString(),
+    createdAt,
     confirmed: true,
+    updatedAt: createdAt,
   };
 
   await getDb().runAsync(
@@ -71,7 +74,7 @@ export async function insertMemory(
       memory.priority,
       memory.status,
       1,
-      memory.createdAt,
+      memory.updatedAt,
     ]
   );
 

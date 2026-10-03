@@ -15,6 +15,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { UpdateBanner } from '@/components/UpdateBanner';
 import { initDatabase } from '@/db/client';
 import { getSetting } from '@/db/queries';
+import { startOverdueSweep } from '@/overdue';
 import { startReminderSync } from '@/reminders';
 import { SPEECH_LANGUAGE_KEY, setSpeechLanguage } from '@/speechSession';
 import { ThemeProvider, useTheme } from '@/ThemeContext';
@@ -30,6 +31,8 @@ export default function RootLayout() {
 
   // Once the database is open, keep scheduled reminders in step with it.
   useEffect(() => (dbReady ? startReminderSync() : undefined), [dbReady]);
+  // Anything whose time has gone by is recorded as done, not just drawn struck.
+  useEffect(() => (dbReady ? startOverdueSweep() : undefined), [dbReady]);
   useEffect(() => (dbReady ? startWidgetSync() : undefined), [dbReady]);
 
   // The recognizer follows the phone's own English unless a language was saved.
