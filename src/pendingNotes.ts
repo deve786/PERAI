@@ -5,13 +5,27 @@
  * or the free tier's quota spent for the minute. Pure, so the backoff is unit
  * tested in plain Node; the queue itself lives in src/db/queries.ts.
  */
+import type { MemoryType } from './types';
 
-export interface PendingNote {
-  id: string;
-  text: string;
+/** Anything the app keeps trying: a note to file, a title to look up. */
+export interface Retryable {
   createdAt: string;
   attempts: number;
   lastAttemptAt: string | null;
+}
+
+export interface PendingNote extends Retryable {
+  id: string;
+  text: string;
+  lastError: string | null;
+}
+
+/** A saved entry whose name is still being checked against a web search. */
+export interface PendingTitle extends Retryable {
+  /** The entry's own id. */
+  id: string;
+  title: string;
+  type: MemoryType;
   lastError: string | null;
 }
 
@@ -30,7 +44,7 @@ export function backoffFor(attempts: number): number {
  * Is this note due for another try? A note that has never been tried since it
  * was queued is due immediately — the first failure already happened.
  */
-export function shouldRetry(note: PendingNote, now: Date = new Date()): boolean {
+export function shouldRetry(note: Retryable, now: Date = new Date()): boolean {
   if (note.attempts >= MAX_ATTEMPTS) return false;
   if (!note.lastAttemptAt) return true;
 
@@ -40,7 +54,7 @@ export function shouldRetry(note: PendingNote, now: Date = new Date()): boolean 
 }
 
 /** The next note to try, oldest first, or null when none is due. */
-export function nextDue(notes: PendingNote[], now: Date = new Date()): PendingNote | null {
+export function nextDue<T extends Retryable>(notes: T[], now: Date = new Date()): T | null {
   const due = notes
     .filter((note) => shouldRetry(note, now))
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));

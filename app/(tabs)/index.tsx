@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -19,9 +19,10 @@ import { ThemeToggle } from '@/components/ThemeToggle';
 import { VoiceWaveform } from '@/components/VoiceWaveform';
 import { deleteMemories, queueNote } from '@/db/queries';
 import { setPendingDrafts } from '@/draftStore';
-import { fileNote, refineSpellings } from '@/fileNote';
+import { fileNote } from '@/fileNote';
 import { LISTS } from '@/lists';
 import { usePendingNotes } from '@/usePendingNotes';
+import { useTitleChecks } from '@/useTitleChecks';
 import { notificationsAllowed, syncReminders } from '@/reminders';
 import { reminderTime } from '@/reminderTime';
 import { useTheme } from '@/ThemeContext';
@@ -79,6 +80,9 @@ export default function CaptureScreen() {
   }, [memories]);
 
   const pending = usePendingNotes({ people, listTitles }, configured);
+  // Names of new games, films and products are checked against a web search
+  // after saving, so adding never waits on it.
+  const titles = useTitleChecks(configured);
 
   async function save(raw: string) {
     const note = raw.trim();
@@ -100,25 +104,6 @@ export default function CaptureScreen() {
 
       setText('');
       setSaved({ rawInput: note, memories: kept, alerts, changed: [] });
-
-      // Checking a new game, film or product name against the web takes far
-      // longer than everything above put together, so it happens after the
-      // entry is already saved and on screen. The card updates if it changes.
-      void refineSpellings(kept, { people, listTitles }).then((changed) => {
-        if (changed.length === 0) return;
-        setSaved((current) =>
-          current && current.rawInput === note
-            ? {
-                ...current,
-                changed,
-                memories: current.memories.map((memory) => {
-                  const fix = changed.find((change) => change.from === memory.title);
-                  return fix ? { ...memory, title: fix.to } : memory;
-                }),
-              }
-            : current
-        );
-      });
     } catch (err) {
       // Nothing said is lost: the note is queued and filed automatically once
       // whatever failed — the network, the daily quota — is working again.
@@ -133,6 +118,23 @@ export default function CaptureScreen() {
   const voice = useVoiceInput((spoken) => void save(spoken), {
     contextualStrings: [...people, ...listTitles],
   });
+
+  // A name corrected by the search belongs on the card that announced it.
+  useEffect(() => {
+    const fix = titles.lastFix;
+    if (!fix) return;
+    setSaved((current) =>
+      current?.memories.some((memory) => memory.title === fix.from)
+        ? {
+            ...current,
+            changed: [...current.changed, fix],
+            memories: current.memories.map((memory) =>
+              memory.title === fix.from ? { ...memory, title: fix.to } : memory
+            ),
+          }
+        : current
+    );
+  }, [titles.lastFix]);
   const [wakeArmed, setWakeArmed] = useState(false);
 
   // Entries just saved are already shown with Undo and Edit, so neither list
@@ -343,6 +345,21 @@ export default function CaptureScreen() {
           </View>
         ) : null}
 
+        {titles.checking.length > 0 ? (
+          <Section label="CHECKING SPELLING" inset={false}>
+            {titles.checking.map((item) => (
+              <View key={item.id} style={styles.checkingRow}>
+                <Text style={type.body} numberOfLines={1}>
+                  {item.title}
+                </Text>
+                <Text style={[type.stamp, styles.checkingWhy]}>
+                  {item.attempts > 0 ? 'WILL TRY AGAIN' : 'LOOKING IT UP'}
+                </Text>
+              </View>
+            ))}
+          </Section>
+        ) : null}
+
         {pending.notes.length > 0 ? (
           <Section label="WAITING TO BE FILED" inset={false}>
             {pending.notes.map((note) => (
@@ -465,6 +482,14 @@ function makeStyles(colors: Colors) {
     action: { color: colors.graphite },
     alertsOff: { color: colors.alert, marginTop: 8 },
     spelled: { color: colors.moss, marginTop: 2 },
+    checkingRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+      paddingVertical: 8,
+    },
+    checkingWhy: { color: colors.mist },
     pendingNote: { gap: 6, paddingVertical: 8 },
     pendingFoot: {
       flexDirection: 'row',

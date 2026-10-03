@@ -206,6 +206,36 @@ console.log('\nnotes waiting to be filed');
   check('filing it removes it from the queue', left === 0);
 }
 
+console.log('\ntitles waiting to be checked');
+{
+  const queue = db.prepare(
+    `INSERT INTO pending_titles (id, title, type, created_at, attempts, last_attempt_at, last_error)
+     VALUES (?, ?, ?, ?, 0, NULL, NULL)
+     ON CONFLICT(id) DO UPDATE SET title = excluded.title, attempts = 0, last_attempt_at = NULL`
+  );
+  queue.run('mem-1', 'ghost of yotei', 'play', '2026-10-03T10:00:00.000Z');
+  db.prepare(
+    'UPDATE pending_titles SET attempts = attempts + 1, last_attempt_at = ?, last_error = ? WHERE id = ?'
+  ).run('2026-10-03T10:01:00.000Z', 'quota', 'mem-1');
+
+  const row = db.prepare('SELECT * FROM pending_titles WHERE id = ?').get('mem-1') as {
+    title: string;
+    type: string;
+    attempts: number;
+  };
+  check('a title waits with its entry id', row.title === 'ghost of yotei' && row.type === 'play');
+  check('a failed search is counted', row.attempts === 1, row.attempts);
+
+  // Adding the same entry again starts its attempts over.
+  queue.run('mem-1', 'ghost of yotei', 'play', '2026-10-03T11:00:00.000Z');
+  const requeued = db.prepare('SELECT attempts FROM pending_titles WHERE id = ?').get('mem-1') as { attempts: number };
+  check('queueing it again resets the attempts', requeued.attempts === 0);
+
+  db.prepare('DELETE FROM pending_titles WHERE id = ?').run('mem-1');
+  const left = (db.prepare('SELECT COUNT(*) AS n FROM pending_titles').get() as { n: number }).n;
+  check('a checked title leaves the queue', left === 0);
+}
+
 console.log('\nupgrading a phone that predates sync');
 {
   // The table exactly as it shipped before syncing existed.

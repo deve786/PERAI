@@ -60,6 +60,19 @@ CREATE TABLE IF NOT EXISTS spellings (
   updated_at TEXT NOT NULL
 );
 
+-- Titles waiting to be checked against a web search. The entry is already
+-- saved and usable; this is only its spelling catching up, and it survives the
+-- app being closed so a slow search is never simply lost.
+CREATE TABLE IF NOT EXISTS pending_titles (
+  id TEXT PRIMARY KEY NOT NULL,
+  title TEXT NOT NULL,
+  type TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_attempt_at TEXT,
+  last_error TEXT
+);
+
 -- Notes that could not be filed yet (offline, or the AI quota ran out). They
 -- are retried automatically; nothing spoken is lost while one waits here.
 CREATE TABLE IF NOT EXISTS pending_notes (

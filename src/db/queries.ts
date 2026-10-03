@@ -1,6 +1,6 @@
 import { getDb, toMemory, type RawRow } from './client';
 import { spellingKey, type Spelling } from '../dictionary';
-import type { PendingNote } from '../pendingNotes';
+import type { PendingNote, PendingTitle } from '../pendingNotes';
 import type { Category, Memory, MemoryDraft, MemoryType, Status } from '../types';
 
 /** RFC4122-ish v4 id. Avoids pulling in a uuid package for one call site. */
@@ -255,6 +255,61 @@ export async function getSpellings(limit = 300): Promise<Spelling[]> {
     'SELECT heard, correct FROM spellings ORDER BY updated_at DESC LIMIT ?',
     [limit]
   );
+}
+
+/**
+ * Line a title up to be checked against a web search.
+ *
+ * Kept in the database rather than in memory, so a search that takes a minute
+ * is not lost when the app is closed, and so the screen can show what is still
+ * being checked while you carry on adding.
+ */
+export async function queueTitleCheck(
+  id: string,
+  title: string,
+  type: MemoryType
+): Promise<void> {
+  await getDb().runAsync(
+    `INSERT INTO pending_titles (id, title, type, created_at, attempts, last_attempt_at, last_error)
+     VALUES (?, ?, ?, ?, 0, NULL, NULL)
+     ON CONFLICT(id) DO UPDATE SET title = excluded.title, attempts = 0, last_attempt_at = NULL`,
+    [id, title, type, new Date().toISOString()]
+  );
+}
+
+export async function getPendingTitles(): Promise<PendingTitle[]> {
+  const rows = await getDb().getAllAsync<{
+    id: string;
+    title: string;
+    type: string;
+    created_at: string;
+    attempts: number;
+    last_attempt_at: string | null;
+    last_error: string | null;
+  }>('SELECT * FROM pending_titles ORDER BY created_at ASC');
+
+  return rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    type: row.type as MemoryType,
+    createdAt: row.created_at,
+    attempts: row.attempts,
+    lastAttemptAt: row.last_attempt_at,
+    lastError: row.last_error,
+  }));
+}
+
+export async function markTitleTried(id: string, error: string): Promise<void> {
+  await getDb().runAsync(
+    `UPDATE pending_titles
+       SET attempts = attempts + 1, last_attempt_at = ?, last_error = ?
+     WHERE id = ?`,
+    [new Date().toISOString(), error, id]
+  );
+}
+
+export async function dropPendingTitle(id: string): Promise<void> {
+  await getDb().runAsync('DELETE FROM pending_titles WHERE id = ?', [id]);
 }
 
 /** Queue a note the AI could not file yet, so nothing spoken is lost. */
