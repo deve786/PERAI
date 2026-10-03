@@ -138,6 +138,14 @@ export async function countMemories(): Promise<number> {
   return row?.n ?? 0;
 }
 
+/** Rename an entry — used when a web search confirms a title's spelling. */
+export async function updateMemoryTitle(id: string, title: string): Promise<void> {
+  await getDb().runAsync(
+    'UPDATE memories SET title = ?, updated_at = ?, dirty = 1 WHERE id = ?',
+    [title, new Date().toISOString(), id]
+  );
+}
+
 /** Tick a list item off, or put it back. */
 export async function setMemoryStatus(id: string, status: Status): Promise<void> {
   await getDb().runAsync(

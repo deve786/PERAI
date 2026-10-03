@@ -244,7 +244,8 @@ function normaliseDraft(item: unknown, nowISO: string): MemoryDraft | null {
 export async function extractMemories(
   text: string,
   nowISO: string,
-  knownPeople: string[] = []
+  knownPeople: string[] = [],
+  options: { retries?: number } = {}
 ): Promise<MemoryDraft[]> {
   const trimmed = text.trim();
   if (!trimmed) return [];
@@ -263,6 +264,7 @@ export async function extractMemories(
         `Note:\n${trimmed}`,
       schemaName: 'extracted_memories',
       schema: EXTRACTION_SCHEMA,
+      retries: options.retries,
     })
   ).trim();
 

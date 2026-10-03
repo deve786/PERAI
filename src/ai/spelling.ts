@@ -35,12 +35,26 @@ function needsCheck(draft: MemoryDraft): boolean {
   return KIND[draft.type] !== undefined && draft.title.trim().length > 0;
 }
 
+/** Search runs in the background, but it must not hang on for ever. */
+const SEARCH_TIMEOUT_MS = 120_000;
+
+function withTimeout<T>(work: Promise<T>): Promise<T> {
+  return Promise.race([
+    work,
+    new Promise<T>((_, fail) =>
+      setTimeout(() => fail(new Error('Spelling search timed out.')), SEARCH_TIMEOUT_MS)
+    ),
+  ]);
+}
+
 async function searchOne(title: string, type: MemoryType): Promise<string> {
-  const answer = await requestGroundedText({
-    model: SPELLING_MODEL,
-    system: SYSTEM,
-    user: `This is meant to be the name of a ${KIND[type]}, heard through speech recognition: "${title}"`,
-  });
+  const answer = await withTimeout(
+    requestGroundedText({
+      model: SPELLING_MODEL,
+      system: SYSTEM,
+      user: `This is meant to be the name of a ${KIND[type]}, heard through speech recognition: "${title}"`,
+    })
+  );
   return answer.trim();
 }
 
@@ -49,13 +63,15 @@ async function searchMany(items: MemoryDraft[]): Promise<string[]> {
   const list = items
     .map((draft, index) => `${index + 1}. ${draft.title}  (${KIND[draft.type]})`)
     .join('\n');
-  const answer = await requestGroundedText({
-    model: SPELLING_MODEL,
-    system: SYSTEM,
-    user:
-      `Each line below is a name heard through speech recognition, with what kind of thing it is.\n` +
-      `Reply with exactly ${items.length} lines, numbered the same way, each holding only the corrected title.\n\n${list}`,
-  });
+  const answer = await withTimeout(
+    requestGroundedText({
+      model: SPELLING_MODEL,
+      system: SYSTEM,
+      user:
+        `Each line below is a name heard through speech recognition, with what kind of thing it is.\n` +
+        `Reply with exactly ${items.length} lines, numbered the same way, each holding only the corrected title.\n\n${list}`,
+    })
+  );
 
   const lines = answer
     .split(/\r?\n/)

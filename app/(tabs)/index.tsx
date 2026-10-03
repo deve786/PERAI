@@ -19,7 +19,7 @@ import { ThemeToggle } from '@/components/ThemeToggle';
 import { VoiceWaveform } from '@/components/VoiceWaveform';
 import { deleteMemories, queueNote } from '@/db/queries';
 import { setPendingDrafts } from '@/draftStore';
-import { fileNote } from '@/fileNote';
+import { fileNote, refineSpellings } from '@/fileNote';
 import { LISTS } from '@/lists';
 import { usePendingNotes } from '@/usePendingNotes';
 import { notificationsAllowed, syncReminders } from '@/reminders';
@@ -88,7 +88,7 @@ export default function CaptureScreen() {
     setError(null);
     setSaved(null);
     try {
-      const { memories: kept, changed } = await fileNote(note, { people, listTitles });
+      const kept = await fileNote(note, { people, listTitles });
 
       // Ask for notification permission here, the first time it matters —
       // right after saving something that is meant to remind you.
@@ -99,7 +99,26 @@ export default function CaptureScreen() {
       }
 
       setText('');
-      setSaved({ rawInput: note, memories: kept, alerts, changed });
+      setSaved({ rawInput: note, memories: kept, alerts, changed: [] });
+
+      // Checking a new game, film or product name against the web takes far
+      // longer than everything above put together, so it happens after the
+      // entry is already saved and on screen. The card updates if it changes.
+      void refineSpellings(kept, { people, listTitles }).then((changed) => {
+        if (changed.length === 0) return;
+        setSaved((current) =>
+          current && current.rawInput === note
+            ? {
+                ...current,
+                changed,
+                memories: current.memories.map((memory) => {
+                  const fix = changed.find((change) => change.from === memory.title);
+                  return fix ? { ...memory, title: fix.to } : memory;
+                }),
+              }
+            : current
+        );
+      });
     } catch (err) {
       // Nothing said is lost: the note is queued and filed automatically once
       // whatever failed — the network, the daily quota — is working again.

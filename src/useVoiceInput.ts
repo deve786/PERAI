@@ -12,7 +12,7 @@ import { isStopCommand, shouldFinish } from './voiceStop';
 export type VoiceStage = 'idle' | 'listening' | 'finishing';
 
 const CHECK_MS = 250;
-const FINAL_RESULT_WAIT_MS = 1500;
+const FINAL_RESULT_WAIT_MS = 800;
 
 /** Human-readable text for the codes the library defines, once each. */
 function describeSpeechError(code: ExpoSpeechRecognitionErrorCode): string {
