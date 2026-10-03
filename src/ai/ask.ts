@@ -1,6 +1,7 @@
 import type { Memory } from '../types';
 import { CURRENCY_SYMBOLS } from '../constants';
 import { localTimestamp } from '../format';
+import { answerFromList, listQuestion } from '../listQuestion';
 import { ASK_MODEL, requestJson } from './client';
 import { MAX_CONTEXT_MEMORIES, selectRelevantMemories } from './retrieval';
 
@@ -79,6 +80,15 @@ a paragraph:
   that is not in them. No sentences, no commentary, no bullet characters.
 - Quote concrete dates, amounts and names from the memories rather than
   paraphrasing vaguely. Say "3 March 2026", not "recently".
+
+STATE — every memory says whether it is "still to do" or "done":
+- Questions about what is pending, waiting, left, remaining, pending to play,
+  still to watch or yet to buy cover ONLY memories marked "still to do". A
+  memory marked "done" has been played, watched, bought or finished, and must
+  not be listed or counted among them.
+- Questions about what was finished, completed, played, watched or bought
+  cover the "done" ones.
+- When neither is asked, use both, and say which are done.
 - For "how much did I spend", add up only the amounts present, put the total in
   headline, and list each entry in items.
 - For "how often do I...", put the typical gap in headline, and list the
@@ -93,7 +103,13 @@ function renderMemory(memory: Memory, ref: string): string {
     year: 'numeric',
   });
 
-  const parts = [`[${ref}] ${date} | ${memory.type} | ${memory.category}`, `title: ${memory.title}`];
+  // The state matters as much as the title: "what is left to play" and "what
+  // have I played" are the same entries read two different ways.
+  const state = memory.status === 'active' ? 'still to do' : `${memory.status}`;
+  const parts = [
+    `[${ref}] ${date} | ${memory.type} | ${memory.category} | ${state}`,
+    `title: ${memory.title}`,
+  ];
 
   if (memory.amount !== null) {
     const symbol = CURRENCY_SYMBOLS[memory.currency ?? ''] ?? `${memory.currency ?? ''} `;
@@ -158,6 +174,21 @@ export async function askAI(
   }
 
   const { memories, range } = selectRelevantMemories(trimmed, all, now, MAX_CONTEXT_MEMORIES);
+
+  // "Which games are still to play" is a question about rows, not prose: the
+  // phone can answer it exactly and at once, where a model takes seconds,
+  // spends quota, and can quietly leave one out.
+  const asList = listQuestion(trimmed, range !== null);
+  if (asList) {
+    const counted = answerFromList(asList, all);
+    return {
+      answer: counted.answer,
+      items: counted.items,
+      headline: counted.headline,
+      evidence: counted.entries,
+      found: counted.entries.length > 0,
+    };
+  }
 
   // The named period exists but is empty — answerable without a model call.
   if (memories.length === 0) {

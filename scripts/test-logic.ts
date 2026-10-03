@@ -29,6 +29,7 @@ import {
 } from '../src/voiceStop';
 import { isFreshPartial, joinSpelledLetters, knownPeople, restatesEarlier } from '../src/speechText';
 import { listSections } from '../src/lists';
+import { answerFromList, listQuestion } from '../src/listQuestion';
 import { hasPassed, isStruck, overdueToClose, sinkStruck } from '../src/strike';
 import { nextCursor, shouldApplyRemote, toLocal, toRemote } from '../src/sync/mapping';
 import { isQuotaError, nextDailyReset, quotaMessage, quotaWait } from '../src/ai/quota';
@@ -730,6 +731,46 @@ section('running out of AI for the day');
     'a burst limit reads differently',
     /busy for a moment/i.test(quotaMessage('429 retry in 23s', noon))
   );
+}
+
+section('list questions answered without the AI');
+{
+  const asked = (q: string, dated = false) => listQuestion(q, dated);
+
+  check('pending games', JSON.stringify(asked('which are the pending games')) === '{"type":"play","state":"pending"}', asked('which are the pending games'));
+  check('games still to play', asked('what games are still to play')?.state === 'pending');
+  check('finished games', JSON.stringify(asked('which games have I already played')) === '{"type":"play","state":"done"}');
+  check('the watchlist', JSON.stringify(asked('what is on my watchlist')) === '{"type":"watch","state":"pending"}');
+  check('films left to watch', asked('which movies are left to watch')?.type === 'watch');
+  check('things still to buy', asked('what do I still want to buy')?.type === 'wish');
+
+  check('a spending question is left to the model', asked('how much did I spend on games') === null);
+  check('a question naming a period is left to the model', asked('which games did I play', true) === null);
+  check('an unrelated question is left to the model', asked('when did I last cut my hair') === null);
+  check('a bare mention of a game is left to the model', asked('did I like that game') === null);
+
+  const at = (d: number) => new Date(2026, 9, d, 12, 0).toISOString();
+  const games = [
+    memory({ title: 'Ghost of Yōtei', type: 'play', eventDate: at(3), createdAt: at(3) }),
+    memory({ title: 'Elden Ring', type: 'play', eventDate: at(2), createdAt: at(2) }),
+    memory({ title: 'Hollow Knight', type: 'play', status: 'done', eventDate: at(1), createdAt: at(1) }),
+    memory({ title: 'Dune: Part Two', type: 'watch', eventDate: at(3), createdAt: at(3) }),
+    memory({ title: 'Bought a shirt', type: 'purchase', eventDate: at(3), createdAt: at(3) }),
+  ];
+
+  const pending = answerFromList({ type: 'play', state: 'pending' }, games);
+  check('counts every pending game and no others', pending.entries.length === 2, pending.entries.map((m) => m.title));
+  check('newest first', pending.entries[0].title === 'Ghost of Yōtei');
+  check('headline is the count', pending.headline === '2 games', pending.headline);
+  check('one line per game', pending.items.length === 2 && pending.items[0].includes('Ghost of Yōtei'), pending.items);
+  check('a finished game is left out', !pending.entries.some((m) => m.title === 'Hollow Knight'));
+
+  const done = answerFromList({ type: 'play', state: 'done' }, games);
+  check('the finished list holds only finished games', done.entries.length === 1 && done.entries[0].title === 'Hollow Knight');
+
+  const empty = answerFromList({ type: 'wish', state: 'pending' }, games);
+  check('an empty list says so', empty.headline === 'None' && /empty/i.test(empty.answer), empty.answer);
+  check('one game reads as singular', answerFromList({ type: 'watch', state: 'pending' }, games).headline === '1 thing to watch');
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

@@ -20,6 +20,8 @@ import { MAX_ATTEMPTS, nextDue, type PendingTitle } from './pendingNotes';
 const TICK_MS = 15_000;
 /** After this long unchecked, the name you gave it simply stands. */
 const STALE_DAYS = 3;
+/** Most names to look up in one go, so a failing queue cannot spin. */
+const BATCH = 5;
 
 export interface TitleFix {
   from: string;
@@ -49,24 +51,16 @@ export function useTitleChecks(enabled: boolean) {
     }
   }, []);
 
-  const runDue = useCallback(async () => {
-    if (running.current || !enabled) return;
-    running.current = true;
-    try {
-      await dropStaleTitles(new Date(Date.now() - STALE_DAYS * 24 * 3_600_000));
-      const queued = await getPendingTitles();
-      const due = nextDue(queued);
-      if (!due) return;
-
-      logOk(due.attempts > 0 ? 'Trying a name again' : 'Checking a name', due.title);
+  /** Look one name up. False means stop for now — the AI has nothing left. */
+  const checkOne = useCallback(async (due: PendingTitle): Promise<boolean> => {
+    logOk(due.attempts > 0 ? 'Trying a name again' : 'Checking a name', due.title);
       try {
         const lookup = await lookUpTitle(due.title, due.type);
-        // What the call actually did, so "looking it up" is not a black box.
-        if (lookup) {
-          logOk(
-            `Asked ${lookup.source}`,
-            `${lookup.model} · ${lookup.seconds}s · replied "${lookup.replied}"`
-          );
+        // Every attempt, including the ones that gave nothing, so no minute of
+        // "looking it up" is left unexplained.
+        for (const step of lookup?.steps ?? []) {
+          if (step.failure) logFail(`No answer from ${step.route}`, `${step.seconds}s · ${step.failure}`);
+          else logOk(`Asked ${step.route}`, `${lookup?.model} · ${step.seconds}s · replied "${lookup?.replied}"`);
         }
 
         const better = lookup?.accepted ?? null;
@@ -82,20 +76,24 @@ export function useTitleChecks(enabled: boolean) {
         } else {
           logOk('Name checked, already right', due.title);
         }
-        // Searched either way: nothing more to do for this one.
+        // Looked up either way: nothing more to do for this one.
         await dropPendingTitle(due.id);
+        return true;
       } catch (err) {
         const reason = describeError(err);
         const raw = err instanceof Error ? err.message : String(err);
+        for (const step of (err as { steps?: { route: string; seconds: number; failure?: string }[] })
+          .steps ?? []) {
+          if (step.failure) logFail(`No answer from ${step.route}`, `${step.seconds}s · ${step.failure}`);
+        }
 
         // Out of AI for the day: wait for the quota rather than spending every
-        // try against a wall and giving up hours before it returns.
+        // try against a wall and giving up hours before it returns. Nothing
+        // else in the queue will fare better either, so stop here.
         if (isQuotaError(raw)) {
-          const wait = quotaWait(raw);
-          await deferTitleCheck(due.id, wait.retryAt, reason);
+          await deferTitleCheck(due.id, quotaWait(raw).retryAt, reason);
           logFail('Name check waiting on quota', `${due.title} — ${reason}`);
-          await refresh();
-          return;
+          return false;
         }
 
         if (due.attempts + 1 >= MAX_ATTEMPTS) {
@@ -105,12 +103,29 @@ export function useTitleChecks(enabled: boolean) {
           await markTitleTried(due.id, reason);
           logFail('Name check failed, will retry', `${due.title} — ${reason}`);
         }
+        return true;
       }
-      await refresh();
+  }, []);
+
+  const runDue = useCallback(async () => {
+    if (running.current || !enabled) return;
+    running.current = true;
+    try {
+      await dropStaleTitles(new Date(Date.now() - STALE_DAYS * 24 * 3_600_000));
+      // Work straight through what is waiting rather than one per tick: adding
+      // three names should not mean waiting out three ticks as well as three
+      // lookups. Capped so a queue that keeps failing cannot spin.
+      for (let done = 0; done < BATCH; done += 1) {
+        const due = nextDue(await getPendingTitles());
+        if (!due) return;
+        const keepGoing = await checkOne(due);
+        await refresh();
+        if (!keepGoing) return;
+      }
     } finally {
       running.current = false;
     }
-  }, [enabled, refresh]);
+  }, [enabled, refresh, checkOne]);
 
   useEffect(() => {
     void refresh();

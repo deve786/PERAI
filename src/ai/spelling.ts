@@ -1,6 +1,7 @@
 import { acceptCorrection } from '../titleMatch';
 import type { MemoryType } from '../types';
 import { EXTRACT_MODEL, requestGroundedText, requestText } from './client';
+import { isQuotaError, quotaWait } from './quota';
 
 export const SPELLING_MODEL =
   process.env.EXPO_PUBLIC_GEMINI_SPELLING_MODEL || EXTRACT_MODEL;
@@ -37,6 +38,19 @@ repeat the text exactly as you received it rather than guessing.`;
 /** The search is slow by nature, but it must not hang on for ever. */
 const SEARCH_TIMEOUT_MS = 120_000;
 
+/**
+ * Searching the web has its own small allowance, and once it is gone every
+ * further attempt costs a slow refusal before the fallback can even start —
+ * which is most of the minute people wait. So the first refusal stands for the
+ * rest of the day: until this moment passes, lookups go straight to the
+ * model's own knowledge.
+ */
+let searchBlockedUntil = 0;
+
+export function searchAvailable(now: Date = new Date()): boolean {
+  return now.getTime() >= searchBlockedUntil;
+}
+
 function withTimeout<T>(work: Promise<T>): Promise<T> {
   return Promise.race([
     work,
@@ -46,7 +60,17 @@ function withTimeout<T>(work: Promise<T>): Promise<T> {
   ]);
 }
 
+/** One attempt made while looking a name up, for the activity log. */
+export interface LookupStep {
+  route: 'web search' | 'model knowledge';
+  seconds: number;
+  /** Why this route gave nothing, when it did not. */
+  failure?: string;
+}
+
 export interface TitleLookup {
+  /** Every attempt, in order, so the time spent is never unexplained. */
+  steps: LookupStep[];
   /** Whether the answer came from a web search or the model's own knowledge. */
   source: 'web search' | 'model knowledge';
   model: string;
@@ -78,25 +102,57 @@ export async function lookUpTitle(
   const user = `This is meant to be the name of a ${KIND[type]}, heard through speech recognition: "${title}"`;
   const started = Date.now();
 
-  let replied: string;
+  let replied = '';
   let source: TitleLookup['source'] = 'web search';
-  try {
-    replied = await withTimeout(
-      requestGroundedText({ model: SPELLING_MODEL, system: SYSTEM, user })
-    );
-  } catch {
-    // Searching the web has its own, much smaller allowance than ordinary
-    // calls, and it is the first thing to run out. The model knows most
-    // titles without looking them up, so ask it directly rather than leaving
-    // the name misspelled. If this fails too, the caller retries later.
+  const steps: LookupStep[] = [];
+  const since = (from: number) => Math.round((Date.now() - from) / 1000);
+
+  if (searchAvailable()) {
+    const began = Date.now();
+    try {
+      replied = await withTimeout(
+        // No retry: a refusal here is answered by asking the model directly,
+        // which is faster than waiting out a rate limit for a second refusal.
+        requestGroundedText({ model: SPELLING_MODEL, system: SYSTEM, user, retries: 0 })
+      );
+      steps.push({ route: 'web search', seconds: since(began) });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (isQuotaError(message)) searchBlockedUntil = quotaWait(message).retryAt.getTime();
+      steps.push({ route: 'web search', seconds: since(began), failure: message.slice(0, 120) });
+      source = 'model knowledge';
+    }
+  } else {
+    steps.push({
+      route: 'web search',
+      seconds: 0,
+      failure: 'skipped — no search allowance left today',
+    });
     source = 'model knowledge';
-    replied = await withTimeout(
-      requestText({ model: SPELLING_MODEL, system: KNOWLEDGE_SYSTEM, user })
-    );
+  }
+
+  if (source === 'model knowledge') {
+    // The model knows most titles without looking them up. If this fails too,
+    // the caller retries later.
+    const began = Date.now();
+    try {
+      replied = await withTimeout(
+        requestText({ model: SPELLING_MODEL, system: KNOWLEDGE_SYSTEM, user })
+      );
+      steps.push({ route: 'model knowledge', seconds: since(began) });
+    } catch (err) {
+      steps.push({
+        route: 'model knowledge',
+        seconds: since(began),
+        failure: err instanceof Error ? err.message.slice(0, 120) : String(err),
+      });
+      throw Object.assign(err instanceof Error ? err : new Error(String(err)), { steps });
+    }
   }
 
   const suggestion = replied.trim();
   return {
+    steps,
     source,
     model: SPELLING_MODEL,
     replied: suggestion,
