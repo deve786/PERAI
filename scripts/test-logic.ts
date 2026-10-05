@@ -30,6 +30,7 @@ import {
 import { isFreshPartial, joinSpelledLetters, knownPeople, restatesEarlier } from '../src/speechText';
 import { listSections } from '../src/lists';
 import { answerFromList, listQuestion } from '../src/listQuestion';
+import { conversationQuery } from '../src/ai/ask';
 import { hasPassed, isStruck, overdueToClose, sinkStruck } from '../src/strike';
 import { nextCursor, shouldApplyRemote, toLocal, toRemote } from '../src/sync/mapping';
 import { isQuotaError, nextDailyReset, quotaMessage, quotaWait } from '../src/ai/quota';
@@ -742,6 +743,27 @@ section('running out of AI for the day');
   check(
     'a burst limit reads differently',
     /busy for a moment/i.test(quotaMessage('429 retry in 23s', noon))
+  );
+}
+
+section('following on from the last question');
+{
+  check(
+    'a first question searches on its own words',
+    conversationQuery('how much did I spend in september', []) === 'how much did I spend in september'
+  );
+  check(
+    'a follow-up carries the question before it',
+    conversationQuery('and the month before?', [
+      { question: 'how much did I spend in september', answer: 'You spent ₹4,900.' },
+    ]) === 'how much did I spend in september and the month before?'
+  );
+  check(
+    'only the question just before is carried',
+    conversationQuery('who was with me?', [
+      { question: 'what did I do in july', answer: 'Nothing recorded.' },
+      { question: 'what did I do last week', answer: 'Dinner with Rahul.' },
+    ]) === 'what did I do last week who was with me?'
   );
 }
 

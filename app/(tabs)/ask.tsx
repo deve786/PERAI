@@ -29,8 +29,9 @@ export default function AskScreen() {
   const styles = makeStyles(colors);
 
   const [question, setQuestion] = useState('');
-  const [asked, setAsked] = useState('');
-  const [result, setResult] = useState<AskResult | null>(null);
+  const [asking, setAsking] = useState('');
+  /** The conversation, newest first — a follow-up is answered knowing these. */
+  const [thread, setThread] = useState<{ question: string; result: AskResult }[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -110,11 +111,16 @@ export default function AskScreen() {
 
     setBusy(true);
     setError(null);
-    setResult(null);
-    setAsked(q);
+    setAsking(q);
     setQuestion('');
     try {
-      setResult(await askAI(q, new Date().toISOString(), await getAllMemories()));
+      // Oldest first, as the model reads it: what was asked, and what it said.
+      const history = [...thread]
+        .reverse()
+        .map((turn) => ({ question: turn.question, answer: turn.result.answer }));
+
+      const result = await askAI(q, new Date().toISOString(), await getAllMemories(), history);
+      setThread((current) => [{ question: q, result }, ...current]);
       await saveQuestion(q);
       await loadRecent();
     } catch (err) {
@@ -122,6 +128,7 @@ export default function AskScreen() {
       setQuestion(q);
       setError(describeError(err));
     } finally {
+      setAsking('');
       setBusy(false);
     }
   }
@@ -151,12 +158,13 @@ export default function AskScreen() {
     else void voice.toggle();
   }
 
-  const idle = !result && !busy && !error;
+  const idle = thread.length === 0 && !busy && !error;
   // The box shows what's being heard, live, while listening.
   const displayQuestion = voice.stage === 'idle' ? question : voice.liveText;
 
-  // The question just answered is already shown above its answer.
-  const otherQuestions = recentQuestions.filter((q) => !result || q !== asked);
+  // Questions already in this conversation are above; no need to offer them.
+  const inThread = new Set(thread.map((turn) => turn.question));
+  const otherQuestions = recentQuestions.filter((q) => !inThread.has(q));
 
   return (
     <KeyboardAvoidingView
@@ -194,7 +202,16 @@ export default function AskScreen() {
         </View>
 
         {scope && !listening ? (
-          <Text style={[type.stamp, styles.scope]}>{scope}</Text>
+          <View style={styles.scopeRow}>
+            <Text style={[type.stamp, styles.scope]}>
+              {thread.length > 0 ? 'FOLLOW ON, OR ASK SOMETHING NEW' : scope}
+            </Text>
+            {thread.length > 0 ? (
+              <Pressable onPress={() => setThread([])} hitSlop={10}>
+                <Text style={[type.label, styles.cancel]}>CLEAR</Text>
+              </Pressable>
+            ) : null}
+          </View>
         ) : null}
 
         {listening ? (
@@ -232,10 +249,18 @@ export default function AskScreen() {
           </View>
         ) : null}
 
-        {busy ? <Text style={type.label}>SEARCHING YOUR RECORD</Text> : null}
-
-        {result && !busy ? (
+        {busy ? (
           <View style={styles.answerBlock}>
+            <Text style={[type.stamp, styles.question]}>{asking.toUpperCase()}</Text>
+            <Text style={type.label}>SEARCHING YOUR RECORD</Text>
+          </View>
+        ) : null}
+
+        {thread.map(({ question: asked, result }, index) => (
+          <View
+            key={`${asked}-${thread.length - index}`}
+            style={[styles.answerBlock, index > 0 && styles.earlier]}
+          >
             <Text style={[type.stamp, styles.question]}>{asked.toUpperCase()}</Text>
 
             {result.headline ? (
@@ -275,7 +300,7 @@ export default function AskScreen() {
               </Text>
             )}
           </View>
-        ) : null}
+        ))}
 
         {idle && week.length > 0 ? (
           <Section label="THIS WEEK" inset={false}>
@@ -373,7 +398,16 @@ function makeStyles(colors: Colors) {
     },
     noEvidence: { marginTop: -4 },
     disclaimer: { maxWidth: 320 },
-    scope: { color: colors.mist, marginTop: -8 },
+    scopeRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+      marginTop: -8,
+    },
+    scope: { color: colors.mist },
+    // Earlier exchanges stay readable but step back from the newest one.
+    earlier: { opacity: 0.6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.rule, paddingTop: 16 },
     recent: { paddingVertical: 9 },
     fact: { flexDirection: 'row', alignItems: 'baseline', gap: 10, paddingVertical: 8 },
     factFigure: { minWidth: GUTTER - 10, fontSize: 16 },

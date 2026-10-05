@@ -5,6 +5,28 @@ import { answerFromList, listQuestion } from '../listQuestion';
 import { ASK_MODEL, requestJson } from './client';
 import { MAX_CONTEXT_MEMORIES, selectRelevantMemories } from './retrieval';
 
+/** One exchange already in this conversation, oldest first. */
+export interface AskTurn {
+  question: string;
+  answer: string;
+}
+
+/** How many past exchanges the model is reminded of. */
+export const HISTORY_TURNS = 3;
+
+/**
+ * What to search the record with.
+ *
+ * A follow-up often carries no searchable words of its own — "and the month
+ * before?", "who was with me?" — so the question before it is folded in.
+ * Without this, retrieval would hand the model an unrelated slice of the
+ * record and the follow-up would be answered from the wrong entries.
+ */
+export function conversationQuery(question: string, history: AskTurn[]): string {
+  const previous = history[history.length - 1]?.question ?? '';
+  return previous ? `${previous} ${question}` : question;
+}
+
 export interface AskResult {
   /** One short sentence: the answer itself. */
   answer: string;
@@ -81,6 +103,14 @@ a paragraph:
 - Quote concrete dates, amounts and names from the memories rather than
   paraphrasing vaguely. Say "3 March 2026", not "recently".
 
+FOLLOWING ON — when a conversation is given, the question may lean on it:
+- "and the month before?", "what about movies?", "who was with me?" and "how
+  much was that?" mean the earlier question again with one thing changed.
+  Work out the full question first, then answer that.
+- Answer the question as asked now, not the earlier one. Never repeat the
+  previous answer unless it is genuinely the answer to this question too.
+- The memories, not the conversation, are still the only source of fact.
+
 STATE — every memory says whether it is "still to do" or "done":
 - Questions about what is pending, waiting, left, remaining, pending to play,
   still to watch or yet to buy cover ONLY memories marked "still to do". A
@@ -156,7 +186,8 @@ function looseJsonParse(raw: string): unknown {
 export async function askAI(
   question: string,
   nowISO: string,
-  all: Memory[]
+  all: Memory[],
+  history: AskTurn[] = []
 ): Promise<AskResult> {
   const trimmed = question.trim();
   if (!trimmed) return { answer: '', items: [], headline: null, evidence: [], found: false };
@@ -173,12 +204,16 @@ export async function askAI(
     };
   }
 
-  const { memories, range } = selectRelevantMemories(trimmed, all, now, MAX_CONTEXT_MEMORIES);
+  // Retrieval and the list check both read the follow-up together with the
+  // question before it, so "and movies?" still knows what was being asked.
+  const inContext = conversationQuery(trimmed, history);
+
+  const { memories, range } = selectRelevantMemories(inContext, all, now, MAX_CONTEXT_MEMORIES);
 
   // "Which games are still to play" is a question about rows, not prose: the
   // phone can answer it exactly and at once, where a model takes seconds,
   // spends quota, and can quietly leave one out.
-  const asList = listQuestion(trimmed, range !== null);
+  const asList = listQuestion(inContext, range !== null);
   if (asList) {
     const counted = answerFromList(asList, all);
     return {
@@ -220,6 +255,16 @@ export async function askAI(
     user: [
       `Current local time: ${localTimestamp(nowISO)} (${weekday})`,
       '',
+      ...(history.length > 0
+        ? [
+            'CONVERSATION SO FAR — the question below may refer back to this:',
+            '',
+            ...history
+              .slice(-HISTORY_TURNS)
+              .map((turn) => `Q: ${turn.question}\nA: ${turn.answer}`),
+            '',
+          ]
+        : []),
       `MEMORIES — ${scope}`,
       '',
       rendered.join('\n\n'),
