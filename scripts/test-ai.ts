@@ -197,6 +197,7 @@ async function main() {
       priority: null,
       status: 'active',
       confirmed: true,
+      repeat: null,
       ...partial,
     };
   };

@@ -13,7 +13,7 @@ const TOMBSTONE_DAYS = 30;
 const SELECT_LOCAL = `
   id, raw_input AS rawInput, title, type, category, event_date AS eventDate,
   date_expression AS dateExpression, created_at AS createdAt, amount, currency,
-  people, location, tags, priority, status, confirmed,
+  people, location, tags, priority, status, confirmed, repeat,
   updated_at AS updatedAt, deleted
 `;
 
@@ -100,8 +100,8 @@ async function pull(): Promise<number> {
         `INSERT INTO memories (
            id, raw_input, title, type, category, event_date, date_expression,
            created_at, amount, currency, people, location, tags, priority,
-           status, confirmed, updated_at, deleted, dirty
-         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
+           status, confirmed, repeat, updated_at, deleted, dirty
+         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
          ON CONFLICT(id) DO UPDATE SET
            raw_input = excluded.raw_input, title = excluded.title,
            type = excluded.type, category = excluded.category,
@@ -111,13 +111,14 @@ async function pull(): Promise<number> {
            currency = excluded.currency, people = excluded.people,
            location = excluded.location, tags = excluded.tags,
            priority = excluded.priority, status = excluded.status,
-           confirmed = excluded.confirmed, updated_at = excluded.updated_at,
+           confirmed = excluded.confirmed, repeat = excluded.repeat,
+           updated_at = excluded.updated_at,
            deleted = excluded.deleted, dirty = 0`,
         [
           row.id, row.rawInput, row.title, row.type, row.category, row.eventDate,
           row.dateExpression, row.createdAt, row.amount, row.currency, row.people,
           row.location, row.tags, row.priority, row.status, row.confirmed ? 1 : 0,
-          row.updatedAt, row.deleted ? 1 : 0,
+          row.repeat, row.updatedAt, row.deleted ? 1 : 0,
         ]
       );
       applied += 1;

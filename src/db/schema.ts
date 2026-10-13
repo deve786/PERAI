@@ -25,6 +25,9 @@ CREATE TABLE IF NOT EXISTS memories (
   priority TEXT,
   status TEXT NOT NULL DEFAULT 'active',
   confirmed INTEGER NOT NULL DEFAULT 0,
+  -- 'daily' | 'weekly' | 'monthly', or null for a one-off. A repeating entry
+  -- moves to its next occurrence when ticked off instead of closing.
+  repeat TEXT,
   -- Sync bookkeeping. A deleted entry stays as a tombstone until the server has
   -- seen it, or the delete would come straight back on the next pull.
   updated_at TEXT NOT NULL DEFAULT '',
@@ -109,6 +112,7 @@ export const ADDED_COLUMNS: { name: string; ddl: string }[] = [
   { name: 'updated_at', ddl: "ALTER TABLE memories ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''" },
   { name: 'deleted', ddl: 'ALTER TABLE memories ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0' },
   { name: 'dirty', ddl: 'ALTER TABLE memories ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1' },
+  { name: 'repeat', ddl: 'ALTER TABLE memories ADD COLUMN repeat TEXT' },
 ];
 
 /** Entries from before sync existed still need a time and a push. */

@@ -32,6 +32,9 @@ import { listSections } from '../src/lists';
 import { answerFromList, listQuestion } from '../src/listQuestion';
 import { conversationQuery } from '../src/ai/ask';
 import { hasPassed, isStruck, overdueToClose, sinkStruck } from '../src/strike';
+import { nextOccurrence } from '../src/repeat';
+import { planDay } from '../src/today';
+import { weekInReview } from '../src/review';
 import { nextCursor, shouldApplyRemote, toLocal, toRemote } from '../src/sync/mapping';
 import { isQuotaError, nextDailyReset, quotaMessage, quotaWait } from '../src/ai/quota';
 import { acceptCorrection, similarity } from '../src/titleMatch';
@@ -78,6 +81,7 @@ function memory(partial: Partial<Memory> & { title: string; eventDate: string })
     priority: null,
     status: 'active',
     confirmed: true,
+    repeat: null,
     ...partial,
   };
 }
@@ -805,6 +809,96 @@ section('list questions answered without the AI');
   const empty = answerFromList({ type: 'wish', state: 'pending' }, games);
   check('an empty list says so', empty.headline === 'None' && /empty/i.test(empty.answer), empty.answer);
   check('one game reads as singular', answerFromList({ type: 'watch', state: 'pending' }, games).headline === '1 thing to watch');
+}
+
+section('repeating entries');
+{
+  const now = new Date(2026, 9, 13, 9, 0); // 13 Oct 2026, 09:00
+  const iso = (y: number, m: number, d: number, h = 9) => new Date(y, m, d, h, 0).toISOString();
+  const on = (value: string) => new Date(value);
+
+  check(
+    'daily moves to the next day',
+    on(nextOccurrence(iso(2026, 9, 13), 'daily', now)).getDate() === 14
+  );
+  check(
+    'weekly moves a week on',
+    on(nextOccurrence(iso(2026, 9, 13), 'weekly', now)).getDate() === 20
+  );
+  check(
+    'monthly moves a month on',
+    on(nextOccurrence(iso(2026, 9, 13), 'monthly', now)).getMonth() === 10
+  );
+  check(
+    'the time of day is kept',
+    on(nextOccurrence(iso(2026, 9, 13, 18), 'weekly', now)).getHours() === 18
+  );
+  check(
+    'something missed for weeks comes back next week, not four times over',
+    on(nextOccurrence(iso(2026, 8, 15), 'weekly', now)).getTime() > now.getTime() &&
+      on(nextOccurrence(iso(2026, 8, 15), 'weekly', now)).getDate() === 20,
+    nextOccurrence(iso(2026, 8, 15), 'weekly', now)
+  );
+  check(
+    'the 31st becomes the 30th in a short month',
+    on(nextOccurrence(iso(2026, 9, 31), 'monthly', now)).getDate() === 30 &&
+      on(nextOccurrence(iso(2026, 9, 31), 'monthly', now)).getMonth() === 10
+  );
+  check(
+    '31 January lands in February, not March',
+    on(nextOccurrence(iso(2027, 0, 31), 'monthly', new Date(2027, 0, 31, 10))).getMonth() === 1
+  );
+}
+
+section("today's plan");
+{
+  const now = new Date(2026, 9, 13, 14, 0); // Tuesday afternoon
+  const at = (d: number, h = 12) => new Date(2026, 9, d, h, 0).toISOString();
+
+  const entries: Memory[] = [
+    memory({ title: 'Missed dentist', type: 'appointment', eventDate: at(11, 10), dateExpression: 'sunday at 10am' }),
+    memory({ title: 'Call the bank', type: 'task', eventDate: at(13), dateExpression: 'today' }),
+    memory({ title: 'Standup', type: 'appointment', eventDate: at(13, 9), dateExpression: 'today at 9am' }),
+    memory({ title: 'Buy milk', type: 'task', eventDate: at(1), dateExpression: null }),
+    memory({ title: 'Gym', type: 'reminder', eventDate: at(14, 7), dateExpression: 'tomorrow at 7am' }),
+    memory({ title: 'Next week', type: 'task', eventDate: at(20), dateExpression: 'next tuesday' }),
+    memory({ title: 'Already done', type: 'task', status: 'done', eventDate: at(13), dateExpression: 'today' }),
+    memory({ title: 'A purchase', type: 'purchase', eventDate: at(13), dateExpression: 'today' }),
+  ];
+
+  const plan = planDay(entries, now);
+  check('what is late comes first', plan.overdue.map((m) => m.title).join('|') === 'Missed dentist', plan.overdue.map((m) => m.title));
+  check(
+    "today holds today's work and anything undated",
+    plan.today.map((m) => m.title).join('|') === 'Standup|Call the bank|Buy milk',
+    plan.today.map((m) => m.title)
+  );
+  check('tomorrow is kept separate', plan.tomorrow.map((m) => m.title).join('|') === 'Gym');
+  check('later days are not shown', !JSON.stringify(plan).includes('Next week'));
+  check('finished work is not shown', !JSON.stringify(plan).includes('Already done'));
+  check('a purchase is a record, not work', !JSON.stringify(plan).includes('A purchase'));
+  check('the count covers late and today only', plan.count === 4, plan.count);
+}
+
+section('the week in review');
+{
+  const now = new Date(2026, 9, 13, 18, 0);
+  const ago = (days: number) => new Date(2026, 9, 13 - days, 12, 0).toISOString();
+
+  const entries: Memory[] = [
+    memory({ title: 'Bought a shirt', type: 'purchase', amount: 1200, currency: 'INR', eventDate: ago(2), createdAt: ago(2) }),
+    memory({ title: 'Bought a lamp', type: 'purchase', amount: 800, currency: 'INR', eventDate: ago(20), createdAt: ago(20) }),
+    memory({ title: 'Call the bank', type: 'task', status: 'done', eventDate: ago(3), createdAt: ago(3), updatedAt: ago(1) }),
+    memory({ title: 'Missed dentist', type: 'appointment', eventDate: ago(2), dateExpression: 'yesterday at 10am', createdAt: ago(5) }),
+    memory({ title: 'Gym tomorrow', type: 'reminder', eventDate: new Date(2026, 9, 14, 7, 0).toISOString(), dateExpression: 'tomorrow at 7am', createdAt: ago(1) }),
+  ];
+
+  const week = weekInReview(entries, now);
+  check('only this week counts as recorded', week.recorded.length === 4, week.recorded.map((m) => m.title));
+  check('what was ticked off this week is counted', week.finished.map((m) => m.title).join('|') === 'Call the bank');
+  check('what is late is called out', week.slipped.map((m) => m.title).join('|') === 'Missed dentist');
+  check('what is still ahead is kept apart', week.ahead.map((m) => m.title).join('|') === 'Gym tomorrow');
+  check('spending covers this week only', week.spent[0].total === 1200 && week.spent[0].currency === 'INR', week.spent);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

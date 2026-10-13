@@ -16,6 +16,15 @@ const OLD_CHANNEL_IDS = ['reminders', 'reminders-v2', 'reminders-v3'];
 const REMINDER_SOUND = 'reminder_chime.wav';
 const supported = Platform.OS !== 'web';
 
+/**
+ * Buttons on the reminder itself, so it can be dealt with from the lock
+ * screen. Registered at runtime, which needs no native build. The app answers
+ * a press in app/_layout.tsx.
+ */
+export const REMINDER_CATEGORY = 'reminder-actions';
+export const ACTION_DONE = 'done';
+export const ACTION_TOMORROW = 'tomorrow';
+
 let prepared = false;
 
 /**
@@ -34,6 +43,14 @@ export async function prepareNotifications(): Promise<void> {
       shouldPlaySound: true,
       shouldSetBadge: false,
     }),
+  });
+
+  await Notifications.setNotificationCategoryAsync(REMINDER_CATEGORY, [
+    { identifier: ACTION_DONE, buttonTitle: 'Done' },
+    { identifier: ACTION_TOMORROW, buttonTitle: 'Tomorrow' },
+  ]).catch(() => {
+    // Without the buttons the reminder still arrives; it just has to be
+    // opened to act on.
   });
 
   if (Platform.OS === 'android') {
@@ -113,6 +130,7 @@ async function syncNow(): Promise<void> {
         // governs this; this field is what matters on iOS, which has no
         // channels of its own.
         sound: REMINDER_SOUND,
+        categoryIdentifier: REMINDER_CATEGORY,
       },
       trigger: {
         type: Notifications.SchedulableTriggerInputTypes.DATE,
@@ -121,6 +139,35 @@ async function syncNow(): Promise<void> {
       },
     });
   }
+
+  // The cancel-all above takes the weekly review with it, so it is put back
+  // here rather than only at launch.
+  await scheduleWeeklyReview();
+}
+
+/** Sunday evening: a nudge to look back at the week (app/review.tsx). */
+const REVIEW_ID = 'weekly-review';
+const REVIEW_WEEKDAY = 1; // expo counts from Sunday = 1
+const REVIEW_HOUR = 19;
+
+async function scheduleWeeklyReview(): Promise<void> {
+  await Notifications.cancelScheduledNotificationAsync(REVIEW_ID).catch(() => {});
+  await Notifications.scheduleNotificationAsync({
+    identifier: REVIEW_ID,
+    content: {
+      title: 'Your week',
+      body: 'What you finished, what slipped, what it cost.',
+      data: { kind: 'weekly-review' },
+      sound: REMINDER_SOUND,
+    },
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
+      weekday: REVIEW_WEEKDAY,
+      hour: REVIEW_HOUR,
+      minute: 0,
+      channelId: CHANNEL_ID,
+    },
+  });
 }
 
 // Serialise syncs: a cancel-all from one run must never land in the middle of

@@ -61,3 +61,6 @@ drop trigger if exists memories_touch_updated_at on public.memories;
 create trigger memories_touch_updated_at
   before insert or update on public.memories
   for each row execute function public.touch_updated_at();
+
+-- Added later, for repeating entries ("gym every Monday"). Safe to re-run.
+alter table public.memories add column if not exists repeat text;

@@ -1,10 +1,10 @@
+import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { Alert, SectionList, StyleSheet, Text, View } from 'react-native';
+import { SectionList, StyleSheet, Text, View } from 'react-native';
 import { ChipRow } from '@/components/Chip';
 import { MemoryRow } from '@/components/MemoryRow';
-import { deleteMemory, setMemoryStatus } from '@/db/queries';
 import { groupByDay } from '@/format';
-import { logOk } from '@/log';
+import { completeMemory, reopenMemory } from '@/complete';
 import { isStruck, sinkStruck } from '@/strike';
 import { useTheme } from '@/ThemeContext';
 import { GUTTER, SPACE, type Colors } from '@/theme';
@@ -14,6 +14,7 @@ import { useMemories } from '@/useMemories';
 export default function TimelineScreen() {
   const { colors, type } = useTheme();
   const styles = makeStyles(colors);
+  const router = useRouter();
 
   const [category, setCategory] = useState<Category | null>(null);
   // Named to avoid colliding with the theme's own `type` (the mono/sans scale).
@@ -32,24 +33,12 @@ export default function TimelineScreen() {
   }));
 
   function toggle(memory: Memory) {
-    const next = memory.status === 'active' ? 'done' : 'active';
-    void setMemoryStatus(memory.id, next);
-    logOk(next === 'done' ? 'Struck out' : 'Put back', memory.title);
+    // completeMemory knows what to do with a repeating entry: move it on
+    // rather than close it.
+    if (memory.status === 'active') void completeMemory(memory);
+    else void reopenMemory(memory);
   }
 
-  function confirmDelete(id: string, title: string) {
-    Alert.alert('Delete this entry?', title, [
-      { text: 'Keep', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: () => {
-          void deleteMemory(id);
-          logOk('Deleted an entry', title);
-        },
-      },
-    ]);
-  }
 
   return (
     <View style={styles.flex}>
@@ -84,7 +73,7 @@ export default function TimelineScreen() {
             gutter="time"
             struck={isStruck(item, now)}
             onPress={() => toggle(item)}
-            onLongPress={() => confirmDelete(item.id, item.title)}
+            onLongPress={() => router.push(`/entry/${item.id}`)}
           />
         )}
         ListEmptyComponent={

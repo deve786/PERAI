@@ -2,11 +2,13 @@ import {
   CATEGORIES,
   MEMORY_TYPES,
   PRIORITIES,
+  REPEATS,
   STATUSES,
   type Category,
   type MemoryDraft,
   type MemoryType,
   type Priority,
+  type Repeat,
 } from '../types';
 import { DEFAULT_CURRENCY } from '../constants';
 import { localTimestamp } from '../format';
@@ -53,6 +55,7 @@ const EXTRACTION_SCHEMA = {
           location: NULLABLE_STRING,
           tags: NULLABLE_STRING,
           priority: NULLABLE_STRING,
+          repeat: NULLABLE_STRING,
           status: { type: 'string', enum: [...STATUSES] },
         },
         required: [
@@ -67,6 +70,7 @@ const EXTRACTION_SCHEMA = {
           'location',
           'tags',
           'priority',
+          'repeat',
           'status',
         ],
         additionalProperties: false,
@@ -127,6 +131,9 @@ OTHER FIELDS:
 - tags: 1-3 short lowercase keywords useful for later search, comma-separated.
 - priority: one of ${PRIORITIES.join(', ')} — only when urgency is expressed.
 - status: "active" unless the note says it is already finished, then "done".
+- repeat: "daily", "weekly" or "monthly" when the note says it comes round again
+  ("every Monday" -> weekly, "every day" -> daily, "on the 1st" / "every month"
+  -> monthly). Null for a one-off. Set eventDate to the NEXT time it happens.
 - title: a short factual summary, no invented detail. For "play", "watch" and
   "wish" the title is the name by itself — the game, the film or series, or the
   product — with no verb and nothing else: "I want to play Hollow Knight" ->
@@ -231,6 +238,7 @@ function normaliseDraft(item: unknown, nowISO: string): MemoryDraft | null {
         ? null
         : pickEnum<Priority>(raw.priority, PRIORITIES, 'medium'),
     status: pickEnum(raw.status, STATUSES, 'active'),
+    repeat: raw.repeat == null ? null : pickEnum<Repeat>(raw.repeat, REPEATS, 'weekly'),
   };
 }
 

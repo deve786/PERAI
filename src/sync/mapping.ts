@@ -4,7 +4,7 @@
  * Pure, so the awkward parts — which copy is newer, how far the cursor has
  * moved — are unit tested in plain Node rather than against a live project.
  */
-import type { Category, Memory, MemoryType, Priority, Status } from '../types';
+import type { Category, Memory, MemoryType, Priority, Repeat, Status } from '../types';
 
 /** One row of public.memories, as supabase-js hands it over. */
 export interface RemoteRow {
@@ -24,6 +24,7 @@ export interface RemoteRow {
   priority: string | null;
   status: string;
   confirmed: boolean;
+  repeat: string | null;
   deleted: boolean;
   updated_at: string;
 }
@@ -51,6 +52,7 @@ export function toRemote(row: LocalRow): Omit<RemoteRow, 'updated_at'> {
     priority: row.priority,
     status: row.status,
     confirmed: row.confirmed,
+    repeat: row.repeat,
     deleted: row.deleted,
   };
 }
@@ -73,6 +75,7 @@ export function toLocal(row: RemoteRow): LocalRow {
     priority: row.priority as Priority | null,
     status: row.status as Status,
     confirmed: row.confirmed,
+    repeat: (row.repeat as Repeat | null) ?? null,
     updatedAt: row.updated_at,
     deleted: row.deleted,
   };

@@ -21,6 +21,7 @@ import { SPEECH_LANGUAGE_KEY, setSpeechLanguage } from '@/speechSession';
 import { ThemeProvider, useTheme } from '@/ThemeContext';
 import { COLORS, SPACE, TYPE } from '@/theme';
 import { useAutoUpdate } from '@/useAutoUpdate';
+import { useNotificationActions } from '@/useNotificationActions';
 import { startWidgetSync } from '@/widget/widgetSync';
 
 export default function RootLayout() {
@@ -28,6 +29,8 @@ export default function RootLayout() {
   const [dbError, setDbError] = useState<string | null>(null);
 
   useAutoUpdate();
+  // Done and Tomorrow on a reminder, and the weekly review notification.
+  useNotificationActions(dbReady);
 
   // Once the database is open, keep scheduled reminders in step with it.
   useEffect(() => (dbReady ? startReminderSync() : undefined), [dbReady]);
@@ -101,6 +104,8 @@ function ThemedApp() {
         <Stack.Screen name="preview" options={{ presentation: 'modal' }} />
         <Stack.Screen name="account" options={{ presentation: 'modal' }} />
         <Stack.Screen name="logs" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="review" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="entry/[id]" options={{ presentation: 'modal' }} />
       </Stack>
       <UpdateBanner />
     </>

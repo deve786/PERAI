@@ -33,6 +33,7 @@ const COLUMNS = `
   priority,
   status,
   confirmed,
+  repeat,
   updated_at       AS updatedAt
 `;
 
@@ -55,8 +56,8 @@ export async function insertMemory(
     `INSERT INTO memories (
        id, raw_input, title, type, category, event_date, date_expression,
        created_at, amount, currency, people, location, tags, priority,
-       status, confirmed, updated_at, deleted, dirty
-     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,1)`,
+       status, confirmed, repeat, updated_at, deleted, dirty
+     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,1)`,
     [
       memory.id,
       memory.rawInput,
@@ -74,6 +75,7 @@ export async function insertMemory(
       memory.priority,
       memory.status,
       1,
+      memory.repeat,
       memory.updatedAt,
     ]
   );
@@ -408,4 +410,72 @@ export async function markNoteTried(id: string, error: string): Promise<void> {
 
 export async function dropPendingNote(id: string): Promise<void> {
   await getDb().runAsync('DELETE FROM pending_notes WHERE id = ?', [id]);
+}
+
+/**
+ * Change an entry. Only the fields given are touched.
+ *
+ * Every write stamps `updated_at` and flags the row, so an edit made here
+ * reaches the server like any other change (see src/sync/sync.ts).
+ */
+export async function updateMemory(
+  id: string,
+  patch: Partial<
+    Pick<
+      Memory,
+      | 'title'
+      | 'type'
+      | 'category'
+      | 'eventDate'
+      | 'dateExpression'
+      | 'amount'
+      | 'currency'
+      | 'people'
+      | 'location'
+      | 'tags'
+      | 'priority'
+      | 'status'
+      | 'repeat'
+    >
+  >
+): Promise<void> {
+  const columns: Record<string, string> = {
+    title: 'title',
+    type: 'type',
+    category: 'category',
+    eventDate: 'event_date',
+    dateExpression: 'date_expression',
+    amount: 'amount',
+    currency: 'currency',
+    people: 'people',
+    location: 'location',
+    tags: 'tags',
+    priority: 'priority',
+    status: 'status',
+    repeat: 'repeat',
+  };
+
+  const sets: string[] = [];
+  const values: (string | number | null)[] = [];
+  for (const [field, value] of Object.entries(patch)) {
+    const column = columns[field];
+    if (!column) continue;
+    sets.push(`${column} = ?`);
+    values.push(value as string | number | null);
+  }
+  if (sets.length === 0) return;
+
+  await getDb().runAsync(
+    `UPDATE memories SET ${sets.join(', ')}, updated_at = ?, dirty = 1 WHERE id = ?`,
+    [...values, new Date().toISOString(), id]
+  );
+}
+
+/** One entry by id, or null when it has been deleted. */
+export async function getMemory(id: string): Promise<Memory | null> {
+  const row = await getDb().getFirstAsync<RawRow>(
+    `SELECT ${COLUMNS} FROM memories WHERE id = ? AND deleted = 0`,
+    [id]
+  );
+  return row ? toMemory(row) : null;
 }

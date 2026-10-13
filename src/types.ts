@@ -32,6 +32,10 @@ export type Priority = (typeof PRIORITIES)[number];
 export const STATUSES = ['active', 'done', 'archived'] as const;
 export type Status = (typeof STATUSES)[number];
 
+/** How often something comes round again. Null means once. */
+export const REPEATS = ['daily', 'weekly', 'monthly'] as const;
+export type Repeat = (typeof REPEATS)[number];
+
 /** A full stored memory row. */
 export interface Memory {
   id: string;
@@ -55,6 +59,8 @@ export interface Memory {
   priority: Priority | null;
   status: Status;
   confirmed: boolean;
+  /** Set when this comes round again — "gym every Monday". */
+  repeat: Repeat | null;
   /** Last change to this entry, and what sync compares. */
   updatedAt: string;
 }

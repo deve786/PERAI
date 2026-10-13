@@ -1,6 +1,6 @@
 import * as SQLite from 'expo-sqlite';
 import { ADDED_COLUMNS, BACKFILL_SQL, CREATE_TABLE_SQL, DATABASE_NAME } from './schema';
-import type { Category, Memory, MemoryType, Priority, Status } from '../types';
+import type { Category, Memory, MemoryType, Priority, Repeat, Status } from '../types';
 
 /**
  * The whole data layer is async.
@@ -85,6 +85,7 @@ export interface RawRow {
   priority: string | null;
   status: string;
   confirmed: number;
+  repeat: string | null;
   updatedAt: string;
 }
 
@@ -97,5 +98,6 @@ export function toMemory(row: RawRow): Memory {
     priority: (row.priority as Priority | null) ?? null,
     status: row.status as Status,
     confirmed: row.confirmed === 1,
+    repeat: (row.repeat as Repeat | null) ?? null,
   };
 }

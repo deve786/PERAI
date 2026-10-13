@@ -1,7 +1,8 @@
 import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { MemoryRow } from '@/components/MemoryRow';
 import { Section } from '@/components/Section';
-import { deleteMemory, setMemoryStatus } from '@/db/queries';
+import { completeMemory, reopenMemory } from '@/complete';
+import { deleteMemory } from '@/db/queries';
 import { listSections } from '@/lists';
 import { logOk } from '@/log';
 import { useTheme } from '@/ThemeContext';
@@ -26,9 +27,8 @@ export default function ListsScreen() {
   const anything = sections.some((section) => section.open.length + section.done.length > 0);
 
   function toggle(memory: Memory) {
-    const next = memory.status === 'active' ? 'done' : 'active';
-    void setMemoryStatus(memory.id, next);
-    logOk(next === 'done' ? 'Ticked off' : 'Put back on the list', memory.title);
+    if (memory.status === 'active') void completeMemory(memory);
+    else void reopenMemory(memory);
   }
 
   function confirmDelete(memory: Memory) {
