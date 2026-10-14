@@ -12,7 +12,6 @@ import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { UpdateBanner } from '@/components/UpdateBanner';
 import { initDatabase } from '@/db/client';
 import { getSetting } from '@/db/queries';
@@ -85,15 +84,13 @@ export default function RootLayout() {
   if (!dbReady || !fontsReady) return <View style={styles.gate} />;
 
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <ThemeProvider>
-        <AppModeProvider>
-          <ExpenseThemeProvider>
-            <ThemedApp />
-          </ExpenseThemeProvider>
-        </AppModeProvider>
-      </ThemeProvider>
-    </GestureHandlerRootView>
+    <ThemeProvider>
+      <AppModeProvider>
+        <ExpenseThemeProvider>
+          <ThemedApp />
+        </ExpenseThemeProvider>
+      </AppModeProvider>
+    </ThemeProvider>
   );
 }
 

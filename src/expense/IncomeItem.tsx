@@ -5,7 +5,6 @@ import * as Haptics from 'expo-haptics';
 import { deleteIncome, type IncomeRow } from './db';
 import { prettyDate } from './dates';
 import { fmtMoney } from './stats';
-import { SwipeableRow } from './SwipeableRow';
 import { useTheme } from './theme';
 import { ConfirmDialog, IconDot, Row, T } from './ui';
 
@@ -28,32 +27,27 @@ export function IncomeItem({ e, showDate = true, onDeleted }: { e: IncomeRow; sh
 
   return (
     <>
-      <SwipeableRow
-        onEdit={() => router.push({ pathname: '/expense/income', params: { id: String(e.id), mode: 'edit' } })}
-        onDelete={() => setConfirming(true)}
+      <Pressable
+        onPress={() => router.push({ pathname: '/expense/income', params: { id: String(e.id) } })}
+        onLongPress={onLongPress}
+        accessibilityRole="button"
+        style={({ pressed }) => ({
+          opacity: pressed ? 0.55 : 1,
+          paddingVertical: 13,
+          borderBottomWidth: 1,
+          borderBottomColor: c.line,
+          backgroundColor: c.bg,
+        })}
       >
-        <Pressable
-          onPress={() => router.push({ pathname: '/expense/income', params: { id: String(e.id) } })}
-          onLongPress={onLongPress}
-          accessibilityRole="button"
-          style={({ pressed }) => ({
-            opacity: pressed ? 0.55 : 1,
-            paddingVertical: 13,
-            borderBottomWidth: 1,
-            borderBottomColor: c.line,
-            backgroundColor: c.bg,
-          })}
-        >
-          <Row style={{ gap: 13 }}>
-            <IconDot icon={e.cat_icon} color={e.cat_color} />
-            <View style={{ flex: 1 }}>
-              <T size={15} weight="600" numberOfLines={1}>{e.note || e.cat_name}</T>
-              <T size={12.5} sub numberOfLines={1} style={{ marginTop: 2 }}>{meta}</T>
-            </View>
-            <T size={15.5} weight="600" tabular style={{ color: c.good }}>+{fmtMoney(e.amount, symbol)}</T>
-          </Row>
-        </Pressable>
-      </SwipeableRow>
+        <Row style={{ gap: 13 }}>
+          <IconDot icon={e.cat_icon} color={e.cat_color} />
+          <View style={{ flex: 1 }}>
+            <T size={15} weight="600" numberOfLines={1}>{e.note || e.cat_name}</T>
+            <T size={12.5} sub numberOfLines={1} style={{ marginTop: 2 }}>{meta}</T>
+          </View>
+          <T size={15.5} weight="600" tabular style={{ color: c.good }}>+{fmtMoney(e.amount, symbol)}</T>
+        </Row>
+      </Pressable>
       <ConfirmDialog
         visible={confirming}
         title="Delete this income entry?"
