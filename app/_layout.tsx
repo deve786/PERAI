@@ -8,21 +8,24 @@ import {
   IBMPlexSans_600SemiBold,
   useFonts,
 } from '@expo-google-fonts/ibm-plex-sans';
-import { Stack } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { UpdateBanner } from '@/components/UpdateBanner';
 import { initDatabase } from '@/db/client';
 import { getSetting } from '@/db/queries';
 import { startOverdueSweep } from '@/overdue';
 import { startReminderSync } from '@/reminders';
 import { SPEECH_LANGUAGE_KEY, setSpeechLanguage } from '@/speechSession';
+import { AppModeProvider, APP_MODE_KEY } from '@/AppModeContext';
 import { ThemeProvider, useTheme } from '@/ThemeContext';
 import { COLORS, SPACE, TYPE } from '@/theme';
 import { useAutoUpdate } from '@/useAutoUpdate';
 import { useNotificationActions } from '@/useNotificationActions';
 import { startWidgetSync } from '@/widget/widgetSync';
+import { useSync as useExpenseSync } from '@/expense/sync/useSync';
 
 export default function RootLayout() {
   const [dbReady, setDbReady] = useState(false);
@@ -81,15 +84,33 @@ export default function RootLayout() {
   if (!dbReady || !fontsReady) return <View style={styles.gate} />;
 
   return (
-    <ThemeProvider>
-      <ThemedApp />
-    </ThemeProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <ThemeProvider>
+        <AppModeProvider>
+          <ThemedApp />
+        </AppModeProvider>
+      </ThemeProvider>
+    </GestureHandlerRootView>
   );
 }
 
 /** Split out so it can call `useTheme()` — only valid inside ThemeProvider. */
 function ThemedApp() {
   const { colors, scheme } = useTheme();
+  const router = useRouter();
+  useExpenseSync();
+
+  // Resume whichever mode was active last time, once, on a cold launch —
+  // a live switch is handled directly by ModeToggle, not this effect.
+  useEffect(() => {
+    let cancelled = false;
+    void getSetting(APP_MODE_KEY).then((saved) => {
+      if (!cancelled && saved === 'expense') router.replace('/expense');
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
 
   return (
     <>
@@ -106,6 +127,13 @@ function ThemedApp() {
         <Stack.Screen name="logs" options={{ presentation: 'modal' }} />
         <Stack.Screen name="review" options={{ presentation: 'modal' }} />
         <Stack.Screen name="entry/[id]" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="expense/(tabs)" />
+        <Stack.Screen name="expense/expense" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="expense/income" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="expense/recurring" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="expense/categories" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="expense/account" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="expense/whats-new" options={{ presentation: 'modal' }} />
       </Stack>
       <UpdateBanner />
     </>

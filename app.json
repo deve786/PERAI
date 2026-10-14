@@ -105,12 +105,15 @@
           "microphonePermission": "Allow PERAI to hear you, for live voice notes and questions.",
           "speechRecognitionPermission": "Allow PERAI to turn your speech into text on this phone."
         }
-      ]
+      ],
+      "@react-native-community/datetimepicker",
+      "expo-sharing"
     ],
     "experiments": {
       "typedRoutes": true
     },
     "extra": {
+      "otaBuild": 1,
       "eas": {
         "projectId": "fb4c44a8-9650-45ba-a00a-f26929a1b5f0"
       }

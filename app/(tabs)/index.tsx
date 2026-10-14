@@ -33,6 +33,7 @@ import { useMemories } from '@/useMemories';
 import { knownPeople } from '@/speechText';
 import { useVoiceInput } from '@/useVoiceInput';
 import { SyncButton } from '@/components/SyncButton';
+import { ModeToggle } from '@/components/ModeToggle';
 
 interface Saved {
   rawInput: string;
@@ -217,6 +218,7 @@ export default function CaptureScreen() {
           <View style={styles.titleActions}>
             <SyncButton />
             <ThemeToggle />
+            <ModeToggle />
           </View>
         </View>
 
