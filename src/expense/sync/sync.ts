@@ -141,6 +141,58 @@ async function pullTable(db: SQLite.SQLiteDatabase, def: TableDef): Promise<numb
   }
 }
 
+/**
+ * Tables whose rows are also unique by name per user (enforced locally by a
+ * partial unique index, and on the server by categories_user_name_idx /
+ * income_categories_user_name_idx) — on top of being unique by id.
+ *
+ * A fresh install seeds its own "Food", "Transport", etc. with locally
+ * generated ids before anyone signs in. Signing into an account that already
+ * has those same names (from an earlier device) makes the ordinary push
+ * collide: the local row's id is new, so onConflict: 'id' does an INSERT
+ * rather than an UPDATE, and the server's name-uniqueness index then rejects
+ * it as a duplicate.
+ */
+const NAME_UNIQUE_TABLES: { name: string; referencedBy: { table: string; column: string }[] }[] = [
+  { name: 'categories', referencedBy: [{ table: 'expenses', column: 'category_id' }, { table: 'recurring', column: 'category_id' }] },
+  { name: 'income_categories', referencedBy: [{ table: 'income', column: 'category_id' }] },
+];
+
+/**
+ * Before the ordinary push, fold any locally-seeded row into the server's
+ * existing row of the same name: repoint what referenced the local row onto
+ * the server's id, then drop the local row outright (never pushed, so no
+ * tombstone is needed — just like it never existed).
+ */
+async function reconcileNamedDuplicates(db: SQLite.SQLiteDatabase, userId: string): Promise<void> {
+  const now = new Date().toISOString();
+  for (const { name, referencedBy } of NAME_UNIQUE_TABLES) {
+    const dirty = await db.getAllAsync<{ id: string; name: string }>(
+      `SELECT id, name FROM ${name} WHERE dirty = 1 AND deleted = 0`
+    );
+    for (const row of dirty) {
+      const { data, error } = await getSupabase()
+        .from(name)
+        .select('id')
+        .eq('user_id', userId)
+        .eq('name', row.name)
+        .neq('id', row.id)
+        .limit(1);
+      if (error) throw new Error(`${name}: ${error.message}`);
+      const remoteId = data?.[0]?.id as string | undefined;
+      if (!remoteId) continue;
+
+      for (const ref of referencedBy) {
+        await db.runAsync(
+          `UPDATE ${ref.table} SET ${ref.column} = ?, updated_at = ?, dirty = 1 WHERE ${ref.column} = ?`,
+          [remoteId, now, row.id]
+        );
+      }
+      await db.runAsync(`DELETE FROM ${name} WHERE id = ?`, [row.id]);
+    }
+  }
+}
+
 /** Old tombstones have done their job once they have been sent. */
 async function purgeTombstones(db: SQLite.SQLiteDatabase): Promise<void> {
   const cutoff = new Date(Date.now() - TOMBSTONE_DAYS * 24 * 60 * 60 * 1000).toISOString();
@@ -178,6 +230,7 @@ export function syncNow(): Promise<SyncOutcome | null> {
     if (!userId) return null;
 
     const db = await getDb();
+    await reconcileNamedDuplicates(db, userId);
     let pushed = 0;
     for (const def of TABLES) pushed += await pushTable(db, userId, def);
     let pulled = 0;
