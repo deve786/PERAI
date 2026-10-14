@@ -133,9 +133,9 @@ export default function Home() {
           </>
         )}
 
-        <Button title="Add expense" icon="add" onPress={() => router.push('/expense')} style={{ marginTop: 24 }} />
+        <Button title="Add expense" icon="add" onPress={() => router.push('/expense/expense')} style={{ marginTop: 24 }} />
         <Pressable
-          onPress={() => router.push('/income')}
+          onPress={() => router.push('/expense/income')}
           hitSlop={8}
           style={({ pressed }) => ({
             flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
@@ -146,7 +146,7 @@ export default function Home() {
           <T size={13.5} weight="600" style={{ color: c.good }}>Add income</T>
         </Pressable>
 
-        <Section title="Recent" right={<T size={14} sub onPress={() => router.push('/history')}>See all</T>} />
+        <Section title="Recent" right={<T size={14} sub onPress={() => router.push('/expense/history')}>See all</T>} />
         {recent.length === 0 ? (
           <Empty title="Nothing yet" hint="Add an expense or income entry to start tracking." />
         ) : (

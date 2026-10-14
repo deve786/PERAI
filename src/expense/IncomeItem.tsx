@@ -29,11 +29,11 @@ export function IncomeItem({ e, showDate = true, onDeleted }: { e: IncomeRow; sh
   return (
     <>
       <SwipeableRow
-        onEdit={() => router.push({ pathname: '/income', params: { id: String(e.id), mode: 'edit' } })}
+        onEdit={() => router.push({ pathname: '/expense/income', params: { id: String(e.id), mode: 'edit' } })}
         onDelete={() => setConfirming(true)}
       >
         <Pressable
-          onPress={() => router.push({ pathname: '/income', params: { id: String(e.id) } })}
+          onPress={() => router.push({ pathname: '/expense/income', params: { id: String(e.id) } })}
           onLongPress={onLongPress}
           accessibilityRole="button"
           style={({ pressed }) => ({

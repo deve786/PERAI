@@ -38,11 +38,11 @@ export function ExpenseItem({ e, showDate = true, onDeleted }: { e: ExpenseRow; 
   return (
     <>
       <SwipeableRow
-        onEdit={() => router.push({ pathname: '/expense', params: { id: String(e.id), mode: 'edit' } })}
+        onEdit={() => router.push({ pathname: '/expense/expense', params: { id: String(e.id), mode: 'edit' } })}
         onDelete={() => setConfirming(true)}
       >
         <Pressable
-          onPress={() => router.push({ pathname: '/expense', params: { id: String(e.id) } })}
+          onPress={() => router.push({ pathname: '/expense/expense', params: { id: String(e.id) } })}
           onLongPress={onLongPress}
           accessibilityRole="button"
           style={({ pressed }) => ({

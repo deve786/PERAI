@@ -101,9 +101,9 @@ export default function Settings() {
 
         <Section title="Manage" />
         <Divider />
-        <NavRow label="Backup" icon="cloud-upload-outline" onPress={() => router.push('/account')} />
-        <NavRow label="Categories" icon="pricetags-outline" onPress={() => router.push('/categories')} />
-        <NavRow label="Recurring expenses" icon="repeat-outline" onPress={() => router.push('/recurring')} />
+        <NavRow label="Backup" icon="cloud-upload-outline" onPress={() => router.push('/expense/account')} />
+        <NavRow label="Categories" icon="pricetags-outline" onPress={() => router.push('/expense/categories')} />
+        <NavRow label="Recurring expenses" icon="repeat-outline" onPress={() => router.push('/expense/recurring')} />
         <NavRow
           label="Export as CSV"
           icon="download-outline"
@@ -134,7 +134,7 @@ export default function Settings() {
           <T size={13.5} sub>OTA update</T>
           <T size={13.5} tabular>#{info.otaBuild}</T>
         </Row>
-        <NavRow label="What's New" icon="sparkles-outline" onPress={() => router.push('/whats-new')} />
+        <NavRow label="What's New" icon="sparkles-outline" onPress={() => router.push('/expense/whats-new')} />
         <Button
           title="Check for updates"
           kind="ghost"
