@@ -16,6 +16,8 @@ import { ComposeButton, type ComposeMode } from '@/components/ComposeButton';
 import { Section } from '@/components/Section';
 import { VoiceWaveform } from '@/components/VoiceWaveform';
 import { forgetQuestion, getAllMemories, getRecentQuestions, saveQuestion } from '@/db/queries';
+import { buildChatContext } from '@/expense/chatContext';
+import { getSetting } from '@/expense/db';
 import { useTheme } from '@/ThemeContext';
 import { FONTS, GUTTER, SPACE, type Colors } from '@/theme';
 import { formatAmount, shortDate } from '@/format';
@@ -119,7 +121,16 @@ export default function AskScreen() {
         .reverse()
         .map((turn) => ({ question: turn.question, answer: turn.result.answer }));
 
-      const result = await askAI(q, new Date().toISOString(), await getAllMemories(), history);
+      // Expense mode's own data joins the memories as a second source, so a
+      // question about spending is answered whether it was voice-captured or
+      // logged as a structured expense. Failing to read it (e.g. Expense mode
+      // was never opened) should not block answering from memories alone.
+      const expenseContext = await buildChatContext(
+        await getSetting('symbol', '₹'),
+        Number(await getSetting('budget', '0')) || 0
+      ).catch(() => undefined);
+
+      const result = await askAI(q, new Date().toISOString(), await getAllMemories(), history, expenseContext);
       setThread((current) => [{ question: q, result }, ...current]);
       await saveQuestion(q);
       await loadRecent();

@@ -69,26 +69,38 @@ const ANSWER_SCHEMA = {
       description: 'The reference ids (e.g. "M3") of every memory used.',
       items: { type: 'string' },
     },
+    usedExpenseData: {
+      type: 'boolean',
+      description: 'True if any fact in the answer came from the EXPENSE DATA block.',
+    },
   },
-  required: ['found', 'answer', 'headline', 'items', 'usedMemoryIds'],
+  required: ['found', 'answer', 'headline', 'items', 'usedMemoryIds', 'usedExpenseData'],
   additionalProperties: false,
 } as const;
 
-const SYSTEM_PROMPT = `You answer questions about one person's own recorded memories.
+const SYSTEM_PROMPT = `You answer questions about one person's own recorded memories, and also
+their recorded expense/income data when it is provided below under EXPENSE
+DATA. Together these two sections are the entire world of things you know
+about this person. You have no other information about them.
 
-ABSOLUTE RULE: answer ONLY from the memories provided in the user message. They
-are the entire world of things you know about this person. You have no other
-information about them.
+ABSOLUTE RULE: answer ONLY from the MEMORIES and EXPENSE DATA provided in the
+user message.
 
-- If the memories do not contain the answer, set found=false and say plainly
-  that there is no recorded memory for that. Do NOT guess, do NOT reason from
-  general knowledge about what people typically do, and do NOT pad a
-  non-answer with speculation.
+- If neither section contains the answer, set found=false and say plainly
+  that there is no recorded memory or expense data for that. Do NOT guess, do
+  NOT reason from general knowledge about what people typically do, and do
+  NOT pad a non-answer with speculation.
 - Never use outside or general knowledge to answer a question about this
   person's history, habits, spending, or whereabouts.
-- Every claim in your answer must trace to a specific provided memory. List the
-  reference id of each memory you used in usedMemoryIds, in the order you
-  relied on them. If found=false, usedMemoryIds must be empty.
+- The two sections are independent records, not duplicates of each other —
+  draw on whichever one (or both) actually answers the question. A spending
+  question may be answered from EXPENSE DATA, from MEMORIES, or both; do not
+  assume one source is more authoritative than the other.
+- Every claim in your answer must trace to a specific provided memory or to
+  the EXPENSE DATA block. List the reference id of each memory you used in
+  usedMemoryIds, in the order you relied on them, and set usedExpenseData to
+  true if any fact in your answer came from EXPENSE DATA (false otherwise). If
+  found=false, usedMemoryIds must be empty and usedExpenseData must be false.
 
 WHEN THE ANSWER IS PRESENT — this is read on a phone, so answer as a list, not
 a paragraph:
@@ -126,7 +138,7 @@ STATE — every memory says whether it is "still to do" or "done":
   inferring a frequency.`;
 
 /** One compact line per memory. Null fields are omitted rather than sent as "null". */
-function renderMemory(memory: Memory, ref: string): string {
+export function renderMemory(memory: Memory, ref: string): string {
   const date = new Date(memory.eventDate).toLocaleDateString('en-GB', {
     day: 'numeric',
     month: 'long',
@@ -176,25 +188,34 @@ function looseJsonParse(raw: string): unknown {
 }
 
 /**
- * Answer a natural-language question from stored memories only.
+ * Answer a natural-language question from stored memories, and optionally
+ * from an Expense-mode spending snapshot alongside them.
  *
- * @param question the user's question
- * @param nowISO   used for relative phrases like "last month"
- * @param all      every confirmed memory. The caller owns storage, which keeps
- *                 this module runnable outside React Native.
+ * @param question       the user's question
+ * @param nowISO         used for relative phrases like "last month"
+ * @param all            every confirmed memory. The caller owns storage, which
+ *                       keeps this module runnable outside React Native.
+ * @param history        prior turns in this conversation, oldest first.
+ * @param expenseContext an optional pre-built Expense-mode snapshot (e.g. from
+ *                       `buildChatContext`), included as a second, independent
+ *                       data source. Omitted entirely when not given, so
+ *                       callers (and scripts/test-ai.ts) that only have
+ *                       memories keep working unchanged.
  */
 export async function askAI(
   question: string,
   nowISO: string,
   all: Memory[],
-  history: AskTurn[] = []
+  history: AskTurn[] = [],
+  expenseContext?: unknown
 ): Promise<AskResult> {
   const trimmed = question.trim();
   if (!trimmed) return { answer: '', items: [], headline: null, evidence: [], found: false };
 
   const now = new Date(nowISO);
+  const hasExpenseData = expenseContext !== undefined && expenseContext !== null;
 
-  if (all.length === 0) {
+  if (all.length === 0 && !hasExpenseData) {
     return {
       answer: 'Nothing has been recorded yet. Capture a memory first.',
       items: [],
@@ -208,12 +229,16 @@ export async function askAI(
   // question before it, so "and movies?" still knows what was being asked.
   const inContext = conversationQuery(trimmed, history);
 
-  const { memories, range } = selectRelevantMemories(inContext, all, now, MAX_CONTEXT_MEMORIES);
+  const { memories, range } =
+    all.length > 0
+      ? selectRelevantMemories(inContext, all, now, MAX_CONTEXT_MEMORIES)
+      : { memories: [] as Memory[], range: null };
 
   // "Which games are still to play" is a question about rows, not prose: the
   // phone can answer it exactly and at once, where a model takes seconds,
-  // spends quota, and can quietly leave one out.
-  const asList = listQuestion(inContext, range !== null);
+  // spends quota, and can quietly leave one out. Expense data has no such
+  // "pending" concept, so this fast path only ever applies to memories.
+  const asList = all.length > 0 ? listQuestion(inContext, range !== null) : null;
   if (asList) {
     const counted = answerFromList(asList, all);
     return {
@@ -225,8 +250,9 @@ export async function askAI(
     };
   }
 
-  // The named period exists but is empty — answerable without a model call.
-  if (memories.length === 0) {
+  // The named period exists but is empty, and there is no expense data to
+  // fall back on either — answerable without a model call.
+  if (memories.length === 0 && !hasExpenseData) {
     return {
       answer: `No recorded memory found${range ? ` for ${range.label}` : ''}.`,
       items: [],
@@ -245,9 +271,12 @@ export async function askAI(
   });
 
   const weekday = now.toLocaleDateString('en-US', { weekday: 'long' });
-  const scope = range
-    ? `These are the memories recorded during ${range.label}.`
-    : `These are the ${memories.length} most relevant of ${all.length} recorded memories.`;
+  const scope =
+    memories.length === 0
+      ? 'No memories are recorded.'
+      : range
+        ? `These are the memories recorded during ${range.label}.`
+        : `These are the ${memories.length} most relevant of ${all.length} recorded memories.`;
 
   const body = await requestJson({
     model: ASK_MODEL,
@@ -269,6 +298,9 @@ export async function askAI(
       '',
       rendered.join('\n\n'),
       '',
+      ...(hasExpenseData
+        ? ['EXPENSE DATA — this person\'s recorded spending/income, independent of the memories above:', '', JSON.stringify(expenseContext), '']
+        : []),
       `QUESTION: ${trimmed}`,
     ].join('\n'),
     schemaName: 'grounded_answer',
@@ -282,6 +314,7 @@ export async function askAI(
         headline?: unknown;
         items?: unknown;
         usedMemoryIds?: unknown;
+        usedExpenseData?: unknown;
       }
     | null;
 
@@ -320,15 +353,18 @@ export async function askAI(
     }
   }
 
+  const usedExpenseData = parsed.usedExpenseData === true;
+
   // Treat "answered but cited nothing" as not-found: an answer we cannot show
   // the basis for is exactly the ungrounded output this app must not produce.
-  const found = parsed.found === true && evidence.length > 0;
+  // Citing EXPENSE DATA counts as grounded too, even with no memory evidence.
+  const found = parsed.found === true && (evidence.length > 0 || usedExpenseData);
 
   return {
     answer: found
       ? parsed.answer
       : parsed.found === true
-        ? "Found something, but couldn't tie it back to a specific memory."
+        ? "Found something, but couldn't tie it back to a specific memory or expense record."
         : parsed.answer,
     // A list with nothing behind it would be the ungrounded output this app
     // must not produce, so it goes only with an answer that was traced back.
