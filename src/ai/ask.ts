@@ -40,6 +40,8 @@ export interface AskResult {
   headline: string | null;
   /** The memories the model said it used, in the order it cited them. */
   evidence: Memory[];
+  /** True when the answer drew on the Expense-mode data block, so the UI can label its source. */
+  usedExpenseData: boolean;
   /** False when nothing relevant was recorded — the UI shows a "not found" state. */
   found: boolean;
 }
@@ -210,7 +212,7 @@ export async function askAI(
   expenseContext?: unknown
 ): Promise<AskResult> {
   const trimmed = question.trim();
-  if (!trimmed) return { answer: '', items: [], headline: null, evidence: [], found: false };
+  if (!trimmed) return { answer: '', items: [], headline: null, evidence: [], usedExpenseData: false, found: false };
 
   const now = new Date(nowISO);
   const hasExpenseData = expenseContext !== undefined && expenseContext !== null;
@@ -221,6 +223,7 @@ export async function askAI(
       items: [],
       headline: null,
       evidence: [],
+      usedExpenseData: false,
       found: false,
     };
   }
@@ -246,6 +249,7 @@ export async function askAI(
       items: counted.items,
       headline: counted.headline,
       evidence: counted.entries,
+      usedExpenseData: false,
       found: counted.entries.length > 0,
     };
   }
@@ -258,6 +262,7 @@ export async function askAI(
       items: [],
       headline: null,
       evidence: [],
+      usedExpenseData: false,
       found: false,
     };
   }
@@ -324,6 +329,7 @@ export async function askAI(
       items: [],
       headline: null,
       evidence: [],
+      usedExpenseData: false,
       found: false,
     };
   }
@@ -371,6 +377,7 @@ export async function askAI(
     items: found ? items : [],
     headline: found ? headline : null,
     evidence,
+    usedExpenseData: found ? usedExpenseData : false,
     found,
   };
 }

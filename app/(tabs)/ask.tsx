@@ -26,6 +26,16 @@ import { useMemories } from '@/useMemories';
 import { knownPeople } from '@/speechText';
 import { useVoiceInput } from '@/useVoiceInput';
 
+/** Which source(s) a found answer actually drew on — memories, Expense data, or both. */
+function sourceLabel(result: AskResult): string {
+  const { evidence, usedExpenseData } = result;
+  const memoryPart = evidence.length > 0 ? (evidence.length === 1 ? '1 ENTRY' : `${evidence.length} ENTRIES`) : null;
+  if (memoryPart && usedExpenseData) return `FROM ${memoryPart} + EXPENSE DATA`;
+  if (memoryPart) return `FROM ${memoryPart}`;
+  if (usedExpenseData) return 'FROM EXPENSE DATA';
+  return 'FROM YOUR RECORD';
+}
+
 export default function AskScreen() {
   const { colors, type } = useTheme();
   const styles = makeStyles(colors);
@@ -295,11 +305,7 @@ export default function AskScreen() {
 
             {result.found ? (
               <View style={styles.evidence}>
-                <Text style={type.label}>
-                  {result.evidence.length === 1
-                    ? 'FROM 1 ENTRY'
-                    : `FROM ${result.evidence.length} ENTRIES`}
-                </Text>
+                <Text style={type.label}>{sourceLabel(result)}</Text>
                 <View style={styles.evidenceRule} />
                 {result.evidence.map((memory) => (
                   <MemoryRow key={memory.id} memory={memory} gutter="date" />
