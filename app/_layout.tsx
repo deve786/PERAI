@@ -21,6 +21,7 @@ import { startReminderSync } from '@/reminders';
 import { SPEECH_LANGUAGE_KEY, setSpeechLanguage } from '@/speechSession';
 import { AppModeProvider, APP_MODE_KEY } from '@/AppModeContext';
 import { ThemeProvider, useTheme } from '@/ThemeContext';
+import { ThemeProvider as ExpenseThemeProvider } from '@/expense/theme';
 import { COLORS, SPACE, TYPE } from '@/theme';
 import { useAutoUpdate } from '@/useAutoUpdate';
 import { useNotificationActions } from '@/useNotificationActions';
@@ -87,7 +88,9 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <ThemeProvider>
         <AppModeProvider>
-          <ThemedApp />
+          <ExpenseThemeProvider>
+            <ThemedApp />
+          </ExpenseThemeProvider>
         </AppModeProvider>
       </ThemeProvider>
     </GestureHandlerRootView>
