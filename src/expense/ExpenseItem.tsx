@@ -1,11 +1,10 @@
 import React, { useState } from 'react';
-import { Pressable, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
-import { Ionicons } from '@expo/vector-icons';
 import { deleteExpense, type ExpenseRow } from './db';
 import { prettyDate } from './dates';
-import { useTheme } from './theme';
+import { FONTS, useTheme } from './theme';
 import { ConfirmDialog, IconDot, Money, Row, T } from './ui';
 
 export function ExpenseItem({ e, showDate = true, onDeleted }: { e: ExpenseRow; showDate?: boolean; onDeleted?: () => void }) {
@@ -13,12 +12,12 @@ export function ExpenseItem({ e, showDate = true, onDeleted }: { e: ExpenseRow; 
   const router = useRouter();
   const [confirming, setConfirming] = useState(false);
   const meta = [
-    e.cat_name,
-    e.user_tag ? `@${e.user_tag}` : null,
-    e.method,
-    showDate ? prettyDate(e.date) : null,
-    e.recurring_id ? 'Repeats' : null,
-    e.item_count > 1 ? `${e.item_count} items` : null,
+    e.cat_name.toUpperCase(),
+    e.user_tag ? `@${e.user_tag.toUpperCase()}` : null,
+    e.method.toUpperCase(),
+    showDate ? prettyDate(e.date).toUpperCase() : null,
+    e.recurring_id ? 'REPEATS' : null,
+    e.item_count > 1 ? `${e.item_count} ITEMS` : null,
   ]
     .filter(Boolean)
     .join('  ·  ');
@@ -41,38 +40,24 @@ export function ExpenseItem({ e, showDate = true, onDeleted }: { e: ExpenseRow; 
         onLongPress={onLongPress}
         accessibilityRole="button"
         style={({ pressed }) => ({
-          opacity: pressed ? 0.55 : 1,
-          paddingVertical: 13,
-          borderBottomWidth: 1,
+          opacity: pressed ? 0.45 : 1,
+          paddingVertical: 11,
+          borderBottomWidth: StyleSheet.hairlineWidth,
           borderBottomColor: c.line,
           backgroundColor: c.bg,
         })}
       >
-        <Row style={{ gap: 13 }}>
-          <IconDot icon={e.cat_icon} color={e.cat_color} />
-          <View style={{ flex: 1 }}>
-            <Row style={{ alignItems: 'center', gap: 6 }}>
-              <T size={15} weight="600" numberOfLines={1} style={{ flexShrink: 1 }}>{e.note || e.cat_name}</T>
-              {e.user_tag ? (
-                <View style={{
-                  backgroundColor: c.card,
-                  borderWidth: 1,
-                  borderColor: c.line,
-                  paddingHorizontal: 6,
-                  paddingVertical: 1,
-                  borderRadius: 4,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 3,
-                }}>
-                  <Ionicons name="person-outline" size={10} color={c.sub} />
-                  <T size={11} sub weight="600">{e.user_tag}</T>
-                </View>
-              ) : null}
+        <Row style={{ gap: 12 }}>
+          <IconDot icon={e.cat_icon} color={e.cat_color} size={32} />
+          <View style={{ flex: 1, gap: 3 }}>
+            <Row style={{ justifyContent: 'space-between', gap: 12 }}>
+              <T size={15} weight="500" numberOfLines={1} style={{ flex: 1 }}>{e.note || e.cat_name}</T>
+              <Money value={e.amount} size={13} weight="500" />
             </Row>
-            <T size={12.5} sub numberOfLines={1} style={{ marginTop: 2 }}>{meta}</T>
+            <T size={10} faint tabular style={{ fontFamily: FONTS.mono, letterSpacing: 0.9 }} numberOfLines={1}>
+              {meta}
+            </T>
           </View>
-          <Money value={e.amount} size={15.5} weight="600" />
         </Row>
       </Pressable>
       <ConfirmDialog
