@@ -9,6 +9,7 @@ import { budgetTone, useTheme } from '@/expense/theme';
 import { Button, Divider, Empty, Meter, Money, Row, Screen, Section, T } from '@/expense/ui';
 import { ExpenseItem } from '@/expense/ExpenseItem';
 import { IncomeItem } from '@/expense/IncomeItem';
+import { ModeToggle } from '@/components/ModeToggle';
 
 type Recent = { kind: 'expense'; row: ExpenseRow } | { kind: 'income'; row: IncomeRow };
 
@@ -67,7 +68,10 @@ export default function Home() {
   return (
     <Screen>
       <ScrollView contentContainerStyle={{ padding: 20, paddingTop: 12, paddingBottom: 40 }}>
-        <T size={14} sub>{monthName(month0)} {year}</T>
+        <Row style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+          <T size={14} sub>{monthName(month0)} {year}</T>
+          <ModeToggle />
+        </Row>
         <T size={48} weight="700" tabular style={{ marginTop: 2, letterSpacing: -1.6 }}>
           {fmtMoney(total, symbol)}
         </T>
