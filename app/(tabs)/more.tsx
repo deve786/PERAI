@@ -13,7 +13,7 @@ export default function More() {
     <ScrollView style={styles.flex} contentContainerStyle={styles.content}>
       <Text style={type.display}>More</Text>
 
-      <NavRow label="Today" icon="today-outline" onPress={() => router.push('/today')} />
+      <NavRow label="Calendar" icon="calendar-outline" onPress={() => router.push('/calendar')} />
       <NavRow label="Lists" icon="bookmark-outline" onPress={() => router.push('/lists')} />
       <NavRow label="Timeline" icon="reorder-two-outline" onPress={() => router.push('/timeline')} />
       <NavRow label="Expense history" icon="receipt-outline" onPress={() => router.push('/expense-history')} />

@@ -45,7 +45,7 @@ function guessCategoryName(title: string): string | null {
 }
 
 export default function ExpenseForm() {
-  const { id, mode: modeParam, scan } = useLocalSearchParams<{ id?: string; mode?: string; scan?: string }>();
+  const { id, mode: modeParam, scan, date: dateParam } = useLocalSearchParams<{ id?: string; mode?: string; scan?: string; date?: string }>();
   const editId = id || undefined;
   const router = useRouter();
   const { c, symbol } = useTheme();
@@ -56,7 +56,7 @@ export default function ExpenseForm() {
   const [items, setItems] = useState<DraftItem[]>([]);
   const [viewItems, setViewItems] = useState<ExpenseItemRow[]>([]);
   const [catId, setCatId] = useState<string | null>(null);
-  const [date, setDate] = useState(todayStr());
+  const [date, setDate] = useState(dateParam || todayStr());
   const [note, setNote] = useState('');
   const [notes, setNotes] = useState('');
   const [method, setMethod] = useState<string>('UPI');
