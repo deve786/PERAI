@@ -225,7 +225,31 @@ export default function Home() {
           </>
         )}
 
-        <Button title="Add expense" icon="add" onPress={() => router.push('/expense/expense')} style={{ marginTop: 24 }} />
+        <Row style={{ gap: 10, marginTop: 24, alignItems: 'stretch' }}>
+          <View style={{ flex: 1 }}>
+            <Button title="Add expense" icon="add" onPress={() => router.push('/expense/expense')} />
+          </View>
+          <Pressable
+            onPress={() => router.push({ pathname: '/expense/expense', params: { scan: '1' } })}
+            style={({ pressed }) => ({
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 6,
+              backgroundColor: c.card,
+              borderWidth: 1,
+              borderColor: c.line,
+              borderRadius: 8,
+              paddingHorizontal: 16,
+              opacity: pressed ? 0.7 : 1,
+            })}
+            accessibilityRole="button"
+            accessibilityLabel="Scan receipt or bill with AI"
+          >
+            <Ionicons name="camera-outline" size={18} color={c.accent} />
+            <T size={13.5} weight="600" style={{ color: c.accent }}>Scan Bill</T>
+          </Pressable>
+        </Row>
         <Row style={{ justifyContent: 'center', alignItems: 'center', gap: 16, marginTop: 14 }}>
           <Pressable
             onPress={() => router.push('/expense/income')}

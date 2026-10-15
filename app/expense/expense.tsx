@@ -45,7 +45,7 @@ function guessCategoryName(title: string): string | null {
 }
 
 export default function ExpenseForm() {
-  const { id, mode: modeParam } = useLocalSearchParams<{ id?: string; mode?: string }>();
+  const { id, mode: modeParam, scan } = useLocalSearchParams<{ id?: string; mode?: string; scan?: string }>();
   const editId = id || undefined;
   const router = useRouter();
   const { c, symbol } = useTheme();
@@ -392,6 +392,15 @@ export default function ExpenseForm() {
       { text: 'Cancel', style: 'cancel' },
     ]);
   };
+
+  useEffect(() => {
+    if (scan === '1' && !editId) {
+      const t = setTimeout(() => {
+        handleScanReceipt();
+      }, 400);
+      return () => clearTimeout(t);
+    }
+  }, [scan, editId]);
 
   async function confirmDelete() {
     if (!editId) return;
