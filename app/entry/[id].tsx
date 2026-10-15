@@ -16,16 +16,54 @@ import { completeMemory, reopenMemory } from '@/complete';
 import { deleteMemory, getMemory, rememberSpelling, updateMemory } from '@/db/queries';
 import { fullDateLabel, hasStatedTime, timeLabel } from '@/format';
 import { logOk } from '@/log';
+import { syncReminders } from '@/reminders';
 import { nextOccurrence } from '@/repeat';
 import { useTheme } from '@/ThemeContext';
 import { FONTS, SPACE, type Colors } from '@/theme';
 import { CATEGORIES, MEMORY_TYPES, PRIORITIES, REPEATS, type Memory } from '@/types';
 
+/** Quick snooze presets covering hours, start-of-day, weekends and next week */
+const SNOOZE_PRESETS: { label: string; calc: () => { date: Date; desc: string } }[] = [
+  {
+    label: '+3 HOURS',
+    calc: () => ({ date: new Date(Date.now() + 3 * 3600 * 1000), desc: 'in 3 hours' }),
+  },
+  {
+    label: 'TOMORROW 9AM',
+    calc: () => {
+      const d = new Date();
+      d.setDate(d.getDate() + 1);
+      d.setHours(9, 0, 0, 0);
+      return { date: d, desc: 'tomorrow at 9:00 AM' };
+    },
+  },
+  {
+    label: 'WEEKEND',
+    calc: () => {
+      const d = new Date();
+      const diff = (6 - d.getDay() + 7) % 7 || 7;
+      d.setDate(d.getDate() + diff);
+      d.setHours(9, 0, 0, 0);
+      return { date: d, desc: 'Saturday at 9:00 AM' };
+    },
+  },
+  {
+    label: 'NEXT WEEK',
+    calc: () => {
+      const d = new Date();
+      const diff = (1 - d.getDay() + 7) % 7 || 7;
+      d.setDate(d.getDate() + diff);
+      d.setHours(9, 0, 0, 0);
+      return { date: d, desc: 'next Monday at 9:00 AM' };
+    },
+  },
+];
+
 /** Moving an entry on: the handful of answers that cover almost every case. */
 const PUSHES: { label: string; days: number }[] = [
-  { label: 'TOMORROW', days: 1 },
+  { label: '+1 DAY', days: 1 },
   { label: '+3 DAYS', days: 3 },
-  { label: 'NEXT WEEK', days: 7 },
+  { label: '+7 DAYS', days: 7 },
 ];
 
 /**
@@ -83,6 +121,12 @@ export default function EntryScreen() {
     logOk(days === 1 ? 'Pushed to tomorrow' : `Moved by ${days} days`, entry.title);
   };
 
+  const snoozeTo = async (target: { date: Date; desc: string }) => {
+    await patch({ eventDate: target.date.toISOString(), dateExpression: target.desc });
+    await syncReminders().catch(() => {});
+    logOk('Snoozed entry', entry.title);
+  };
+
   const saveTitle = async () => {
     const next = title.trim();
     if (!next || next === entry.title) return;
@@ -133,6 +177,21 @@ export default function EntryScreen() {
         <View style={styles.field}>
           <Text style={type.label}>WHEN</Text>
           <Text style={type.body}>{when}</Text>
+
+          <Text style={[type.stamp, { marginTop: 6, color: colors.mist }]}>QUICK SNOOZE</Text>
+          <View style={styles.pushRow}>
+            {SNOOZE_PRESETS.map((option) => (
+              <Pressable
+                key={option.label}
+                onPress={() => void snoozeTo(option.calc())}
+                style={({ pressed }) => [styles.push, pressed && styles.pressed]}
+              >
+                <Text style={[type.label, styles.pushText]}>{option.label}</Text>
+              </Pressable>
+            ))}
+          </View>
+
+          <Text style={[type.stamp, { marginTop: 6, color: colors.mist }]}>SHIFT DATE</Text>
           <View style={styles.pushRow}>
             {PUSHES.map((option) => (
               <Pressable

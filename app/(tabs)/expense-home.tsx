@@ -2,7 +2,7 @@ import React, { useCallback, useMemo, useState } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { listExpenses, listIncome, refreshRecurring, type ExpenseRow, type IncomeRow } from '@/expense/db';
+import { listExpenses, listIncome, listRecurring, refreshRecurring, type ExpenseRow, type IncomeRow, type Recurring } from '@/expense/db';
 import { monthName, monthRange, todayStr, addDays } from '@/expense/dates';
 import { byCategory, fmtMoney, sum } from '@/expense/stats';
 import { budgetTone, useTheme } from '@/expense/theme';
@@ -10,6 +10,7 @@ import { Button, Divider, Empty, Meter, Money, Row, Screen, Section, T } from '@
 import { ExpenseItem } from '@/expense/ExpenseItem';
 import { IncomeItem } from '@/expense/IncomeItem';
 import { ExpenseSyncButton } from '@/components/ExpenseSyncButton';
+import { UpcomingBills } from '@/components/UpcomingBills';
 
 type Recent = { kind: 'expense'; row: ExpenseRow } | { kind: 'income'; row: IncomeRow };
 
@@ -19,6 +20,7 @@ export default function Home() {
   const [rows, setRows] = useState<ExpenseRow[]>([]);
   const [incomeRows, setIncomeRows] = useState<IncomeRow[]>([]);
   const [recent, setRecent] = useState<Recent[]>([]);
+  const [recurring, setRecurring] = useState<Recurring[]>([]);
 
   // Derived from the date string rather than a Date object: primitives keep the
   // memoised range referentially stable, which the focus effect depends on.
@@ -34,16 +36,18 @@ export default function Home() {
     const prevMonth0 = month0 === 0 ? 11 : month0 - 1;
     const prevYear = month0 === 0 ? year - 1 : year;
     const prevRange = monthRange(prevYear, prevMonth0);
-    const [monthExpenses, monthIncome, allExpenses, allIncome, prevExpenses] = await Promise.all([
+    const [monthExpenses, monthIncome, allExpenses, allIncome, prevExpenses, recList] = await Promise.all([
       listExpenses(from, to),
       listIncome(from, to),
       listExpenses(),
       listIncome(),
       listExpenses(prevRange.from, prevRange.to),
+      listRecurring(),
     ]);
     setRows(monthExpenses);
     setIncomeRows(monthIncome);
     setLastMonthTotal(sum(prevExpenses));
+    setRecurring(recList);
     const merged: Recent[] = [
       ...allExpenses.map((row): Recent => ({ kind: 'expense', row })),
       ...allIncome.map((row): Recent => ({ kind: 'income', row })),
@@ -167,6 +171,8 @@ export default function Home() {
           <Ionicons name="add-circle-outline" size={16} color={c.good} />
           <T size={13.5} weight="600" style={{ color: c.good }}>Add income</T>
         </Pressable>
+
+        <UpcomingBills recurring={recurring} onBillPaid={load} />
 
         <Section title="Recent" right={<T size={14} sub onPress={() => router.push('/expense-history')}>See all</T>} />
         {recent.length === 0 ? (

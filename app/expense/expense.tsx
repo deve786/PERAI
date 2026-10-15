@@ -4,7 +4,9 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import * as ImagePicker from 'expo-image-picker';
 import { guessCategoryWithAI } from '@/expense/ai/categorize';
+import { scanReceiptWithAI } from '@/expense/ai/ocr';
 import { generateExpenseTitleWithAI } from '@/expense/ai/title';
 import {
   METHODS, deleteExpense, findOrCreateCategory, findOrCreateTaggedUser, getExpense,
@@ -68,6 +70,7 @@ export default function ExpenseForm() {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [aiGuessing, setAiGuessing] = useState(false);
   const [aiTitleGenerating, setAiTitleGenerating] = useState(false);
+  const [ocrScanning, setOcrScanning] = useState(false);
   const [saving, setSaving] = useState(false);
   // Stops auto-categorising from title once the user has picked one themselves.
   const catAutoPick = useRef(true);
@@ -317,6 +320,79 @@ export default function ExpenseForm() {
     router.back();
   }
 
+  const processImage = async (base64: string, mimeType = 'image/jpeg') => {
+    setOcrScanning(true);
+    try {
+      const parsed = await scanReceiptWithAI(base64, mimeType);
+      if (parsed.totalAmount > 0) {
+        setAmount(String(parsed.totalAmount));
+      }
+      if (parsed.merchant) {
+        setNote(parsed.merchant);
+      }
+      if (parsed.date) {
+        setDate(parsed.date);
+      }
+      const matched = cats.find((ct) => ct.name.toLowerCase() === parsed.category.toLowerCase());
+      if (matched) {
+        setCatId(matched.id);
+        setCustomCat('');
+      } else {
+        setCustomCat(parsed.category);
+        setCatId(null);
+      }
+      if (parsed.items && parsed.items.length > 0) {
+        setItems(
+          parsed.items.map((it) => ({
+            name: it.name,
+            qty: String(it.quantity || 1),
+            amount: String(it.amount),
+          }))
+        );
+      }
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    } catch (err) {
+      Alert.alert('Scan failed', err instanceof Error ? err.message : 'Could not analyze receipt.');
+    } finally {
+      setOcrScanning(false);
+    }
+  };
+
+  const captureFromCamera = async () => {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission needed', 'Camera access is required to take photos of receipts.');
+      return;
+    }
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ['images'],
+      quality: 0.8,
+      base64: true,
+    });
+    if (!result.canceled && result.assets && result.assets[0]?.base64) {
+      await processImage(result.assets[0].base64, result.assets[0].mimeType || 'image/jpeg');
+    }
+  };
+
+  const pickFromGallery = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      quality: 0.8,
+      base64: true,
+    });
+    if (!result.canceled && result.assets && result.assets[0]?.base64) {
+      await processImage(result.assets[0].base64, result.assets[0].mimeType || 'image/jpeg');
+    }
+  };
+
+  const handleScanReceipt = () => {
+    Alert.alert('Scan Receipt or Bill', 'Choose how you want to capture the receipt:', [
+      { text: 'Take Photo', onPress: () => void captureFromCamera() },
+      { text: 'Choose from Gallery', onPress: () => void pickFromGallery() },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
+
   async function confirmDelete() {
     if (!editId) return;
     setConfirmingDelete(false);
@@ -414,6 +490,39 @@ export default function ExpenseForm() {
             title={editId ? 'Edit expense' : 'New expense'}
             onClose={editId ? () => setMode('view') : () => router.back()}
           />
+
+          {!editId && (
+            <Pressable
+              onPress={handleScanReceipt}
+              disabled={ocrScanning}
+              style={({ pressed }) => ({
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 8,
+                paddingVertical: 10,
+                paddingHorizontal: 16,
+                borderRadius: radius.md,
+                backgroundColor: c.card,
+                borderWidth: 1,
+                borderColor: c.line,
+                marginTop: 6,
+                marginBottom: 16,
+                opacity: pressed || ocrScanning ? 0.7 : 1,
+              })}
+              accessibilityRole="button"
+              accessibilityLabel="Scan receipt or bill with AI"
+            >
+              {ocrScanning ? (
+                <ActivityIndicator size="small" color={c.accent} />
+              ) : (
+                <Ionicons name="scan-outline" size={18} color={c.accent} />
+              )}
+              <T size={13.5} weight="600" style={{ color: c.accent }}>
+                {ocrScanning ? 'Scanning receipt with AI…' : 'Scan Receipt / Bill with AI'}
+              </T>
+            </Pressable>
+          )}
 
           <Row style={{ alignItems: 'center', gap: 6, marginTop: 6, marginBottom: hasItems ? 2 : 22 }}>
             <T size={34} weight="600" sub>{symbol}</T>

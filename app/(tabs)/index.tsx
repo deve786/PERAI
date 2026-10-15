@@ -18,6 +18,7 @@ import { Section } from '@/components/Section';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { VoiceWaveform } from '@/components/VoiceWaveform';
 import { deleteMemories, queueNote } from '@/db/queries';
+import { deleteExpense } from '@/expense/db';
 import { setPendingDrafts } from '@/draftStore';
 import { fileNote } from '@/fileNote';
 import { LISTS } from '@/lists';
@@ -41,6 +42,10 @@ interface Saved {
   alerts: boolean | null;
   /** Titles a web search corrected, shown so a wrong one is obvious. */
   changed: { from: string; to: string }[];
+  /** Linked expense IDs in Expense database */
+  expenseIds?: string[];
+  /** Whether saved via continuous brain-dump mode */
+  wasBrainDump?: boolean;
 }
 
 function toDraft({ id, createdAt, confirmed, rawInput, ...draft }: Memory): MemoryDraft {
@@ -65,6 +70,7 @@ export default function CaptureScreen() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<Saved | null>(null);
+  const [brainDump, setBrainDump] = useState(false);
 
   const configured = hasApiKey();
 
@@ -92,7 +98,7 @@ export default function CaptureScreen() {
     setSaved(null);
     const started = Date.now();
     try {
-      const kept = await fileNote(note, { people, listTitles });
+      const kept = await fileNote(note, { people, listTitles, isBrainDump: brainDump });
 
       // Ask for notification permission here, the first time it matters —
       // right after saving something that is meant to remind you.
@@ -102,8 +108,17 @@ export default function CaptureScreen() {
         if (alerts) await syncReminders();
       }
 
+      const expenseIds = kept.map((m) => m.expenseId).filter((id): id is string => Boolean(id));
+
       setText('');
-      setSaved({ rawInput: note, memories: kept, alerts, changed: [] });
+      setSaved({
+        rawInput: note,
+        memories: kept,
+        alerts,
+        changed: [],
+        expenseIds,
+        wasBrainDump: brainDump,
+      });
       logOk(
         kept.length === 1 ? 'Saved an entry' : `Saved ${kept.length} entries`,
         `${Math.round((Date.now() - started) / 1000)}s · ${kept.map((m) => m.title).join(', ')}`
@@ -167,6 +182,11 @@ export default function CaptureScreen() {
   async function undo() {
     if (!saved) return;
     await deleteMemories(saved.memories.map((m) => m.id));
+    if (saved.expenseIds && saved.expenseIds.length > 0) {
+      for (const eid of saved.expenseIds) {
+        await deleteExpense(eid).catch(() => {});
+      }
+    }
     setText(saved.rawInput);
     setSaved(null);
   }
@@ -174,6 +194,11 @@ export default function CaptureScreen() {
   async function edit() {
     if (!saved) return;
     await deleteMemories(saved.memories.map((m) => m.id));
+    if (saved.expenseIds && saved.expenseIds.length > 0) {
+      for (const eid of saved.expenseIds) {
+        await deleteExpense(eid).catch(() => {});
+      }
+    }
     setPendingDrafts(saved.rawInput, saved.memories.map(toDraft));
     setSaved(null);
     router.push('/preview');
@@ -196,9 +221,11 @@ export default function CaptureScreen() {
 
   const status = saving || voice.stage === 'finishing'
     ? 'Saving'
-    : typed
-      ? 'One line can hold several events'
-      : 'Tap the mic and say what happened';
+    : brainDump
+      ? 'Brain dump: say or write all tasks, purchases & reminders'
+      : typed
+        ? 'One line can hold several events'
+        : 'Tap the mic and say what happened';
 
   const problem = voice.error ?? error;
   // The box shows what's being heard, live, while listening; your typed text
@@ -244,6 +271,29 @@ export default function CaptureScreen() {
         </View>
 
         <View style={styles.composer}>
+          <View style={styles.modeToggleRow}>
+            <Pressable
+              onPress={() => setBrainDump(false)}
+              style={[styles.modeTab, !brainDump && styles.modeTabActive]}
+              hitSlop={8}
+            >
+              <Ionicons name="flash-outline" size={13} color={!brainDump ? colors.ink : colors.mist} />
+              <Text style={[type.label, styles.modeTabText, !brainDump && styles.modeTabTextActive]}>
+                QUICK NOTE
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={() => setBrainDump(true)}
+              style={[styles.modeTab, brainDump && styles.modeTabActive]}
+              hitSlop={8}
+            >
+              <Ionicons name="bulb-outline" size={13} color={brainDump ? colors.ink : colors.mist} />
+              <Text style={[type.label, styles.modeTabText, brainDump && styles.modeTabTextActive]}>
+                BRAIN DUMP
+              </Text>
+            </Pressable>
+          </View>
+
           <TextInput
             value={displayText}
             onChangeText={(value) => {
@@ -253,7 +303,13 @@ export default function CaptureScreen() {
                 voice.clearError();
               }
             }}
-            placeholder={listening ? 'Listening…' : 'Speak or type'}
+            placeholder={
+              listening
+                ? 'Listening…'
+                : brainDump
+                  ? 'Dump all thoughts, tasks, purchases & reminders here…'
+                  : 'Speak or type'
+            }
             placeholderTextColor={colors.mist}
             style={styles.input}
             multiline
@@ -335,6 +391,27 @@ export default function CaptureScreen() {
                 </Pressable>
               </View>
             </View>
+            {saved.wasBrainDump && saved.memories.length > 1 ? (
+              <View style={styles.brainDumpBadge}>
+                <Ionicons name="sparkles" size={13} color={colors.moss} />
+                <Text style={[type.stamp, styles.brainDumpText]}>
+                  BRAIN DUMP PARSED {saved.memories.length} DISTINCT ITEMS
+                </Text>
+              </View>
+            ) : null}
+            {saved.memories
+              .filter((m) => m.type === 'purchase' && m.amount !== null)
+              .map((pm) => (
+                <View key={`exp-${pm.id}`} style={styles.expensePill}>
+                  <Ionicons name="card-outline" size={14} color={colors.graphite} />
+                  <Text style={[type.stamp, styles.expensePillText]}>
+                    RECORDED TO EXPENSES · {pm.currency ?? '₹'}{pm.amount} ({pm.category})
+                  </Text>
+                  <Pressable onPress={() => router.push('/(tabs)/expense-home')} hitSlop={8}>
+                    <Text style={[type.label, styles.expenseLink]}>VIEW ›</Text>
+                  </Pressable>
+                </View>
+              ))}
             {saved.memories.map((memory) => (
               <MemoryRow key={memory.id} memory={memory} gutter="date" />
             ))}
@@ -518,5 +595,66 @@ function makeStyles(colors: Colors) {
     },
     pendingWhy: { flex: 1, color: colors.alert },
     firstRun: { maxWidth: 320, marginTop: 8 },
+    modeToggleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginBottom: 2,
+    },
+    modeTab: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      paddingVertical: 5,
+      paddingHorizontal: 10,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: colors.rule,
+    },
+    modeTabActive: {
+      backgroundColor: colors.surface,
+      borderColor: colors.graphite,
+    },
+    modeTabText: {
+      color: colors.mist,
+      fontSize: 10.5,
+    },
+    modeTabTextActive: {
+      color: colors.ink,
+      fontWeight: '600',
+    },
+    brainDumpBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingVertical: 4,
+      paddingHorizontal: 8,
+      borderRadius: 4,
+      backgroundColor: colors.surface,
+      marginBottom: 6,
+    },
+    brainDumpText: {
+      color: colors.moss,
+      fontWeight: '600',
+    },
+    expensePill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 8,
+      paddingVertical: 6,
+      paddingHorizontal: 10,
+      borderRadius: 6,
+      backgroundColor: colors.surface,
+      marginBottom: 6,
+    },
+    expensePillText: {
+      flex: 1,
+      color: colors.ink,
+      fontWeight: '500',
+    },
+    expenseLink: {
+      color: colors.graphite,
+    },
   });
 }

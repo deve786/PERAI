@@ -253,7 +253,7 @@ export async function extractMemories(
   text: string,
   nowISO: string,
   knownPeople: string[] = [],
-  options: { retries?: number } = {}
+  options: { retries?: number; brainDump?: boolean } = {}
 ): Promise<MemoryDraft[]> {
   const trimmed = text.trim();
   if (!trimmed) return [];
@@ -262,6 +262,10 @@ export async function extractMemories(
     weekday: 'long',
   });
 
+  const brainDumpHeader = options.brainDump
+    ? `\n[BRAIN DUMP MODE: Stream of consciousness. Decompose every single task, reminder, expense/purchase, upcoming appointment, wishlist/watchlist item, or life event into its own atomic entry. Do not omit any intention.]\n\n`
+    : '';
+
   const body = (
     await requestJson({
       model: EXTRACT_MODEL,
@@ -269,6 +273,7 @@ export async function extractMemories(
       user:
         `Current local time: ${localTimestamp(nowISO)} (${weekday})\n\n` +
         (knownPeople.length > 0 ? `People already known: ${knownPeople.join(', ')}\n\n` : '') +
+        brainDumpHeader +
         `Note:\n${trimmed}`,
       schemaName: 'extracted_memories',
       schema: EXTRACTION_SCHEMA,

@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { DraftCard } from '@/components/DraftCard';
 import { insertMemory, rememberSpelling } from '@/db/queries';
+import { recordVoiceExpense } from '@/expense/voiceExpense';
 import { logOk } from '@/log';
 import { clearDrafts, removeDraft, updateDraft, usePendingDrafts } from '@/draftStore';
 import { useTheme } from '@/ThemeContext';
@@ -55,6 +56,19 @@ export default function PreviewScreen() {
       logOk('Learned your spelling', `${before} → ${entry.draft.title}`);
     }
     await insertMemory(entry.draft, rawInput);
+    if (entry.draft.type === 'purchase' && entry.draft.amount !== null && entry.draft.amount > 0) {
+      try {
+        await recordVoiceExpense({
+          title: entry.draft.title,
+          category: entry.draft.category,
+          eventDate: entry.draft.eventDate,
+          amount: entry.draft.amount,
+          rawInput,
+        });
+      } catch (err) {
+        console.warn('Could not record expense from draft preview:', err);
+      }
+    }
   }
 
   async function save(key: string) {

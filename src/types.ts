@@ -63,6 +63,8 @@ export interface Memory {
   repeat: Repeat | null;
   /** Last change to this entry, and what sync compares. */
   updatedAt: string;
+  /** Linked ID in Expense tracker if this purchase was saved as an expense. */
+  expenseId?: string;
 }
 
 /**

@@ -2,6 +2,7 @@ import { canSearch } from './ai/spelling';
 import { extractMemories } from './ai/extract';
 import { getSpellings, insertMemory, queueTitleCheck } from './db/queries';
 import { lookupSpelling, spellingKey, type Spelling } from './dictionary';
+import { recordVoiceExpense } from './expense/voiceExpense';
 import type { Memory } from './types';
 
 export interface FilingContext {
@@ -9,6 +10,8 @@ export interface FilingContext {
   people?: string[];
   /** Titles already on the play/watch/wish lists — free, exact spellings. */
   listTitles?: string[];
+  /** Whether the user enabled continuous brain-dump extraction mode. */
+  isBrainDump?: boolean;
 }
 
 /**
@@ -29,6 +32,7 @@ export async function fileNote(text: string, context: FilingContext = {}): Promi
     // schedule. Waiting out a rate limit in front of the person is the one
     // thing that must not happen.
     retries: 0,
+    brainDump: context.isBrainDump,
   });
 
   const recorded: Spelling[] = (context.listTitles ?? []).map((title) => ({
@@ -45,6 +49,24 @@ export async function fileNote(text: string, context: FilingContext = {}): Promi
       remembered ? { ...draft, title: remembered } : draft,
       text
     );
+
+    // If this entry is a purchase with a valid amount, seamlessly record it
+    // into the Expense Tracker database so voice purchases are immediately accounted for.
+    if (draft.type === 'purchase' && draft.amount !== null && draft.amount > 0) {
+      try {
+        const expenseId = await recordVoiceExpense({
+          title: memory.title,
+          category: memory.category,
+          eventDate: memory.eventDate,
+          amount: draft.amount,
+          rawInput: text,
+        });
+        memory.expenseId = expenseId;
+      } catch (err) {
+        console.warn('Could not auto-record expense for purchase:', err);
+      }
+    }
+
     memories.push(memory);
 
     // Worth a search only for a name, and only when the app has not already
