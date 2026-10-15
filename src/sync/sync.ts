@@ -52,7 +52,14 @@ async function push(userId: string): Promise<number> {
     if (rows.length === 0) return sent;
 
     const payload = rows.map((row) => ({ ...toRemote(readLocal(row)), user_id: userId }));
-    const { error } = await getSupabase().from('memories').upsert(payload, { onConflict: 'id' });
+    let { error } = await getSupabase().from('memories').upsert(payload, { onConflict: 'id' });
+    if (error && error.message.includes("'repeat'")) {
+      // Remote Supabase schema may not have had the repeat column added yet;
+      // retry without it so existing records still sync successfully.
+      const fallbackPayload = payload.map(({ repeat, ...rest }) => rest);
+      const retry = await getSupabase().from('memories').upsert(fallbackPayload, { onConflict: 'id' });
+      error = retry.error;
+    }
     if (error) throw new Error(error.message);
 
     // Only clear the flag on rows that have not changed again while in flight.

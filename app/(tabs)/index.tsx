@@ -1,4 +1,5 @@
 import { useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useState } from 'react';
 import {
   KeyboardAvoidingView,
@@ -11,7 +12,6 @@ import {
   View,
 } from 'react-native';
 import { describeError, hasApiKey } from '@/ai/client';
-import { appVersion } from '@/appVersion';
 import { ComposeButton, type ComposeMode } from '@/components/ComposeButton';
 import { MemoryRow } from '@/components/MemoryRow';
 import { Section } from '@/components/Section';
@@ -213,8 +213,31 @@ export default function CaptureScreen() {
     >
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <View style={styles.titleRow}>
-          <Text style={type.display}>What happened?</Text>
           <View style={styles.titleActions}>
+            <Pressable
+              onPress={() => router.push('/today')}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel="Today"
+            >
+              <Ionicons name="today-outline" size={22} color={colors.graphite} />
+            </Pressable>
+            <Pressable
+              onPress={() => router.push('/lists')}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel="Lists"
+            >
+              <Ionicons name="bookmark-outline" size={22} color={colors.graphite} />
+            </Pressable>
+            <Pressable
+              onPress={() => router.push('/timeline')}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel="Timeline"
+            >
+              <Ionicons name="reorder-two-outline" size={22} color={colors.graphite} />
+            </Pressable>
             <SyncButton />
             <ThemeToggle />
           </View>
@@ -406,12 +429,6 @@ export default function CaptureScreen() {
             any of it later from the Ask tab.
           </Text>
         ) : null}
-
-        {/* The version line doubles as the way in to the activity log: the
-            place you look when something quietly did not work. */}
-        <Pressable onPress={() => router.push('/logs')} hitSlop={10} style={styles.versionRow}>
-          <Text style={[type.stamp, styles.version]}>PERAI {appVersion()} · ACTIVITY</Text>
-        </Pressable>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -431,11 +448,11 @@ function Notice({ children }: { children: React.ReactNode }) {
 function makeStyles(colors: Colors) {
   return StyleSheet.create({
     flex: { flex: 1, backgroundColor: colors.paper },
-    content: { flexGrow: 1, padding: SPACE.page, paddingTop: 72, paddingBottom: 28, gap: 22 },
+    content: { flexGrow: 1, padding: SPACE.page, paddingTop: 56, paddingBottom: 28, gap: 20 },
     titleRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'space-between',
+      justifyContent: 'flex-end',
     },
     titleActions: { flexDirection: 'row', alignItems: 'center', gap: 16 },
     composer: { gap: 14 },
@@ -501,8 +518,5 @@ function makeStyles(colors: Colors) {
     },
     pendingWhy: { flex: 1, color: colors.alert },
     firstRun: { maxWidth: 320, marginTop: 8 },
-    // Pinned to the bottom of the screen, out of the way of capturing.
-    versionRow: { marginTop: 'auto' },
-    version: { textAlign: 'center', color: colors.mist },
   });
 }

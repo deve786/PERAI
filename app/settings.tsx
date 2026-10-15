@@ -9,6 +9,7 @@ import { checkForOtaUpdate, updateInfo } from '@/expense/ota';
 import { ASK_MODEL, hasApiKey, testAiConnection } from '@/expense/ai/client';
 import { clearAiLogs, getAiLogs, subscribeAiLogs, type AiLogEntry } from '@/expense/ai/logger';
 import { NavRow } from '@/components/NavRow';
+import { APP_BUILD, APP_VERSION } from '@/appVersion';
 
 const SYMBOLS = ['₹', '$', '€', '£'];
 
@@ -39,7 +40,7 @@ export default function Settings() {
 
         <Section title="Monthly budget" />
         <T size={13.5} sub style={{ marginBottom: 10, lineHeight: 19 }}>
-          Sets the progress bar on Home. Leave empty for no budget.
+          Sets the progress bar on Expense. Leave empty for no budget.
         </T>
         <Row style={{ gap: 10, alignItems: 'flex-start' }}>
           <Field
@@ -96,20 +97,18 @@ export default function Settings() {
         <Section title="Updates" />
         <Row style={{ justifyContent: 'space-between', paddingVertical: 4 }}>
           <T size={13.5} sub>Version</T>
-          <T size={13.5} tabular>{info.runtimeVersion}</T>
-        </Row>
-        <Row style={{ justifyContent: 'space-between', paddingVertical: 4 }}>
-          <T size={13.5} sub>Channel</T>
-          <T size={13.5}>{info.channel}</T>
+          <T size={13.5} tabular>{APP_VERSION}</T>
         </Row>
         <Row style={{ justifyContent: 'space-between', paddingVertical: 4 }}>
           <T size={13.5} sub>Build</T>
-          <T size={13.5} tabular>{String(info.updateId).slice(0, 8)}</T>
+          <T size={13.5} tabular>{APP_BUILD}</T>
         </Row>
-        <Row style={{ justifyContent: 'space-between', paddingVertical: 4 }}>
-          <T size={13.5} sub>OTA update</T>
-          <T size={13.5} tabular>#{info.otaBuild}</T>
-        </Row>
+        {info.channel && info.channel !== 'n/a' ? (
+          <Row style={{ justifyContent: 'space-between', paddingVertical: 4 }}>
+            <T size={13.5} sub>Channel</T>
+            <T size={13.5}>{info.channel}</T>
+          </Row>
+        ) : null}
         <NavRow label="What's New" icon="sparkles-outline" onPress={() => router.push('/expense/whats-new')} />
         <Button
           title="Check for updates"

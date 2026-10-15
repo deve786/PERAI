@@ -1,12 +1,26 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import Constants from 'expo-constants';
 import { getSetting, setSetting } from '../db';
 
+function fromConfig(key: string): string {
+  const extra = Constants?.expoConfig?.extra as Record<string, string> | undefined;
+  return extra?.[key] ?? '';
+}
+
 export function supabaseUrl(): string {
-  return (process.env.EXPO_PUBLIC_EXPENSE_SUPABASE_URL ?? '').trim();
+  return (
+    fromConfig('expenseSupabaseUrl') ||
+    process.env.EXPO_PUBLIC_EXPENSE_SUPABASE_URL ||
+    ''
+  ).trim();
 }
 
 export function supabaseKey(): string {
-  return (process.env.EXPO_PUBLIC_EXPENSE_SUPABASE_ANON_KEY ?? '').trim();
+  return (
+    fromConfig('expenseSupabaseAnonKey') ||
+    process.env.EXPO_PUBLIC_EXPENSE_SUPABASE_ANON_KEY ||
+    ''
+  ).trim();
 }
 
 /** With no project configured, the app stays exactly as it was: local only. */

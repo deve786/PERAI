@@ -1,7 +1,10 @@
 import release from './release.json';
 
+export const APP_VERSION = release.version;
+export const APP_BUILD = release.build;
+
 /**
- * "1.2.0 · BUILD 6", shown at the bottom of the Record tab.
+ * Common version and build number, shown in Settings.
  *
  *  - The version changes only with a new app build or an update that adds a
  *    feature.

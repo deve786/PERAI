@@ -154,7 +154,7 @@ npm run build:android -- "what changed"      # new APK       1.3.0 (8) -> 1.4.0 
 
 ### Version numbers
 
-Shown at the bottom of the Record tab as `PERAI 1.2.0 · BUILD 6`.
+Shown in Settings under Updates (`Version` and `Build`).
 
 - **Build number** goes up on every release of any kind and never resets.
 - **Version** goes up only for a new build or a release marked `--feature`.

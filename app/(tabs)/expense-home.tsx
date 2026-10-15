@@ -9,6 +9,7 @@ import { budgetTone, useTheme } from '@/expense/theme';
 import { Button, Divider, Empty, Meter, Money, Row, Screen, Section, T } from '@/expense/ui';
 import { ExpenseItem } from '@/expense/ExpenseItem';
 import { IncomeItem } from '@/expense/IncomeItem';
+import { ExpenseSyncButton } from '@/components/ExpenseSyncButton';
 
 type Recent = { kind: 'expense'; row: ExpenseRow } | { kind: 'income'; row: IncomeRow };
 
@@ -67,7 +68,28 @@ export default function Home() {
   return (
     <Screen>
       <ScrollView contentContainerStyle={{ padding: 20, paddingTop: 12, paddingBottom: 40 }}>
-        <T size={14} sub>{monthName(month0)} {year}</T>
+        <Row style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+          <T size={14} sub>{monthName(month0)} {year}</T>
+          <Row style={{ gap: 16, alignItems: 'center' }}>
+            <Pressable
+              onPress={() => router.push('/expense-history')}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel="Expense history"
+            >
+              <Ionicons name="receipt-outline" size={21} color={c.sub} />
+            </Pressable>
+            <Pressable
+              onPress={() => router.push('/expense-analytics')}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel="Expense analytics"
+            >
+              <Ionicons name="stats-chart-outline" size={21} color={c.sub} />
+            </Pressable>
+            <ExpenseSyncButton />
+          </Row>
+        </Row>
         <T size={48} weight="700" tabular style={{ marginTop: 2, letterSpacing: -1.6 }}>
           {fmtMoney(total, symbol)}
         </T>
