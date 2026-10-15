@@ -9,7 +9,6 @@ import { budgetTone, useTheme } from '@/expense/theme';
 import { Button, Divider, Empty, Meter, Money, Row, Screen, Section, T } from '@/expense/ui';
 import { ExpenseItem } from '@/expense/ExpenseItem';
 import { IncomeItem } from '@/expense/IncomeItem';
-import { ModeToggle } from '@/components/ModeToggle';
 
 type Recent = { kind: 'expense'; row: ExpenseRow } | { kind: 'income'; row: IncomeRow };
 
@@ -68,10 +67,7 @@ export default function Home() {
   return (
     <Screen>
       <ScrollView contentContainerStyle={{ padding: 20, paddingTop: 12, paddingBottom: 40 }}>
-        <Row style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-          <T size={14} sub>{monthName(month0)} {year}</T>
-          <ModeToggle />
-        </Row>
+        <T size={14} sub>{monthName(month0)} {year}</T>
         <T size={48} weight="700" tabular style={{ marginTop: 2, letterSpacing: -1.6 }}>
           {fmtMoney(total, symbol)}
         </T>
@@ -150,7 +146,7 @@ export default function Home() {
           <T size={13.5} weight="600" style={{ color: c.good }}>Add income</T>
         </Pressable>
 
-        <Section title="Recent" right={<T size={14} sub onPress={() => router.push('/expense/history')}>See all</T>} />
+        <Section title="Recent" right={<T size={14} sub onPress={() => router.push('/expense-history')}>See all</T>} />
         {recent.length === 0 ? (
           <Empty title="Nothing yet" hint="Add an expense or income entry to start tracking." />
         ) : (

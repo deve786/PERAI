@@ -26,6 +26,14 @@ import { useMemories } from '@/useMemories';
 import { knownPeople } from '@/speechText';
 import { useVoiceInput } from '@/useVoiceInput';
 
+// Prompts that work even on day one, before any week-of-data facts exist.
+const TRY_ASKING = [
+  'How much did I spend this month?',
+  'What was my biggest expense last month?',
+  'Compare this month with last month',
+  'Where am I spending the most?',
+];
+
 /** Which source(s) a found answer actually drew on — memories, Expense data, or both. */
 function sourceLabel(result: AskResult): string {
   const { evidence, usedExpenseData } = result;
@@ -331,6 +339,22 @@ export default function AskScreen() {
               >
                 <Text style={[type.figure, styles.factFigure]}>{fact.figure}</Text>
                 <Text style={type.body}>{fact.text}</Text>
+              </Pressable>
+            ))}
+          </Section>
+        ) : null}
+
+        {idle ? (
+          <Section label="TRY ASKING" inset={false}>
+            {TRY_ASKING.map((q) => (
+              <Pressable
+                key={q}
+                onPress={() => void ask(q)}
+                disabled={!configured || mode !== 'voice'}
+                style={({ pressed }) => [styles.recent, pressed && styles.pressed]}
+                accessibilityHint={`Asks: ${q}`}
+              >
+                <Text style={type.body}>{q}</Text>
               </Pressable>
             ))}
           </Section>

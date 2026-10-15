@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Alert, Pressable, ScrollView, View } from 'react-native';
+import { Alert, ScrollView, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme, type ThemeMode } from '@/expense/theme';
@@ -8,31 +8,12 @@ import { exportCsv } from '@/expense/csv';
 import { checkForOtaUpdate, updateInfo } from '@/expense/ota';
 import { ASK_MODEL, hasApiKey, testAiConnection } from '@/expense/ai/client';
 import { clearAiLogs, getAiLogs, subscribeAiLogs, type AiLogEntry } from '@/expense/ai/logger';
-import { useAppMode } from '@/AppModeContext';
+import { NavRow } from '@/components/NavRow';
 
 const SYMBOLS = ['₹', '$', '€', '£'];
 
-function NavRow({ label, icon, onPress }: { label: string; icon: keyof typeof Ionicons.glyphMap; onPress: () => void }) {
-  const { c } = useTheme();
-  return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      style={({ pressed }) => ({
-        flexDirection: 'row', alignItems: 'center', gap: 13, paddingVertical: 15,
-        borderBottomWidth: 1, borderBottomColor: c.line, opacity: pressed ? 0.55 : 1,
-      })}
-    >
-      <Ionicons name={icon} size={19} color={c.sub} />
-      <T size={15} style={{ flex: 1 }}>{label}</T>
-      <Ionicons name="chevron-forward" size={17} color={c.faint} />
-    </Pressable>
-  );
-}
-
 export default function Settings() {
   const { c, mode, setMode, symbol, setSymbol, budget, setBudget } = useTheme();
-  const { setMode: setAppMode } = useAppMode();
   const router = useRouter();
   const [budgetText, setBudgetText] = useState(budget ? String(budget) : '');
   const [aiLogs, setAiLogs] = useState<AiLogEntry[]>(() => getAiLogs());
@@ -46,20 +27,15 @@ export default function Settings() {
     });
   }, []);
 
-
   return (
     <Screen>
       <ScrollView contentContainerStyle={{ padding: 20, paddingTop: 12, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
         <Title>Settings</Title>
 
-        <NavRow
-          label="Switch to PERAI"
-          icon="mic-outline"
-          onPress={() => {
-            setAppMode('perai');
-            router.replace('/');
-          }}
-        />
+        <Section title="Backup" />
+        <Divider />
+        <NavRow label="Record backup" icon="mic-outline" onPress={() => router.push('/account')} />
+        <NavRow label="Expense backup" icon="cloud-upload-outline" onPress={() => router.push('/expense/account')} />
 
         <Section title="Monthly budget" />
         <T size={13.5} sub style={{ marginBottom: 10, lineHeight: 19 }}>
@@ -101,7 +77,6 @@ export default function Settings() {
 
         <Section title="Manage" />
         <Divider />
-        <NavRow label="Backup" icon="cloud-upload-outline" onPress={() => router.push('/expense/account')} />
         <NavRow label="Categories" icon="pricetags-outline" onPress={() => router.push('/expense/categories')} />
         <NavRow label="Recurring expenses" icon="repeat-outline" onPress={() => router.push('/expense/recurring')} />
         <NavRow
@@ -116,6 +91,7 @@ export default function Settings() {
             }
           }}
         />
+        <NavRow label="Activity log" icon="pulse-outline" onPress={() => router.push('/logs')} />
 
         <Section title="Updates" />
         <Row style={{ justifyContent: 'space-between', paddingVertical: 4 }}>
@@ -246,7 +222,7 @@ export default function Settings() {
         </View>
 
         <T size={12.5} faint style={{ marginTop: 28, textAlign: 'center', lineHeight: 18 }}>
-          Spendly keeps every expense on this device.{'\n'}Turn on Backup to also keep a copy in your account.
+          One app, two records — your memories and your expenses each keep their own backup.
         </T>
         <View style={{ height: 8, backgroundColor: c.bg }} />
       </ScrollView>

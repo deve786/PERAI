@@ -8,7 +8,7 @@ import {
   IBMPlexSans_600SemiBold,
   useFonts,
 } from '@expo-google-fonts/ibm-plex-sans';
-import { Stack, useRouter } from 'expo-router';
+import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
@@ -18,7 +18,6 @@ import { getSetting } from '@/db/queries';
 import { startOverdueSweep } from '@/overdue';
 import { startReminderSync } from '@/reminders';
 import { SPEECH_LANGUAGE_KEY, setSpeechLanguage } from '@/speechSession';
-import { AppModeProvider, APP_MODE_KEY } from '@/AppModeContext';
 import { ThemeProvider, useTheme } from '@/ThemeContext';
 import { ThemeProvider as ExpenseThemeProvider } from '@/expense/theme';
 import { COLORS, SPACE, TYPE } from '@/theme';
@@ -85,11 +84,9 @@ export default function RootLayout() {
 
   return (
     <ThemeProvider>
-      <AppModeProvider>
-        <ExpenseThemeProvider>
-          <ThemedApp />
-        </ExpenseThemeProvider>
-      </AppModeProvider>
+      <ExpenseThemeProvider>
+        <ThemedApp />
+      </ExpenseThemeProvider>
     </ThemeProvider>
   );
 }
@@ -97,20 +94,7 @@ export default function RootLayout() {
 /** Split out so it can call `useTheme()` — only valid inside ThemeProvider. */
 function ThemedApp() {
   const { colors, scheme } = useTheme();
-  const router = useRouter();
   useExpenseSync();
-
-  // Resume whichever mode was active last time, once, on a cold launch —
-  // a live switch is handled directly by ModeToggle, not this effect.
-  useEffect(() => {
-    let cancelled = false;
-    void getSetting(APP_MODE_KEY).then((saved) => {
-      if (!cancelled && saved === 'expense') router.replace('/expense');
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [router]);
 
   return (
     <>
@@ -122,12 +106,17 @@ function ThemedApp() {
         }}
       >
         <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="today" />
+        <Stack.Screen name="lists" />
+        <Stack.Screen name="timeline" />
+        <Stack.Screen name="expense-history" />
+        <Stack.Screen name="expense-analytics" />
+        <Stack.Screen name="settings" />
         <Stack.Screen name="preview" options={{ presentation: 'modal' }} />
         <Stack.Screen name="account" options={{ presentation: 'modal' }} />
         <Stack.Screen name="logs" options={{ presentation: 'modal' }} />
         <Stack.Screen name="review" options={{ presentation: 'modal' }} />
         <Stack.Screen name="entry/[id]" options={{ presentation: 'modal' }} />
-        <Stack.Screen name="expense/(tabs)" />
         <Stack.Screen name="expense/expense" options={{ presentation: 'modal' }} />
         <Stack.Screen name="expense/income" options={{ presentation: 'modal' }} />
         <Stack.Screen name="expense/recurring" options={{ presentation: 'modal' }} />

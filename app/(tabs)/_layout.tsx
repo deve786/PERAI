@@ -5,12 +5,12 @@ import { useTheme } from '@/ThemeContext';
 import { FONTS } from '@/theme';
 
 /**
- * Icons survive the minimalist pass only here, where they earn their place:
- * a tab bar needs a glanceable target and the label alone is a small hit.
- * Everywhere else category and type are typographic.
- *
- * "Timeline" rather than "Archive" — a memory can have status `archived`, and
- * the interface should not use that word for something else.
+ * One combined tab bar for the whole app — PERAI's own screens and Expense's
+ * sit side by side, not behind a mode switch. Only the most frequent action
+ * from each side gets a primary slot (Record, Home); everything else is one
+ * tap away through More, same as before when it lived behind Settings'
+ * "Manage" section — this just makes that the front door instead of the
+ * mode-switch toggle.
  */
 export default function TabsLayout() {
   const { colors } = useTheme();
@@ -47,29 +47,11 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
-        name="today"
+        name="expense-home"
         options={{
-          title: 'TODAY',
+          title: 'HOME',
           tabBarIcon: ({ color }) => (
-            <Ionicons name="today-outline" size={18} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="lists"
-        options={{
-          title: 'LISTS',
-          tabBarIcon: ({ color }) => (
-            <Ionicons name="bookmark-outline" size={18} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="timeline"
-        options={{
-          title: 'TIMELINE',
-          tabBarIcon: ({ color }) => (
-            <Ionicons name="reorder-two-outline" size={20} color={color} />
+            <Ionicons name="home-outline" size={18} color={color} />
           ),
         }}
       />
@@ -79,6 +61,15 @@ export default function TabsLayout() {
           title: 'ASK',
           tabBarIcon: ({ color }) => (
             <Ionicons name="search-outline" size={18} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="more"
+        options={{
+          title: 'MORE',
+          tabBarIcon: ({ color }) => (
+            <Ionicons name="ellipsis-horizontal" size={20} color={color} />
           ),
         }}
       />
