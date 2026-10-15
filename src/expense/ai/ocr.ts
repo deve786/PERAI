@@ -17,7 +17,7 @@ export interface ScannedReceipt {
   items: ScannedItem[];
 }
 
-const OCR_MODEL = process.env.EXPO_PUBLIC_GEMINI_OCR_MODEL || 'gemini-2.5-flash';
+const OCR_MODEL = process.env.EXPO_PUBLIC_GEMINI_OCR_MODEL || 'gemini-3.5-flash-lite';
 
 const OCR_SYSTEM_PROMPT = `You are an expert receipt and invoice analyzer.
 Analyze the provided image of a receipt, bill, or invoice and extract structured financial data accurately.

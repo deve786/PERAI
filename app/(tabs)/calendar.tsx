@@ -180,43 +180,44 @@ export default function CalendarScreen() {
         daysRange={14}
       />
 
-      {/* Day Overview Summary Pills */}
-      <View style={styles.summaryBar}>
-        <View style={styles.summaryItem}>
-          <Text style={[type.stamp, styles.summaryLabel]}>TASKS</Text>
-          <Text style={[type.label, styles.summaryValue]}>
-            {isViewingToday
-              ? `${plan.today.length + plan.overdue.length} items`
-              : `${selectedDateMemories.length} items`}
-          </Text>
+      {/* Day Overview — only when scrubbed away from today, since the Daily
+          Briefing above already summarizes today's tasks and spending. */}
+      {!isViewingToday ? (
+        <View style={styles.summaryBar}>
+          <View style={styles.summaryItem}>
+            <Text style={[type.stamp, styles.summaryLabel]}>TASKS</Text>
+            <Text style={[type.label, styles.summaryValue]}>
+              {selectedDateMemories.length} items
+            </Text>
+          </View>
+
+          <View style={styles.summaryDivider} />
+
+          <View style={styles.summaryItem}>
+            <Text style={[type.stamp, styles.summaryLabel]}>SPENT</Text>
+            <Text
+              style={[
+                type.label,
+                totalDaySpent > 0 ? styles.summarySpentActive : styles.summaryValue,
+              ]}
+            >
+              {totalDaySpent > 0 ? `${currencySymbol}${totalDaySpent}` : '₹0'}
+            </Text>
+          </View>
+
+          {totalDayIncome > 0 ? (
+            <>
+              <View style={styles.summaryDivider} />
+              <View style={styles.summaryItem}>
+                <Text style={[type.stamp, styles.summaryLabel]}>INCOME</Text>
+                <Text style={[type.label, styles.summaryIncomeActive]}>
+                  +{currencySymbol}{totalDayIncome}
+                </Text>
+              </View>
+            </>
+          ) : null}
         </View>
-
-        <View style={styles.summaryDivider} />
-
-        <View style={styles.summaryItem}>
-          <Text style={[type.stamp, styles.summaryLabel]}>SPENT</Text>
-          <Text
-            style={[
-              type.label,
-              totalDaySpent > 0 ? styles.summarySpentActive : styles.summaryValue,
-            ]}
-          >
-            {totalDaySpent > 0 ? `${currencySymbol}${totalDaySpent}` : '₹0'}
-          </Text>
-        </View>
-
-        {totalDayIncome > 0 ? (
-          <>
-            <View style={styles.summaryDivider} />
-            <View style={styles.summaryItem}>
-              <Text style={[type.stamp, styles.summaryLabel]}>INCOME</Text>
-              <Text style={[type.label, styles.summaryIncomeActive]}>
-                +{currencySymbol}{totalDayIncome}
-              </Text>
-            </View>
-          </>
-        ) : null}
-      </View>
+      ) : null}
 
       {/* ======================================================== */}
       {/* PERAI SECTION: Tasks, Reminders & Memories */}
@@ -260,16 +261,10 @@ export default function CalendarScreen() {
       {/* ======================================================== */}
       {/* EXPENSE SECTION: Financial entries for this day */}
       {/* ======================================================== */}
-      <View style={styles.sectionContainer}>
-        <View style={styles.sectionHeader}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <Ionicons name="wallet-outline" size={15} color={colors.moss} />
-            <Text style={[type.label, styles.sectionTitle]}>
-              EXPENSES {totalDaySpent > 0 ? `· ${currencySymbol}${totalDaySpent}` : ''}
-            </Text>
-          </View>
-
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+      <View style={styles.section}>
+        <View style={styles.sectionHead}>
+          <Text style={type.label}>EXPENSES</Text>
+          <View style={styles.sectionActions}>
             <Pressable
               onPress={() =>
                 router.push({
@@ -277,13 +272,10 @@ export default function CalendarScreen() {
                   params: { date: selectedDate },
                 })
               }
-              hitSlop={8}
-              style={styles.addSmallBtn}
+              hitSlop={10}
             >
-              <Ionicons name="add" size={14} color={colors.moss} />
-              <Text style={[type.label, styles.addSmallText]}>ADD</Text>
+              <Text style={[type.label, styles.actionLink]}>ADD</Text>
             </Pressable>
-
             <Pressable
               onPress={() =>
                 router.push({
@@ -291,46 +283,27 @@ export default function CalendarScreen() {
                   params: { scan: '1', date: selectedDate },
                 })
               }
-              hitSlop={8}
-              style={styles.addSmallBtn}
+              hitSlop={10}
             >
-              <Ionicons name="camera-outline" size={13} color={colors.moss} />
-              <Text style={[type.label, styles.addSmallText]}>SCAN</Text>
+              <Text style={[type.label, styles.actionLink]}>SCAN</Text>
             </Pressable>
           </View>
         </View>
+        <View style={styles.sectionRule} />
 
         {dayExpenses.length > 0 ? (
-          <View style={styles.expenseList}>
-            {dayExpenses.map((exp) => (
-              <ExpenseItem
-                key={exp.id}
-                e={exp}
-                showDate={false}
-                onDeleted={loadFinancialData}
-              />
-            ))}
-          </View>
+          dayExpenses.map((exp) => (
+            <ExpenseItem
+              key={exp.id}
+              e={exp}
+              showDate={false}
+              onDeleted={loadFinancialData}
+            />
+          ))
         ) : (
-          <View style={styles.emptyExpenseBox}>
-            <Text style={[type.body, styles.clearText]}>
-              No expenses recorded for this day.
-            </Text>
-            <Pressable
-              onPress={() =>
-                router.push({
-                  pathname: '/expense/expense',
-                  params: { date: selectedDate },
-                })
-              }
-              style={styles.quickAddLink}
-            >
-              <Ionicons name="add-circle-outline" size={15} color={colors.moss} />
-              <Text style={[type.label, { color: colors.moss }]}>
-                Add an expense for this date
-              </Text>
-            </Pressable>
-          </View>
+          <Text style={[type.body, styles.clearText]}>
+            No expenses recorded for this day.
+          </Text>
         )}
       </View>
 
@@ -338,49 +311,31 @@ export default function CalendarScreen() {
       {/* INCOME SECTION: If any income on this date */}
       {/* ======================================================== */}
       {dayIncome.length > 0 ? (
-        <View style={styles.sectionContainer}>
-          <View style={styles.sectionHeader}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Ionicons name="arrow-down-circle-outline" size={15} color={colors.moss} />
-              <Text style={[type.label, styles.sectionTitle]}>
-                INCOME · +{currencySymbol}{totalDayIncome}
-              </Text>
-            </View>
-          </View>
-          <View style={styles.expenseList}>
-            {dayIncome.map((inc) => (
-              <IncomeItem
-                key={inc.id}
-                e={inc}
-                showDate={false}
-                onDeleted={loadFinancialData}
-              />
-            ))}
-          </View>
-        </View>
+        <Section label={`INCOME · +${currencySymbol}${totalDayIncome}`}>
+          {dayIncome.map((inc) => (
+            <IncomeItem
+              key={inc.id}
+              e={inc}
+              showDate={false}
+              onDeleted={loadFinancialData}
+            />
+          ))}
+        </Section>
       ) : null}
 
       {/* ======================================================== */}
       {/* LOANS / BORROW & LEND: If any active loans on this date */}
       {/* ======================================================== */}
       {dayLoans.length > 0 ? (
-        <View style={styles.sectionContainer}>
-          <View style={styles.sectionHeader}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Ionicons name="people-outline" size={15} color={colors.alert} />
-              <Text style={[type.label, { color: colors.alert }]}>
-                LOANS & BORROWED
-              </Text>
-            </View>
-          </View>
+        <Section label="LOANS & BORROWED">
           {dayLoans.map((l) => (
             <Pressable
               key={l.id}
               onPress={() => router.push('/expense/borrow-lend')}
-              style={styles.loanCard}
+              style={({ pressed }) => [styles.loanRow, pressed && styles.loanRowPressed]}
             >
-              <View>
-                <Text style={[type.body, { fontWeight: '600', color: colors.ink }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={[type.body, { color: colors.ink }]} numberOfLines={1}>
                   {l.person_name} ({l.type === 'lent' ? 'Lent to them' : 'Borrowed'})
                 </Text>
                 <Text style={[type.label, { color: colors.graphite, marginTop: 2 }]}>
@@ -392,7 +347,7 @@ export default function CalendarScreen() {
               </Text>
             </Pressable>
           ))}
-        </View>
+        </Section>
       ) : null}
 
       {/* Feature 5: One-Tap Quick Snooze Modal */}
@@ -479,61 +434,38 @@ function makeStyles(colors: Colors) {
       height: 20,
       backgroundColor: colors.rule,
     },
-    sectionContainer: {
-      gap: 8,
+    section: {
+      gap: 4,
     },
-    sectionHeader: {
+    sectionHead: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      paddingBottom: 6,
+      marginBottom: 4,
+    },
+    sectionActions: {
+      flexDirection: 'row',
+      gap: 14,
+    },
+    actionLink: {
+      color: colors.mist,
+    },
+    sectionRule: {
+      height: StyleSheet.hairlineWidth,
+      backgroundColor: colors.rule,
+      marginBottom: 2,
+    },
+    loanRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+      paddingVertical: 11,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: colors.rule,
     },
-    sectionTitle: {
-      color: colors.moss,
-      fontSize: 11,
-      letterSpacing: 0.8,
-    },
-    addSmallBtn: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 3,
-      paddingVertical: 2,
-      paddingHorizontal: 6,
-      borderRadius: 4,
-      backgroundColor: colors.surface,
-      borderWidth: 1,
-      borderColor: colors.rule,
-    },
-    addSmallText: {
-      color: colors.moss,
-      fontSize: 10,
-      fontWeight: '600',
-    },
-    expenseList: {
-      gap: 0,
-    },
-    emptyExpenseBox: {
-      paddingVertical: 12,
-      gap: 8,
-    },
-    quickAddLink: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 6,
-      marginTop: 2,
-    },
-    loanCard: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      backgroundColor: colors.surface,
-      borderRadius: 6,
-      padding: 12,
-      borderWidth: 1,
-      borderColor: colors.rule,
-      marginTop: 6,
+    loanRowPressed: {
+      opacity: 0.55,
     },
     clearText: {
       maxWidth: 320,

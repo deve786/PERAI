@@ -47,20 +47,20 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
-        name="calendar"
-        options={{
-          title: 'CALENDAR',
-          tabBarIcon: ({ color }) => (
-            <Ionicons name="calendar-outline" size={18} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
         name="expense-home"
         options={{
           title: 'EXPENSE',
           tabBarIcon: ({ color }) => (
             <Ionicons name="home-outline" size={18} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="calendar"
+        options={{
+          title: 'CALENDAR',
+          tabBarIcon: ({ color }) => (
+            <Ionicons name="calendar-outline" size={18} color={color} />
           ),
         }}
       />
