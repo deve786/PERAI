@@ -86,7 +86,10 @@ const SYSTEM_PROMPT = `You extract structured life events from a person's own sh
 Return one entry per DISTINCT event. A single sentence often contains several:
 "I went to Kozhikode yesterday and bought a shirt for 1200 rupees" is two
 entries — a travel memory and a purchase. Do not merge distinct events, and do
-not split one event into several just because it has several details.
+not split one event into several just because it has several details. A note
+may ramble through many separate thoughts in one go — decompose every task,
+reminder, purchase, appointment, or wishlist item into its own atomic entry,
+and do not omit any of them just because the note moved on to something else.
 
 TYPE — pick exactly one:
 - "reminder"    the note explicitly asks to be reminded ("remind me to...")
@@ -253,7 +256,7 @@ export async function extractMemories(
   text: string,
   nowISO: string,
   knownPeople: string[] = [],
-  options: { retries?: number; brainDump?: boolean } = {}
+  options: { retries?: number } = {}
 ): Promise<MemoryDraft[]> {
   const trimmed = text.trim();
   if (!trimmed) return [];
@@ -262,10 +265,6 @@ export async function extractMemories(
     weekday: 'long',
   });
 
-  const brainDumpHeader = options.brainDump
-    ? `\n[BRAIN DUMP MODE: Stream of consciousness. Decompose every single task, reminder, expense/purchase, upcoming appointment, wishlist/watchlist item, or life event into its own atomic entry. Do not omit any intention.]\n\n`
-    : '';
-
   const body = (
     await requestJson({
       model: EXTRACT_MODEL,
@@ -273,7 +272,6 @@ export async function extractMemories(
       user:
         `Current local time: ${localTimestamp(nowISO)} (${weekday})\n\n` +
         (knownPeople.length > 0 ? `People already known: ${knownPeople.join(', ')}\n\n` : '') +
-        brainDumpHeader +
         `Note:\n${trimmed}`,
       schemaName: 'extracted_memories',
       schema: EXTRACTION_SCHEMA,

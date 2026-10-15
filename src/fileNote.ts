@@ -10,8 +10,6 @@ export interface FilingContext {
   people?: string[];
   /** Titles already on the play/watch/wish lists — free, exact spellings. */
   listTitles?: string[];
-  /** Whether the user enabled continuous brain-dump extraction mode. */
-  isBrainDump?: boolean;
 }
 
 /**
@@ -32,7 +30,6 @@ export async function fileNote(text: string, context: FilingContext = {}): Promi
     // schedule. Waiting out a rate limit in front of the person is the one
     // thing that must not happen.
     retries: 0,
-    brainDump: context.isBrainDump,
   });
 
   const recorded: Spelling[] = (context.listTitles ?? []).map((title) => ({

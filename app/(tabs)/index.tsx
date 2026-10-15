@@ -44,8 +44,6 @@ interface Saved {
   changed: { from: string; to: string }[];
   /** Linked expense IDs in Expense database */
   expenseIds?: string[];
-  /** Whether saved via continuous brain-dump mode */
-  wasBrainDump?: boolean;
 }
 
 function toDraft({ id, createdAt, confirmed, rawInput, ...draft }: Memory): MemoryDraft {
@@ -70,7 +68,6 @@ export default function CaptureScreen() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<Saved | null>(null);
-  const [brainDump, setBrainDump] = useState(false);
 
   const configured = hasApiKey();
 
@@ -98,7 +95,7 @@ export default function CaptureScreen() {
     setSaved(null);
     const started = Date.now();
     try {
-      const kept = await fileNote(note, { people, listTitles, isBrainDump: brainDump });
+      const kept = await fileNote(note, { people, listTitles });
 
       // Ask for notification permission here, the first time it matters —
       // right after saving something that is meant to remind you.
@@ -117,7 +114,6 @@ export default function CaptureScreen() {
         alerts,
         changed: [],
         expenseIds,
-        wasBrainDump: brainDump,
       });
       logOk(
         kept.length === 1 ? 'Saved an entry' : `Saved ${kept.length} entries`,
@@ -221,11 +217,9 @@ export default function CaptureScreen() {
 
   const status = saving || voice.stage === 'finishing'
     ? 'Saving'
-    : brainDump
-      ? 'Brain dump: say or write all tasks, purchases & reminders'
-      : typed
-        ? 'One line can hold several events'
-        : 'Tap the mic and say what happened';
+    : typed
+      ? 'One line can hold several events'
+      : 'Tap the mic and say what happened';
 
   const problem = voice.error ?? error;
   // The box shows what's being heard, live, while listening; your typed text
@@ -271,29 +265,6 @@ export default function CaptureScreen() {
         </View>
 
         <View style={styles.composer}>
-          <View style={styles.modeToggleRow}>
-            <Pressable
-              onPress={() => setBrainDump(false)}
-              style={[styles.modeTab, !brainDump && styles.modeTabActive]}
-              hitSlop={8}
-            >
-              <Ionicons name="flash-outline" size={13} color={!brainDump ? colors.ink : colors.mist} />
-              <Text style={[type.label, styles.modeTabText, !brainDump && styles.modeTabTextActive]}>
-                QUICK NOTE
-              </Text>
-            </Pressable>
-            <Pressable
-              onPress={() => setBrainDump(true)}
-              style={[styles.modeTab, brainDump && styles.modeTabActive]}
-              hitSlop={8}
-            >
-              <Ionicons name="bulb-outline" size={13} color={brainDump ? colors.ink : colors.mist} />
-              <Text style={[type.label, styles.modeTabText, brainDump && styles.modeTabTextActive]}>
-                BRAIN DUMP
-              </Text>
-            </Pressable>
-          </View>
-
           <TextInput
             value={displayText}
             onChangeText={(value) => {
@@ -306,9 +277,7 @@ export default function CaptureScreen() {
             placeholder={
               listening
                 ? 'Listening…'
-                : brainDump
-                  ? 'Dump all thoughts, tasks, purchases & reminders here…'
-                  : 'Speak or type'
+                : 'Speak or type — one note or a whole dump of them'
             }
             placeholderTextColor={colors.mist}
             style={styles.input}
@@ -391,11 +360,11 @@ export default function CaptureScreen() {
                 </Pressable>
               </View>
             </View>
-            {saved.wasBrainDump && saved.memories.length > 1 ? (
+            {saved.memories.length > 1 ? (
               <View style={styles.brainDumpBadge}>
                 <Ionicons name="sparkles" size={13} color={colors.moss} />
                 <Text style={[type.stamp, styles.brainDumpText]}>
-                  BRAIN DUMP PARSED {saved.memories.length} DISTINCT ITEMS
+                  PARSED {saved.memories.length} DISTINCT ITEMS
                 </Text>
               </View>
             ) : null}
@@ -595,34 +564,6 @@ function makeStyles(colors: Colors) {
     },
     pendingWhy: { flex: 1, color: colors.alert },
     firstRun: { maxWidth: 320, marginTop: 8 },
-    modeToggleRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
-      marginBottom: 2,
-    },
-    modeTab: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 5,
-      paddingVertical: 5,
-      paddingHorizontal: 10,
-      borderRadius: 16,
-      borderWidth: 1,
-      borderColor: colors.rule,
-    },
-    modeTabActive: {
-      backgroundColor: colors.surface,
-      borderColor: colors.graphite,
-    },
-    modeTabText: {
-      color: colors.mist,
-      fontSize: 10.5,
-    },
-    modeTabTextActive: {
-      color: colors.ink,
-      fontWeight: '600',
-    },
     brainDumpBadge: {
       flexDirection: 'row',
       alignItems: 'center',
