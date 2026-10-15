@@ -242,19 +242,22 @@ export default function BorrowLendScreen() {
             // Calculate due status
             let dueText = '';
             let isOverdue = false;
+            const givenVerb = isLent ? 'Gave' : isRequest ? 'Asked' : 'Took';
+            const dateGivenStr = `${givenVerb} ${prettyDate(item.date)}`;
+
             if (item.due_date && !isSettled) {
               if (item.due_date < today) {
                 isOverdue = true;
-                dueText = `Overdue (promised ${prettyDate(item.due_date)})`;
+                dueText = `${dateGivenStr} · Overdue (due ${prettyDate(item.due_date)})`;
               } else if (item.due_date === today) {
-                dueText = 'Due today!';
+                dueText = `${dateGivenStr} · Due today!`;
               } else {
-                dueText = `Due ${prettyDate(item.due_date)}`;
+                dueText = `${dateGivenStr} · Due ${prettyDate(item.due_date)}`;
               }
             } else if (isSettled && item.settled_at) {
-              dueText = `Settled on ${prettyDate(item.settled_at.slice(0, 10))}`;
+              dueText = `${dateGivenStr} · Settled ${prettyDate(item.settled_at.slice(0, 10))}`;
             } else {
-              dueText = `Recorded ${prettyDate(item.date)}`;
+              dueText = dateGivenStr;
             }
 
             return (

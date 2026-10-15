@@ -12,9 +12,10 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useTheme } from '@/ThemeContext';
 import { FONTS, SPACE, type Colors } from '@/theme';
-import { todayStr, addDays } from '@/expense/dates';
+import { todayStr, addDays, prettyDate, fromStr, toStr } from '@/expense/dates';
 import {
   saveBorrowLend,
   deleteBorrowLend,
@@ -46,8 +47,10 @@ export function BorrowLendModal({
   const [borrowType, setBorrowType] = useState<BorrowLendType>(initialType);
   const [amount, setAmount] = useState('');
   const [date, setDate] = useState(todayStr());
+  const [showDatePicker, setShowDatePicker] = useState(false);
   const [dueDate, setDueDate] = useState<string | null>(null);
   const [hasDueDate, setHasDueDate] = useState(false);
+  const [showDueDatePicker, setShowDueDatePicker] = useState(false);
   const [notes, setNotes] = useState('');
   const [status, setStatus] = useState<BorrowLendStatus>('active');
   const [knownUsers, setKnownUsers] = useState<TaggedUser[]>([]);
@@ -58,6 +61,8 @@ export function BorrowLendModal({
   }, [visible]);
 
   useEffect(() => {
+    setShowDatePicker(false);
+    setShowDueDatePicker(false);
     if (item) {
       setPersonName(item.person_name);
       setBorrowType(item.type);
@@ -242,6 +247,85 @@ export function BorrowLendModal({
               />
             </View>
 
+            {/* Date Given / Lent / Borrowed / Requested */}
+            <View style={styles.field}>
+              <Text style={type.label}>
+                {borrowType === 'lent'
+                  ? 'DATE GIVEN / LENT'
+                  : borrowType === 'borrowed'
+                  ? 'DATE RECEIVED / BORROWED'
+                  : 'DATE REQUESTED'}
+              </Text>
+              <View style={styles.dateSelectorRow}>
+                <Pressable
+                  onPress={() => {
+                    setDate(todayStr());
+                    setShowDatePicker(false);
+                  }}
+                  style={[
+                    styles.dateChip,
+                    date === todayStr() && styles.dateChipActive,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      type.fine,
+                      date === todayStr() ? styles.dateChipTextActive : styles.dateChipText,
+                    ]}
+                  >
+                    Today
+                  </Text>
+                </Pressable>
+
+                <Pressable
+                  onPress={() => {
+                    setDate(addDays(todayStr(), -1));
+                    setShowDatePicker(false);
+                  }}
+                  style={[
+                    styles.dateChip,
+                    date === addDays(todayStr(), -1) && styles.dateChipActive,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      type.fine,
+                      date === addDays(todayStr(), -1)
+                        ? styles.dateChipTextActive
+                        : styles.dateChipText,
+                    ]}
+                  >
+                    Yesterday
+                  </Text>
+                </Pressable>
+
+                <Pressable
+                  onPress={() => setShowDatePicker((prev) => !prev)}
+                  style={[
+                    styles.datePickerBtn,
+                    date !== todayStr() && date !== addDays(todayStr(), -1) && styles.datePickerBtnActive,
+                  ]}
+                >
+                  <Ionicons name="calendar-outline" size={14} color={colors.moss} />
+                  <Text style={[type.fine, styles.datePickerBtnText]}>
+                    {prettyDate(date)}
+                  </Text>
+                </Pressable>
+              </View>
+
+              {showDatePicker && (
+                <DateTimePicker
+                  value={fromStr(date)}
+                  mode="date"
+                  display={Platform.OS === 'ios' ? 'inline' : 'default'}
+                  onChange={(_, d) => {
+                    if (Platform.OS !== 'ios') setShowDatePicker(false);
+                    if (d) setDate(toStr(d));
+                  }}
+                />
+              )}
+            </View>
+
             {/* Due Date Options */}
             <View style={styles.field}>
               <View style={styles.dueToggleRow}>
@@ -251,6 +335,7 @@ export function BorrowLendModal({
                     if (hasDueDate) {
                       setHasDueDate(false);
                       setDueDate(null);
+                      setShowDueDatePicker(false);
                     } else {
                       quickDue(7);
                     }
@@ -266,22 +351,36 @@ export function BorrowLendModal({
               {hasDueDate && (
                 <View style={styles.quickDueRow}>
                   <Pressable onPress={() => quickDue(7)} style={styles.quickDueBtn}>
-                    <Text style={[type.label, styles.quickDueText]}>+7 DAYS</Text>
+                    <Text style={[type.label, styles.quickDueText]}>+7D</Text>
                   </Pressable>
                   <Pressable onPress={() => quickDue(14)} style={styles.quickDueBtn}>
-                    <Text style={[type.label, styles.quickDueText]}>+14 DAYS</Text>
+                    <Text style={[type.label, styles.quickDueText]}>+14D</Text>
                   </Pressable>
                   <Pressable onPress={() => quickDue(30)} style={styles.quickDueBtn}>
-                    <Text style={[type.label, styles.quickDueText]}>+30 DAYS</Text>
+                    <Text style={[type.label, styles.quickDueText]}>+30D</Text>
                   </Pressable>
-                  <TextInput
-                    value={dueDate ?? ''}
-                    onChangeText={setDueDate}
-                    placeholder="YYYY-MM-DD"
-                    placeholderTextColor={colors.mist}
-                    style={styles.dueDateInput}
-                  />
+                  <Pressable
+                    onPress={() => setShowDueDatePicker((prev) => !prev)}
+                    style={styles.dueDateBtn}
+                  >
+                    <Ionicons name="calendar-outline" size={14} color={colors.moss} />
+                    <Text style={[type.fine, styles.dueDateBtnText]}>
+                      {dueDate ? prettyDate(dueDate) : 'Pick Date'}
+                    </Text>
+                  </Pressable>
                 </View>
+              )}
+
+              {showDueDatePicker && hasDueDate && (
+                <DateTimePicker
+                  value={dueDate ? fromStr(dueDate) : fromStr(todayStr())}
+                  mode="date"
+                  display={Platform.OS === 'ios' ? 'inline' : 'default'}
+                  onChange={(_, d) => {
+                    if (Platform.OS !== 'ios') setShowDueDatePicker(false);
+                    if (d) setDueDate(toStr(d));
+                  }}
+                />
               )}
             </View>
 
@@ -434,6 +533,49 @@ function makeStyles(colors: Colors) {
     chipText: {
       color: colors.graphite,
     },
+    dateSelectorRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginTop: 4,
+    },
+    dateChip: {
+      paddingHorizontal: 12,
+      paddingVertical: 7,
+      borderRadius: 6,
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.rule,
+    },
+    dateChipActive: {
+      borderColor: colors.moss,
+      backgroundColor: colors.surface,
+    },
+    dateChipText: {
+      color: colors.graphite,
+    },
+    dateChipTextActive: {
+      color: colors.moss,
+      fontWeight: '600',
+    },
+    datePickerBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: 12,
+      paddingVertical: 7,
+      borderRadius: 6,
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.rule,
+    },
+    datePickerBtnActive: {
+      borderColor: colors.moss,
+    },
+    datePickerBtnText: {
+      color: colors.ink,
+      fontWeight: '500',
+    },
     dueToggleRow: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -457,17 +599,23 @@ function makeStyles(colors: Colors) {
       color: colors.graphite,
       fontSize: 10,
     },
-    dueDateInput: {
+    dueDateBtn: {
       flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
       backgroundColor: colors.surface,
       borderWidth: 1,
       borderColor: colors.rule,
       borderRadius: 6,
       paddingHorizontal: 8,
       paddingVertical: 6,
-      fontFamily: FONTS.mono,
-      fontSize: 12,
+    },
+    dueDateBtnText: {
       color: colors.ink,
+      fontWeight: '500',
+      fontSize: 12,
     },
     actionRow: {
       flexDirection: 'row',
