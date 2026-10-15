@@ -2,6 +2,7 @@ import { canSearch } from './ai/spelling';
 import { extractMemories } from './ai/extract';
 import { getSpellings, insertMemory, queueTitleCheck } from './db/queries';
 import { lookupSpelling, spellingKey, type Spelling } from './dictionary';
+import { getTitleLanguage } from './settings';
 import { recordVoiceExpense } from './expense/voiceExpense';
 import type { Memory } from './types';
 
@@ -25,7 +26,9 @@ export interface FilingContext {
  * Shared by saving on the Record tab and by the retry of a queued note.
  */
 export async function fileNote(text: string, context: FilingContext = {}): Promise<Memory[]> {
+  const titleLanguage = await getTitleLanguage();
   const drafts = await extractMemories(text, new Date().toISOString(), context.people ?? [], {
+    titleLanguage,
     // A failure here goes to the pending queue, which retries on its own
     // schedule. Waiting out a rate limit in front of the person is the one
     // thing that must not happen.

@@ -1,3 +1,4 @@
+import { normalizeQuery } from '../manglish';
 import { CATEGORIES, MEMORY_TYPES, type Category, type Memory, type MemoryType } from '../types';
 
 /**
@@ -186,11 +187,18 @@ export function selectRelevantMemories(
   now: Date = new Date(),
   limit: number = MAX_CONTEXT_MEMORIES
 ): RetrievalResult {
-  const range = guessDateRange(question, now);
-  const words = tokenize(question);
+  // Malayalam and Manglish are turned into their English equivalents first,
+  // so everything below — keywords, category hints, the date range — works on
+  // "last month expense" whether it was asked that way or as "kazhinja maasam
+  // chelavu". A plain English question passes through unchanged.
+  const normalized = normalizeQuery(question);
+  const asked = normalized.hits > 0 ? normalized.text : question;
+
+  const range = guessDateRange(asked, now);
+  const words = tokenize(asked);
   const stems = words.map(stem);
-  const categories = new Set(guessCategories(question, words));
-  const types = new Set(guessTypes(question));
+  const categories = new Set(guessCategories(asked, words));
+  const types = new Set(guessTypes(asked));
 
   const pool = range
     ? all.filter((memory) => {

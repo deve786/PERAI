@@ -17,7 +17,7 @@ import { initDatabase } from '@/db/client';
 import { getSetting } from '@/db/queries';
 import { startOverdueSweep } from '@/overdue';
 import { startReminderSync } from '@/reminders';
-import { SPEECH_LANGUAGE_KEY, setSpeechLanguage } from '@/speechSession';
+import { applySavedVoiceLanguage } from '@/settings';
 import { ThemeProvider, useTheme } from '@/ThemeContext';
 import { ThemeProvider as ExpenseThemeProvider } from '@/expense/theme';
 import { COLORS, SPACE, TYPE } from '@/theme';
@@ -42,7 +42,7 @@ export default function RootLayout() {
 
   // The recognizer follows the phone's own English unless a language was saved.
   useEffect(() => {
-    if (dbReady) void getSetting(SPEECH_LANGUAGE_KEY).then(setSpeechLanguage);
+    if (dbReady) void applySavedVoiceLanguage();
   }, [dbReady]);
 
   const [fontsReady] = useFonts({

@@ -13,6 +13,7 @@ import {
 import { DEFAULT_CURRENCY } from '../constants';
 import { localTimestamp } from '../format';
 import { EXTRACT_MODEL, requestJson } from './client';
+import type { TitleLanguage } from '../settings';
 
 /** Thrown when the model replied but we could not read a memory out of it. */
 export class ExtractionError extends Error {
@@ -149,7 +150,41 @@ NAMES — notes are often dictated, and speech recognition mishears names. When
 the user message lists people already known, and a name in the note is clearly
 a mishearing of one of them (it sounds alike, e.g. "Rahool" for "Rahul"), use
 the known spelling in people and title. Never swap in a known name for one that
-merely shares a letter or two; a new person keeps the name as written.`;
+merely shares a letter or two; a new person keeps the name as written.
+
+MALAYALAM AND MANGLISH — notes often come in Malayalam script, in romanised
+Malayalam ("Manglish"), or in a mix with English. Read them the same way, and
+never ask the person to rephrase.
+
+Time: innu/indu = today, innale = yesterday, nale = tomorrow, nale kazhinju /
+nalekkellam = the day after tomorrow, adutha aazhcha = next week, kazhinja
+aazhcha = last week, ee maasam = this month, kazhinja maasam = last month,
+raavile = morning, ucha / uchakku = noon, vykunneram = evening, raathri =
+night, manikku = o'clock. Days: njayar, tinkal, chovva, budhan, vyazham,
+velli, shani = Sunday to Saturday.
+
+Money: roopa / rupa / rs = rupees, pathu = 10, nooru = 100, irunooru = 200,
+munnooru = 300, anjuru = 500, ayiram = 1000, pathinayiram = 10,000, laksham =
+100,000. Counts multiply the scale: randu ayiram = 2000, moonu nooru = 300.
+onnara ayiram = 1500. "1.5k" = 1500. Give amount as a plain number, and
+currency "INR" unless another is named.
+
+Doing: poyi = went, vaangi = bought, kodutthu = gave, adichu = filled or paid,
+undu = there is, ormippikkanam = remind me, kazhikkanam = need to eat or take,
+chelavu = expense, chelavaayi = was spent, cheythu = did.
+
+Examples:
+"innale 500 roopa petrol adichu" -> one purchase, title "Petrol", amount 500,
+currency INR, category Travel, dateExpression "innale", eventDate yesterday.
+"nale vykunneram 4 manikku dentist appointment undu" -> one appointment, title
+"Dentist appointment", dateExpression "nale vykunneram 4 manikku", eventDate
+tomorrow at 16:00.
+"Rahul-oppam Kozhikode poyi, 1200 roopaykku jacket vaangi" -> two entries: a
+memory, title "Went to Kozhikode", people "Rahul", location "Kozhikode"; and a
+purchase, title "Jacket", amount 1200, currency INR, category Shopping.
+
+Everything above is about understanding the words. The rules on never
+inventing a field, and on using the exact enum values, apply unchanged.`;
 
 /** Pull the first JSON value out of a response that may be fenced or padded. */
 function looseJsonParse(raw: string): unknown {
@@ -256,7 +291,7 @@ export async function extractMemories(
   text: string,
   nowISO: string,
   knownPeople: string[] = [],
-  options: { retries?: number } = {}
+  options: { retries?: number; titleLanguage?: TitleLanguage } = {}
 ): Promise<MemoryDraft[]> {
   const trimmed = text.trim();
   if (!trimmed) return [];

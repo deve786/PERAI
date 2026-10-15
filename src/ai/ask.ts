@@ -2,7 +2,8 @@ import type { Memory } from '../types';
 import { CURRENCY_SYMBOLS } from '../constants';
 import { localTimestamp } from '../format';
 import { answerFromList, listQuestion } from '../listQuestion';
-import { ASK_MODEL, requestJson } from './client';
+import { needsTranslation, normalizeQuery } from '../manglish';
+import { ASK_MODEL, requestJson, requestText } from './client';
 import { MAX_CONTEXT_MEMORIES, selectRelevantMemories } from './retrieval';
 
 /** One exchange already in this conversation, oldest first. */
@@ -117,6 +118,12 @@ a paragraph:
 - Quote concrete dates, amounts and names from the memories rather than
   paraphrasing vaguely. Say "3 March 2026", not "recently".
 
+LANGUAGE — answer in the same language and script the question used. A
+question in Malayalam script is answered in Malayalam script; one in romanised
+Malayalam (Manglish) is answered the same way; an English question is answered
+in English. Dates, amounts and names stay exactly as they are recorded. The
+citation rules do not change.
+
 FOLLOWING ON — when a conversation is given, the question may lean on it:
 - "and the month before?", "what about movies?", "who was with me?" and "how
   much was that?" mean the earlier question again with one thing changed.
@@ -166,6 +173,29 @@ export function renderMemory(memory: Memory, ref: string): string {
   parts.push(`note: ${memory.rawInput}`);
 
   return parts.join('\n  ');
+}
+
+/**
+ * Turn a question the phone could not read into English search words.
+ *
+ * One short call, and only when on-device retrieval found nothing (see
+ * needsTranslation in src/manglish.ts). Returns '' on any failure, which
+ * leaves the question to be searched exactly as it was asked.
+ */
+async function translateToKeywords(question: string): Promise<string> {
+  try {
+    const answer = await requestText({
+      model: ASK_MODEL,
+      system:
+        'You turn a question into English search keywords. Reply with 3 to 8 words, space separated, nothing else — no sentence, no punctuation.',
+      user: question,
+      retries: 0,
+    });
+    return answer.trim().slice(0, 120);
+  } catch {
+    // Offline or out of quota: search the question as it was asked.
+    return '';
+  }
 }
 
 function looseJsonParse(raw: string): unknown {
@@ -232,10 +262,27 @@ export async function askAI(
   // question before it, so "and movies?" still knows what was being asked.
   const inContext = conversationQuery(trimmed, history);
 
-  const { memories, range } =
+  let { memories, range, hadKeywordMatch } =
     all.length > 0
       ? selectRelevantMemories(inContext, all, now, MAX_CONTEXT_MEMORIES)
-      : { memories: [] as Memory[], range: null };
+      : { memories: [] as Memory[], range: null, hadKeywordMatch: false };
+
+  // A question in Malayalam script, or in Manglish the glossary has never met,
+  // that matched nothing on the phone: worth one cheap call to turn it into
+  // English search words, then search again. A question that already found
+  // something — or that was plain English — never reaches here, so asking
+  // costs exactly what it did before.
+  if (all.length > 0 && needsTranslation(normalizeQuery(inContext), hadKeywordMatch ? 1 : 0)) {
+    const keywords = await translateToKeywords(inContext);
+    if (keywords) {
+      const retried = selectRelevantMemories(keywords, all, now, MAX_CONTEXT_MEMORIES);
+      if (retried.hadKeywordMatch) {
+        memories = retried.memories;
+        range = retried.range ?? range;
+        hadKeywordMatch = true;
+      }
+    }
+  }
 
   // "Which games are still to play" is a question about rows, not prose: the
   // phone can answer it exactly and at once, where a model takes seconds,

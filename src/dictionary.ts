@@ -7,13 +7,19 @@
  * Pure, so it is unit tested in plain Node. Storage lives in src/db/queries.ts.
  */
 
-/** The key a title is remembered under: sound-ish, free of spelling noise. */
+/**
+ * The key a title is remembered under: sound-ish, free of spelling noise.
+ *
+ * Malayalam script is kept rather than stripped. Dropping everything outside
+ * a-z would turn "രാഹുൽ" into an empty key, which would then match every
+ * other script title — one entry swallowing the lot.
+ */
 export function spellingKey(title: string): string {
   return title
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/[^a-z0-9ഀ-ൿ]+/g, ' ')
     .trim();
 }
 
@@ -32,12 +38,32 @@ export interface Spelling {
 export function lookupSpelling(title: string, known: Spelling[]): string | null {
   const key = spellingKey(title);
   if (!key) return null;
-  for (const entry of known) {
-    if (entry.heard === key || spellingKey(entry.correct) === key) {
-      return entry.correct === title ? null : entry.correct;
-    }
+
+  const match = (wanted: string): string | null => {
+    // A spelling someone was corrected *to* something else wins over one that
+    // merely is that spelling, or the chain would stop at itself.
+    for (const entry of known) if (entry.heard === wanted) return entry.correct;
+    for (const entry of known) if (spellingKey(entry.correct) === wanted) return entry.correct;
+    return null;
+  };
+
+  let found = match(key);
+  if (found === null) return null;
+
+  // Follow the chain to the one spelling everything points at: "രാഹുൽ" and
+  // "Rahool" and "Rahul" are one person, not three entries. Hop-limited, and
+  // it stops the moment a spelling points at itself, so a loop cannot hang.
+  const seen = new Set([key]);
+  for (let hop = 0; hop < 3; hop += 1) {
+    const nextKey = spellingKey(found);
+    if (seen.has(nextKey)) break;
+    seen.add(nextKey);
+    const onward = match(nextKey);
+    if (onward === null || onward === found) break;
+    found = onward;
   }
-  return null;
+
+  return found === title ? null : found;
 }
 
 /**

@@ -9,6 +9,16 @@ import { checkForOtaUpdate, updateInfo } from '@/expense/ota';
 import { ASK_MODEL, hasApiKey, testAiConnection } from '@/expense/ai/client';
 import { clearAiLogs, getAiLogs, subscribeAiLogs, type AiLogEntry } from '@/expense/ai/logger';
 import { NavRow } from '@/components/NavRow';
+import {
+  getTitleLanguage,
+  getVoiceLanguage,
+  setTitleLanguage,
+  setVoiceLanguage,
+  TITLE_LANGUAGES,
+  VOICE_LANGUAGES,
+  type TitleLanguage,
+  type VoiceLanguage,
+} from '@/settings';
 import { APP_BUILD, APP_VERSION } from '@/appVersion';
 
 const SYMBOLS = ['₹', '$', '€', '£'];
@@ -21,6 +31,25 @@ export default function Settings() {
   const [testingAi, setTestingAi] = useState(false);
   const info = updateInfo();
   const hasKey = hasApiKey();
+
+  /** null means the recognizer follows the phone, which is how it shipped. */
+  const [voice, setVoice] = useState<VoiceLanguage | null>(null);
+  const [titles, setTitles] = useState<TitleLanguage>('english');
+
+  useEffect(() => {
+    void getVoiceLanguage().then(setVoice);
+    void getTitleLanguage().then(setTitles);
+  }, []);
+
+  async function chooseVoice(language: VoiceLanguage | null) {
+    setVoice(language);
+    await setVoiceLanguage(language);
+  }
+
+  async function chooseTitles(language: TitleLanguage) {
+    setTitles(language);
+    await setTitleLanguage(language);
+  }
 
   useEffect(() => {
     return subscribeAiLogs(() => {
@@ -75,6 +104,46 @@ export default function Settings() {
             <Chip key={m} label={m[0].toUpperCase() + m.slice(1)} active={mode === m} onPress={() => setMode(m)} />
           ))}
         </Row>
+
+        {/* What the recognizer listens for. Malayalam spoken into the English
+            recognizer comes back in English letters, which the app reads. */}
+        <Section title="Voice language" />
+        <Row style={{ flexWrap: 'wrap' }}>
+          <Chip
+            label="Phone's own"
+            active={voice === null}
+            onPress={() => void chooseVoice(null)}
+          />
+          {VOICE_LANGUAGES.map((option) => (
+            <Chip
+              key={option.value}
+              label={option.label}
+              active={voice === option.value}
+              onPress={() => void chooseVoice(option.value)}
+            />
+          ))}
+        </Row>
+        <T size={12.5} sub style={{ marginTop: 6 }}>
+          {voice === null
+            ? 'Follows your phone. Malayalam spoken to it comes back in English letters.'
+            : VOICE_LANGUAGES.find((o) => o.value === voice)?.hint}
+        </T>
+
+        <Section title="Save titles in" />
+        <Row style={{ flexWrap: 'wrap' }}>
+          {TITLE_LANGUAGES.map((option) => (
+            <Chip
+              key={option.value}
+              label={option.label}
+              active={titles === option.value}
+              onPress={() => void chooseTitles(option.value)}
+            />
+          ))}
+        </Row>
+        <T size={12.5} sub style={{ marginTop: 6 }}>
+          Your note is always kept word for word, whichever you pick. Names are
+          never translated.
+        </T>
 
         <Section title="Manage" />
         <Divider />
