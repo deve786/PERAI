@@ -51,6 +51,19 @@ import {
   type LinkableExpense,
 } from '../src/expense/tripSpending';
 import { tripSpendQuestion } from '../src/tripQuestion';
+import { needsTranslation, normalizeMoney, normalizeQuery } from '../src/manglish';
+import {
+  changeLabel,
+  describeChange,
+  isDestructive,
+  MAX_BATCH,
+  snapshot,
+  undoPatch,
+  validateActions,
+  type ExpenseTarget,
+} from '../src/actions';
+import { looksLikeCommand } from '../src/ai/commandGate';
+
 
 import type { Category as ExpenseCategory } from '../src/expense/db';
 
@@ -1124,6 +1137,293 @@ section('asking what a trip cost');
   );
   check('an entry with no end date is never a trip', tripSpendQuestion('what did the haircut cost', all) === null);
   check('with nothing recorded there is nothing to match', tripSpendQuestion('how much did I spend on my Kozhikode trip', []) === null);
+}
+
+section('manglish: money words');
+{
+  const money = (text: string) => normalizeMoney(text);
+  check('a thousand', money('randu ayiram roopa') === '2000 roopa', money('randu ayiram roopa'));
+  check('a scale on its own', money('ayiram roopa') === '1000 roopa', money('ayiram roopa'));
+  check('five hundred as one word', money('anjuru roopa adichu') === '500 roopa adichu', money('anjuru roopa adichu'));
+  check('two hundred as one word', money('irunooru rupa') === '200 rupa');
+  check('a half thousand', money('onnara ayiram') === '1500', money('onnara ayiram'));
+  check('ten thousand', money('pathinayiram roopa') === '10000 roopa');
+  check('digits with a scale', money('5 ayiram') === '5000');
+  check('the k shorthand', money('1.5k petrol') === '1500 petrol', money('1.5k petrol'));
+  check('plain digits are left alone', money('500 roopa petrol adichu') === '500 roopa petrol adichu');
+  check('english is untouched', money('bought a shirt for 1200 rupees') === 'bought a shirt for 1200 rupees');
+}
+
+section('manglish: query normalization');
+{
+  const q = (text: string) => normalizeQuery(text);
+
+  check('yesterday', q('innale entha chelavaayathu').text.includes('yesterday'), q('innale entha chelavaayathu').text);
+  check('and the spending word', /spend|expense/.test(q('innale entha chelavaayathu').text));
+  check('last month', q('kazhinja maasam entha chelavaayathu').text.includes('last month'), q('kazhinja maasam entha chelavaayathu').text);
+  check('next week', q('adutha aazhcha enthokke undu').text.includes('next week'));
+  check('day after tomorrow', q('nale kazhinju dentist undu').text.includes('day after tomorrow'), q('nale kazhinju dentist undu').text);
+  check('when-questions', q('ente dentist appointment eppozha').text.includes('when'), q('ente dentist appointment eppozha').text);
+  check('how much', q('ethra roopa chelavaayi').text.includes('how much'), q('ethra roopa chelavaayi').text);
+  check('evening', q('nale vykunneram').text.includes('evening'));
+  check('bought', q('njan jacket vaangi').text.includes('bought'));
+
+  check('plain english is left exactly as it was', q('how much did i spend last month').hits === 0);
+  check('and is not rewritten', q('how much did i spend last month').text === 'how much did i spend last month');
+  check('an english question has nothing unknown', q('what did i buy yesterday').unknown.length === 0, q('what did i buy yesterday').unknown);
+
+  const script = q('ഇന്നലെ എത്ര ചെലവ്');
+  check('script is noticed', script.hadScript === true);
+  check('and the common words still translate', script.text.includes('yesterday') && script.text.includes('how much'), script.text);
+
+  const name = q('Rahul oppam Kozhikode poyi');
+  check('names are left alone', name.text.includes('rahul') && name.text.includes('kozhikode'), name.text);
+  check('and counted as unknown, not translated', name.unknown.includes('kozhikode'));
+  check('while the known words are read', name.text.includes('with') && name.text.includes('went'), name.text);
+}
+
+section('manglish: dates resolve from the glossary');
+{
+  // A fixed "now" so these never drift: Tuesday 13 October 2026, 14:00.
+  const now = new Date(2026, 9, 13, 14, 0);
+  const rangeFor = (question: string) => {
+    const normalized = normalizeQuery(question);
+    return guessDateRange(normalized.hits > 0 ? normalized.text : question, now);
+  };
+
+  const yesterday = rangeFor('innale entha chelavaayathu');
+  check('innale is yesterday', yesterday?.label === 'yesterday', yesterday?.label);
+  check('and covers that day only', yesterday?.from.getDate() === 12 && yesterday?.to.getDate() === 12);
+
+  check('innu is today', rangeFor('innu enthokke cheythu')?.label === 'today');
+  check('kazhinja maasam is last month', rangeFor('kazhinja maasam chelavu')?.label === 'last month', rangeFor('kazhinja maasam chelavu')?.label);
+  check('ee maasam is this month', rangeFor('ee maasam chelavu')?.label === 'this month');
+  check('kazhinja aazhcha is last week', rangeFor('kazhinja aazhcha enthokke')?.label === 'last week');
+  check('a question with no time word has no range', rangeFor('dentist appointment eppozha') === null);
+  check('english still works exactly as before', rangeFor('what did i spend last month')?.label === 'last month');
+}
+
+section('manglish: translating only when it is needed');
+{
+  const english = normalizeQuery('how much did i spend last month');
+  const manglish = normalizeQuery('kazhinja maasam entha chelavaayathu');
+  const script = normalizeQuery('ഇന്നലെ ഞാൻ എന്താണ് വാങ്ങിയത്');
+  const strange = normalizeQuery('enthokke sambhavichu avide pinne');
+
+  check('a question that found something never costs a call', needsTranslation(script, 3) === false);
+  check('plain english that found nothing still costs nothing', needsTranslation(english, 0) === false);
+  check('manglish the glossary read, that found nothing, costs nothing', needsTranslation(manglish, 0) === false);
+  check('script that found nothing is worth one call', needsTranslation(script, 0) === true);
+  check('unreadable manglish that found nothing is worth one call', needsTranslation(strange, 0) === true, strange.unknown);
+  check(
+    'a single strange word is a name, not a reason to translate',
+    needsTranslation(normalizeQuery('Kozhikode poyi'), 0) === false
+  );
+}
+
+section('spellings across scripts');
+{
+  const known = [
+    { heard: spellingKey('രാഹുൽ'), correct: 'Rahul' },
+    { heard: spellingKey('Rahool'), correct: 'Rahul' },
+  ];
+  check('script keeps its own key', spellingKey('രാഹുൽ').length > 0);
+  check('two script names do not collapse together', spellingKey('രാഹുൽ') !== spellingKey('കോഴിക്കോട്'));
+  check('the script form resolves to the canonical name', lookupSpelling('രാഹുൽ', known) === 'Rahul');
+  check('so does a misheard latin form', lookupSpelling('Rahool', known) === 'Rahul');
+  check('the canonical name needs no change', lookupSpelling('Rahul', known) === null);
+
+  // A later correction of the canonical name moves everything with it.
+  const chained = [...known, { heard: spellingKey('Rahul'), correct: 'Rahul Menon' }];
+  check('an alias follows the chain to the newest spelling', lookupSpelling('രാഹുൽ', chained) === 'Rahul Menon');
+  check('and a loop cannot hang it', lookupSpelling('A', [{ heard: spellingKey('A'), correct: 'B' }, { heard: spellingKey('B'), correct: 'A' }]) !== undefined);
+}
+
+section('instructions: telling one from a question');
+{
+  check('an english order is one', looksLikeCommand('mark the dentist done') === true);
+  check('so is adding something', looksLikeCommand('add gym tomorrow at 6') === true);
+  check('a question is not', looksLikeCommand('what did i spend last month') === false);
+  check('nor is one without a question mark', looksLikeCommand('how much is left in groceries') === false);
+
+  check('manglish puts its verb last', looksLikeCommand('dentist nale maattu') === true);
+  check('and finished is an order', looksLikeCommand('gym kazhinju') === true);
+  check('so is adding', looksLikeCommand('nale meeting cherkku') === true);
+  check('so is deleting', looksLikeCommand('aa entry delete cheyyu') === true);
+  check('script works too', looksLikeCommand('ഡെന്റിസ്റ്റ് മാറ്റു') === true);
+
+  check('a manglish question is still a question', looksLikeCommand('innale entha chelavaayathu') === false);
+  check('and so is asking when', looksLikeCommand('dentist appointment eppozha') === false);
+  check('the day after tomorrow is not "done"', looksLikeCommand('nale kazhinju dentist undu') === false);
+}
+
+section('instructions: what the app refuses');
+{
+  const now = new Date('2026-10-15T09:00:00+05:30');
+  const open = memory({
+    id: 'm1',
+    title: 'Dentist appointment',
+    eventDate: '2026-10-20T10:00:00+05:30',
+    dateExpression: 'next Tuesday at 10',
+    type: 'appointment',
+    priority: 'low',
+  });
+  const expense: ExpenseTarget = {
+    id: 'e1',
+    amount: 500,
+    cat_name: 'Food',
+    category_id: 'c1',
+    note: 'Dinner',
+    date: '2026-10-14',
+  };
+  const candidates = {
+    memories: [open],
+    expenses: [expense],
+    expenseCategories: ['Food', 'Travel'],
+  };
+
+  const unknownId = validateActions(
+    [{ kind: 'mark_done', entryId: 'M9' }],
+    candidates,
+    now
+  );
+  check('an id it was never shown is refused', unknownId.actions.length === 0, unknownId.refused);
+  check('and says why', unknownId.refused.length === 1, unknownId.refused);
+
+  const unknownKind = validateActions([{ kind: 'send_email', entryId: 'm1' }], candidates, now);
+  check('a kind that does not exist is refused', unknownKind.actions.length === 0);
+
+  const past = validateActions(
+    [{ kind: 'reschedule_entry', entryId: 'm1', newDate: '2026-10-01' }],
+    candidates,
+    now
+  );
+  check('a date already gone is refused', past.actions.length === 0, past.refused);
+
+  const askedForPast = validateActions(
+    [{ kind: 'reschedule_entry', entryId: 'm1', newDate: '2026-10-01' }],
+    candidates,
+    now,
+    true
+  );
+  check('unless it was plainly asked for', askedForPast.actions.length === 1);
+
+  const badPriority = validateActions(
+    [{ kind: 'change_priority', entryId: 'm1', newPriority: 'urgent' }],
+    candidates,
+    now
+  );
+  check('a priority that is not one is refused', badPriority.actions.length === 0);
+
+  const badAmount = validateActions(
+    [{ kind: 'edit_amount', expenseId: 'e1', newAmount: -5 }],
+    candidates,
+    now
+  );
+  check('a negative amount is refused', badAmount.actions.length === 0);
+
+  const strangeCategory = validateActions(
+    [{ kind: 'change_category', expenseId: 'e1', newCategory: 'Yachts' }],
+    candidates,
+    now
+  );
+  check('a category nobody has is refused', strangeCategory.actions.length === 0);
+
+  const entryCategory = validateActions(
+    [{ kind: 'change_category', entryId: 'm1', newCategory: 'Food' }],
+    candidates,
+    now
+  );
+  check('and an entry cannot take an expense category', entryCategory.actions.length === 0, entryCategory.refused);
+
+  const emptyAdd = validateActions([{ kind: 'add_entry', text: '  ' }], candidates, now);
+  check('adding nothing is refused', emptyAdd.actions.length === 0);
+}
+
+section('instructions: the cap on one batch');
+{
+  const now = new Date('2026-10-15T09:00:00+05:30');
+  const many = Array.from({ length: 30 }, (_, index) =>
+    memory({ id: `b${index}`, title: `Task ${index}`, eventDate: '2026-10-15T09:00:00+05:30' })
+  );
+  const result = validateActions(
+    [{ kind: 'mark_many_done', entryIds: many.map((m) => m.id) }],
+    { memories: many, expenses: [] },
+    now
+  );
+  check('no more than twenty at once', result.actions[0]?.memories.length === MAX_BATCH, result.actions[0]?.memories.length);
+  check('and it says it was trimmed', result.trimmed === true);
+}
+
+section('instructions: what the confirmation card shows');
+{
+  const now = new Date('2026-10-15T09:00:00+05:30');
+  const timed = memory({
+    id: 'm1',
+    title: 'Dentist appointment',
+    eventDate: '2026-10-20T10:00:00+05:30',
+    dateExpression: 'next Tuesday at 10',
+  });
+  const weekly = memory({
+    id: 'm2',
+    title: 'Gym',
+    eventDate: '2026-10-15T06:00:00+05:30',
+    repeat: 'weekly',
+  });
+  const candidates = { memories: [timed, weekly], expenses: [] };
+
+  const moved = validateActions(
+    [{ kind: 'reschedule_entry', entryId: 'm1', newDate: '2026-10-23', newTime: '16:30' }],
+    candidates,
+    now
+  ).actions[0];
+  const movedChange = describeChange(moved)[0];
+  check('the entry is named', movedChange.label === 'Dentist appointment');
+  check('the old date is shown', movedChange.before.includes('20'), movedChange.before);
+  check('the new one too', movedChange.after.includes('23'), movedChange.after);
+  check('and a stated time is kept', movedChange.after.includes('16:30'), movedChange.after);
+
+  const ticked = validateActions([{ kind: 'mark_done', entryId: 'm2' }], candidates, now).actions[0];
+  const tickedChange = describeChange(ticked)[0];
+  check('ticking off a repeating entry says it comes back', tickedChange.after.includes('weekly'), tickedChange.after);
+
+  check('only a delete cannot be undone', isDestructive(ticked) === false);
+  check(
+    'and a delete says so',
+    isDestructive(validateActions([{ kind: 'delete_entry', entryId: 'm1' }], candidates, now).actions[0]) === true
+  );
+}
+
+section('instructions: what was changed, and where');
+{
+  check('one entry', changeLabel({ memories: 1, expenses: 0 }) === 'CHANGED 1 ENTRY');
+  check('several', changeLabel({ memories: 3, expenses: 0 }) === 'CHANGED 3 ENTRIES');
+  check('one expense', changeLabel({ memories: 0, expenses: 1 }) === 'CHANGED 1 EXPENSE');
+  check('both zones at once', changeLabel({ memories: 1, expenses: 2 }) === 'CHANGED 1 ENTRY + 2 EXPENSES');
+  check('nothing at all', changeLabel({ memories: 0, expenses: 0 }) === 'NOTHING CHANGED');
+}
+
+section('instructions: undo puts back exactly what changed');
+{
+  const before = snapshot(
+    memory({
+      id: 'm1',
+      title: 'Gym',
+      eventDate: '2026-10-15T06:00:00+05:30',
+      priority: 'high',
+      status: 'active',
+      amount: 1200,
+      category: 'Health',
+      repeat: 'weekly',
+    })
+  );
+  const patch = undoPatch(before);
+  check('the date comes back', patch.eventDate === '2026-10-15T06:00:00+05:30');
+  check('the state comes back', patch.status === 'active');
+  check('the priority comes back', patch.priority === 'high');
+  check('the amount comes back', patch.amount === 1200);
+  check('the category comes back', patch.category === 'Health');
+  check('and nothing else is touched', Object.keys(patch).length === 5, Object.keys(patch));
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

@@ -7,6 +7,18 @@ export interface ChangelogEntry {
 /** Newest first. Add a new entry here with every release that changes user-visible behaviour. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.14.0',
+    date: '2026-10-15',
+    highlights: [
+      'Manglish, spoken or typed: say "nale rahul-ne kaanaan undu" or "innale 500 roopa petrol adichu" and it is understood, with amounts like "randu ayiram" and "anjuru" read as numbers',
+      'Settings → Voice language: keep your phone\'s own, or pick English (India), Malayalam, or Mixed; Settings → Save titles in chooses English or the language you spoke',
+      'Asking in Malayalam works without a translation step — "innale entha chelavaayathu" is answered straight from your record, and the answer comes back in the language you asked in',
+      'Ask can now reschedule, tick off, reopen, re-prioritise, correct an amount, change a category, add a new entry or delete — each shown as before → after before anything happens',
+      'Manglish instructions too: "dentist nale maattu", "gym kazhinju", "aa entry delete cheyyu"',
+      'Nothing is applied silently: unknown entries, dates already gone and batches over 20 are refused, an unclear instruction is asked about, and anything reversible offers Undo',
+    ],
+  },
+  {
     version: '1.13.0',
     date: '2026-10-15',
     highlights: [

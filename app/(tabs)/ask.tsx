@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'expo-router';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -17,6 +18,10 @@ import {
   type CommandOutcome,
   type CommandPlan,
 } from '@/ai/command';
+import { MAX_BATCH } from '@/actions';
+import { extractMemories } from '@/ai/extract';
+import { setPendingDrafts } from '@/draftStore';
+import { getTitleLanguage } from '@/settings';
 import { describeError, hasApiKey } from '@/ai/client';
 import { MemoryRow } from '@/components/MemoryRow';
 import { ComposeButton, type ComposeMode } from '@/components/ComposeButton';
@@ -69,7 +74,10 @@ export default function AskScreen() {
   const [plan, setPlan] = useState<CommandPlan | null>(null);
   /** The change just carried out, kept so it can be undone. */
   const [outcome, setOutcome] = useState<CommandOutcome | null>(null);
+  /** What the instruction needs answering before anything can be proposed. */
+  const [clarify, setClarify] = useState<string | null>(null);
 
+  const router = useRouter();
   const configured = hasApiKey();
   const { budget, setBudget } = useExpenseTheme();
 
@@ -150,6 +158,7 @@ export default function AskScreen() {
     setAsking(q);
     setQuestion('');
     setOutcome(null);
+    setClarify(null);
     try {
       // An instruction is worked out first, but only when it reads like one —
       // the check is local, so asking a question still costs one call as before.
@@ -164,6 +173,11 @@ export default function AskScreen() {
           await getAllMemories(),
           recentExpenses.slice(0, 60)
         );
+        if (proposed && 'question' in proposed) {
+          // It matched more than one thing. Asking is cheaper than guessing.
+          setClarify(proposed.question);
+          return;
+        }
         if (proposed) {
           setPlan(proposed);
           return;
@@ -213,6 +227,23 @@ export default function AskScreen() {
     setBusy(true);
     setError(null);
     try {
+      // Something new said in the Ask box is not written from here: it is
+      // understood and sent to the review screen, like any other capture.
+      if (plan.capture) {
+        const drafts = await extractMemories(plan.capture, new Date().toISOString(), knownPeople(memories), {
+          titleLanguage: await getTitleLanguage(),
+          retries: 0,
+        });
+        setPlan(null);
+        if (drafts.length === 0) {
+          setError('Nothing could be made of that. Try saying it on the Record tab.');
+          return;
+        }
+        setPendingDrafts(plan.capture, drafts);
+        router.push('/preview');
+        return;
+      }
+
       const done = await runCommand(plan, { currentBudget: budget, setBudget });
       setPlan(null);
       setOutcome(done);
@@ -235,6 +266,18 @@ export default function AskScreen() {
       setBusy(false);
     }
   }
+
+  // Undo is offered for a few seconds and then the card goes, so the screen
+  // does not keep a stale "done" notice sitting over the next question.
+  const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!outcome) return;
+    if (dismissTimer.current) clearTimeout(dismissTimer.current);
+    dismissTimer.current = setTimeout(() => setOutcome(null), 8000);
+    return () => {
+      if (dismissTimer.current) clearTimeout(dismissTimer.current);
+    };
+  }, [outcome]);
 
   // Speak the question and it is asked as soon as you stop talking. The
   // question stays visible above the answer, so a mis-hearing is obvious.
@@ -261,7 +304,7 @@ export default function AskScreen() {
     else void voice.toggle();
   }
 
-  const idle = thread.length === 0 && !busy && !error && !plan && !outcome;
+  const idle = thread.length === 0 && !busy && !error && !plan && !outcome && !clarify;
   // The box shows what's being heard, live, while listening.
   const displayQuestion = voice.stage === 'idle' ? question : voice.liveText;
 
@@ -361,8 +404,23 @@ export default function AskScreen() {
           </View>
         ) : null}
 
-        {/* Nothing has been changed yet: this is what would be, named exactly,
-            so a misheard instruction is caught before it costs anything. */}
+        {/* An instruction that could mean several entries is asked about
+            rather than guessed at. Answering it is just the next question. */}
+        {clarify && !busy ? (
+          <View style={styles.plan}>
+            <Text style={[type.label, styles.planLabel]}>WHICH ONE?</Text>
+            <Text style={type.answer}>{clarify}</Text>
+            <View style={styles.planActions}>
+              <Pressable onPress={() => setClarify(null)} hitSlop={10}>
+                <Text style={[type.label, styles.cancel]}>DISMISS</Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
+
+        {/* Nothing has been changed yet: this is what would be, line by line
+            and before → after, so a misheard instruction is caught before it
+            costs anything. */}
         {plan && !busy ? (
           <View style={[styles.plan, plan.destructive && styles.planDestructive]}>
             <Text style={[type.label, plan.destructive ? styles.planLabelWarn : styles.planLabel]}>
@@ -370,23 +428,31 @@ export default function AskScreen() {
             </Text>
             <Text style={type.answer}>{plan.summary}</Text>
 
-            {plan.memories.length > 0 ? (
-              <View style={styles.planList}>
-                {plan.memories.map((memory) => (
-                  <MemoryRow key={memory.id} memory={memory} gutter="date" />
-                ))}
-              </View>
-            ) : null}
+            <View style={styles.planList}>
+              {plan.changes.map((change, index) => (
+                <View key={`${change.label}-${index}`} style={styles.change}>
+                  <Text style={[type.body, styles.changeTitle]} numberOfLines={2}>
+                    {change.label}
+                  </Text>
+                  <Text style={[type.body, styles.changeFrom]} numberOfLines={1}>
+                    {change.before}
+                  </Text>
+                  <Text style={[type.body, styles.changeTo]} numberOfLines={1}>
+                    → {change.after}
+                  </Text>
+                </View>
+              ))}
+            </View>
 
-            {plan.expenses.map((row) => (
-              <View key={row.id} style={styles.planExpense}>
-                <Text style={[type.body, styles.planExpenseText]} numberOfLines={1}>
-                  {row.note || row.cat_name}
-                </Text>
-                <Text style={type.body}>
-                  {row.date} · {row.amount}
-                </Text>
-              </View>
+            {plan.trimmed ? (
+              <Text style={[type.body, styles.planNote]}>
+                Only the first {MAX_BATCH} are included — ask again for the rest.
+              </Text>
+            ) : null}
+            {plan.refused.map((reason, index) => (
+              <Text key={`${reason}-${index}`} style={[type.body, styles.planNote]}>
+                {reason}
+              </Text>
             ))}
 
             <View style={styles.planActions}>
@@ -397,7 +463,7 @@ export default function AskScreen() {
                 <Text
                   style={[type.label, plan.destructive ? styles.confirmWarn : styles.confirm]}
                 >
-                  {plan.destructive ? 'DELETE' : 'CONFIRM'}
+                  {plan.destructive ? 'DELETE' : plan.capture ? 'REVIEW' : 'CONFIRM'}
                 </Text>
               </Pressable>
             </View>
@@ -406,7 +472,7 @@ export default function AskScreen() {
 
         {outcome && !busy ? (
           <View style={styles.plan}>
-            <Text style={[type.label, styles.planLabel]}>DONE</Text>
+            <Text style={[type.label, styles.planLabel]}>{outcome.label}</Text>
             <Text style={type.answer}>{outcome.summary}</Text>
             <View style={styles.planActions}>
               {outcome.undo ? (
@@ -571,16 +637,15 @@ function makeStyles(colors: Colors) {
     planLabel: { color: colors.moss },
     planLabelWarn: { color: colors.alert },
     planList: { gap: 2 },
-    planExpense: {
-      flexDirection: 'row',
-      alignItems: 'baseline',
-      justifyContent: 'space-between',
-      gap: 12,
+    change: {
       paddingVertical: 6,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: colors.rule,
     },
-    planExpenseText: { flex: 1, color: colors.ink },
+    changeTitle: { color: colors.ink },
+    changeFrom: { color: colors.mist, textDecorationLine: 'line-through' },
+    changeTo: { color: colors.moss },
+    planNote: { color: colors.mist },
     planActions: { flexDirection: 'row', gap: 20, paddingTop: 2 },
     confirm: { color: colors.moss },
     confirmWarn: { color: colors.alert },
