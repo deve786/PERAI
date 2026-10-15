@@ -10,6 +10,13 @@ import {
   View,
 } from 'react-native';
 import { askAI, type AskResult } from '@/ai/ask';
+import {
+  looksLikeCommand,
+  planCommand,
+  runCommand,
+  type CommandOutcome,
+  type CommandPlan,
+} from '@/ai/command';
 import { describeError, hasApiKey } from '@/ai/client';
 import { MemoryRow } from '@/components/MemoryRow';
 import { ComposeButton, type ComposeMode } from '@/components/ComposeButton';
@@ -17,7 +24,9 @@ import { Section } from '@/components/Section';
 import { VoiceWaveform } from '@/components/VoiceWaveform';
 import { forgetQuestion, getAllMemories, getRecentQuestions, saveQuestion } from '@/db/queries';
 import { buildChatContext } from '@/expense/chatContext';
-import { getSetting } from '@/expense/db';
+import { getSetting, listExpenses } from '@/expense/db';
+import { addDays, todayStr } from '@/expense/dates';
+import { useTheme as useExpenseTheme } from '@/expense/theme';
 import { useTheme } from '@/ThemeContext';
 import { FONTS, GUTTER, SPACE, type Colors } from '@/theme';
 import { formatAmount, shortDate } from '@/format';
@@ -54,8 +63,13 @@ export default function AskScreen() {
   const [thread, setThread] = useState<{ question: string; result: AskResult }[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** A change worked out from an instruction, waiting to be confirmed. */
+  const [plan, setPlan] = useState<CommandPlan | null>(null);
+  /** The change just carried out, kept so it can be undone. */
+  const [outcome, setOutcome] = useState<CommandOutcome | null>(null);
 
   const configured = hasApiKey();
+  const { budget, setBudget } = useExpenseTheme();
 
   const { memories } = useMemories();
   const [recentQuestions, setRecentQuestions] = useState<string[]>([]);
@@ -133,7 +147,28 @@ export default function AskScreen() {
     setError(null);
     setAsking(q);
     setQuestion('');
+    setOutcome(null);
     try {
+      // An instruction is worked out first, but only when it reads like one —
+      // the check is local, so asking a question still costs one call as before.
+      // Nothing is changed here: a plan only ever goes to the confirm step.
+      if (looksLikeCommand(q)) {
+        const recentExpenses = await listExpenses(addDays(todayStr(), -120), todayStr()).catch(
+          () => []
+        );
+        const proposed = await planCommand(
+          q,
+          new Date().toISOString(),
+          await getAllMemories(),
+          recentExpenses.slice(0, 60)
+        );
+        if (proposed) {
+          setPlan(proposed);
+          return;
+        }
+        // Not a command after all — fall through and answer it.
+      }
+
       // Oldest first, as the model reads it: what was asked, and what it said.
       const history = [...thread]
         .reverse()
@@ -158,6 +193,34 @@ export default function AskScreen() {
       setError(describeError(err));
     } finally {
       setAsking('');
+      setBusy(false);
+    }
+  }
+
+  async function confirmPlan() {
+    if (!plan || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const done = await runCommand(plan, { currentBudget: budget, setBudget });
+      setPlan(null);
+      setOutcome(done);
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function undoOutcome() {
+    if (!outcome?.undo || busy) return;
+    setBusy(true);
+    try {
+      await outcome.undo();
+      setOutcome(null);
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
       setBusy(false);
     }
   }
@@ -187,7 +250,7 @@ export default function AskScreen() {
     else void voice.toggle();
   }
 
-  const idle = thread.length === 0 && !busy && !error;
+  const idle = thread.length === 0 && !busy && !error && !plan && !outcome;
   // The box shows what's being heard, live, while listening.
   const displayQuestion = voice.stage === 'idle' ? question : voice.liveText;
 
@@ -281,7 +344,69 @@ export default function AskScreen() {
         {busy ? (
           <View style={styles.answerBlock}>
             <Text style={[type.stamp, styles.question]}>{asking.toUpperCase()}</Text>
-            <Text style={type.label}>SEARCHING YOUR RECORD</Text>
+            <Text style={type.label}>
+              {plan ? 'APPLYING THE CHANGE' : 'SEARCHING YOUR RECORD'}
+            </Text>
+          </View>
+        ) : null}
+
+        {/* Nothing has been changed yet: this is what would be, named exactly,
+            so a misheard instruction is caught before it costs anything. */}
+        {plan && !busy ? (
+          <View style={[styles.plan, plan.destructive && styles.planDestructive]}>
+            <Text style={[type.label, plan.destructive ? styles.planLabelWarn : styles.planLabel]}>
+              {plan.destructive ? 'THIS CANNOT BE UNDONE' : 'ABOUT TO CHANGE'}
+            </Text>
+            <Text style={type.answer}>{plan.summary}</Text>
+
+            {plan.memories.length > 0 ? (
+              <View style={styles.planList}>
+                {plan.memories.map((memory) => (
+                  <MemoryRow key={memory.id} memory={memory} gutter="date" />
+                ))}
+              </View>
+            ) : null}
+
+            {plan.expenses.map((row) => (
+              <View key={row.id} style={styles.planExpense}>
+                <Text style={[type.body, styles.planExpenseText]} numberOfLines={1}>
+                  {row.note || row.cat_name}
+                </Text>
+                <Text style={type.body}>
+                  {row.date} · {row.amount}
+                </Text>
+              </View>
+            ))}
+
+            <View style={styles.planActions}>
+              <Pressable onPress={() => setPlan(null)} hitSlop={10}>
+                <Text style={[type.label, styles.cancel]}>CANCEL</Text>
+              </Pressable>
+              <Pressable onPress={() => void confirmPlan()} hitSlop={10}>
+                <Text
+                  style={[type.label, plan.destructive ? styles.confirmWarn : styles.confirm]}
+                >
+                  {plan.destructive ? 'DELETE' : 'CONFIRM'}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
+
+        {outcome && !busy ? (
+          <View style={styles.plan}>
+            <Text style={[type.label, styles.planLabel]}>DONE</Text>
+            <Text style={type.answer}>{outcome.summary}</Text>
+            <View style={styles.planActions}>
+              {outcome.undo ? (
+                <Pressable onPress={() => void undoOutcome()} hitSlop={10}>
+                  <Text style={[type.label, styles.confirm]}>UNDO</Text>
+                </Pressable>
+              ) : null}
+              <Pressable onPress={() => setOutcome(null)} hitSlop={10}>
+                <Text style={[type.label, styles.cancel]}>DISMISS</Text>
+              </Pressable>
+            </View>
           </View>
         ) : null}
 
@@ -424,6 +549,30 @@ function makeStyles(colors: Colors) {
       paddingVertical: 2,
     },
     noticeText: { color: colors.alert },
+    plan: {
+      gap: 10,
+      borderLeftWidth: 2,
+      borderLeftColor: colors.moss,
+      paddingLeft: 12,
+      paddingVertical: 2,
+    },
+    planDestructive: { borderLeftColor: colors.alert },
+    planLabel: { color: colors.moss },
+    planLabelWarn: { color: colors.alert },
+    planList: { gap: 2 },
+    planExpense: {
+      flexDirection: 'row',
+      alignItems: 'baseline',
+      justifyContent: 'space-between',
+      gap: 12,
+      paddingVertical: 6,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.rule,
+    },
+    planExpenseText: { flex: 1, color: colors.ink },
+    planActions: { flexDirection: 'row', gap: 20, paddingTop: 2 },
+    confirm: { color: colors.moss },
+    confirmWarn: { color: colors.alert },
     answerBlock: { gap: 14 },
     headline: { fontSize: 30, lineHeight: 36, color: colors.ink, marginBottom: -6 },
     items: { gap: 2, marginTop: -4 },

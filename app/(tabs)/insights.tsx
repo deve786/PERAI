@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { Chip } from '@/components/Chip';
 import { Donut, DualBars, RankedCounts } from '@/components/InsightCharts';
@@ -25,6 +25,67 @@ import { useTheme as useExpenseTheme } from '@/expense/theme';
 const PERIODS = ['month', '90 days', 'year', 'all'] as const;
 type Period = (typeof PERIODS)[number];
 
+type Half = 'expense' | 'perai';
+
+/** Plain-language meaning of every figure on the money side. */
+const MONEY_GLOSSARY: { term: string; meaning: string }[] = [
+  { term: 'Spent', meaning: 'Everything recorded as an expense in this period.' },
+  {
+    term: 'Net',
+    meaning:
+      'Income in this period minus what you spent. A negative number means more went out than came in.',
+  },
+  { term: 'Income', meaning: 'Everything recorded on the Add income screen in this period.' },
+  { term: 'Saved', meaning: 'The share of your income you did not spend.' },
+  { term: 'Daily avg', meaning: 'What you spent divided by the number of days in the period.' },
+  { term: 'Avg entry', meaning: 'What you spent divided by the number of expense entries.' },
+  {
+    term: 'Budget',
+    meaning: 'Your monthly budget from Settings, against what you have spent this month.',
+  },
+  {
+    term: 'Committed every month',
+    meaning: 'Your recurring bills added up — what leaves every month before you decide anything.',
+  },
+  {
+    term: 'Owed to you / You owe',
+    meaning: 'Amounts from Borrow & Lend that have not been settled yet.',
+  },
+];
+
+/** Plain-language meaning of every figure on the record side. */
+const RECORD_GLOSSARY: { term: string; meaning: string }[] = [
+  {
+    term: 'Captured',
+    meaning:
+      'Entries you recorded in this period — notes, tasks, reminders, purchases, everything you said or typed.',
+  },
+  {
+    term: 'Done / Still open',
+    meaning:
+      'Of the tasks, reminders and appointments you captured in this period, how many you have ticked off and how many are left.',
+  },
+  { term: 'Completed', meaning: 'The share of those that are done.' },
+  {
+    term: 'Overdue',
+    meaning:
+      'Tasks, reminders and appointments still open whose date has already passed. This counts everything you have, not just this period.',
+  },
+  {
+    term: 'Day streak',
+    meaning: 'How many days in a row, counting back from today, you recorded at least one thing.',
+  },
+  {
+    term: 'Lists',
+    meaning:
+      'Things to play, watch or buy some day: how many are still waiting, and how many you have ticked off.',
+  },
+  {
+    term: 'Who comes up most',
+    meaning: 'The names that appear most often in the entries you captured.',
+  },
+];
+
 /** The span each period covers, ending today so no empty future days are charted. */
 function rangeFor(period: Period, now: Date) {
   const today = todayStr();
@@ -49,6 +110,7 @@ export default function Insights() {
   const styles = makeStyles(colors);
 
   const [period, setPeriod] = useState<Period>('month');
+  const [half, setHalf] = useState<Half>('expense');
   const now = useMemo(() => new Date(), []);
   const { from, to, label } = useMemo(() => rangeFor(period, now), [period, now]);
   const { from: prevFrom, to: prevTo } = useMemo(() => previousRange(from, to), [from, to]);
@@ -132,7 +194,8 @@ export default function Insights() {
     count: row.count,
   }));
 
-  const nothingYet = expenses.length === 0 && income.length === 0 && record.captured === 0;
+  const noMoney = expenses.length === 0 && income.length === 0;
+  const noRecord = record.captured === 0;
 
   return (
     <ScrollView style={styles.flex} contentContainerStyle={styles.content}>
@@ -152,327 +215,393 @@ export default function Insights() {
         ))}
       </View>
 
-      {nothingYet ? (
-        <Text style={[type.body, styles.quiet]}>
-          Nothing recorded in this period yet. Capture something or add an expense, and this
-          fills in.
-        </Text>
-      ) : (
-        <>
-          {/* ============ OVERVIEW — both halves in four figures ============ */}
-          <View style={styles.tiles}>
-            <Tile colors={colors} label="CAPTURED" value={String(record.captured)} />
-            <Tile colors={colors} label="SPENT" value={fmtMoney(spent, symbol)} />
-            <Tile
-              colors={colors}
-              label="NET"
-              value={fmtMoney(net, symbol)}
-              tone={net < 0 ? colors.alert : colors.moss}
-            />
-            <Tile
-              colors={colors}
-              label="OVERDUE"
-              value={String(record.overdue)}
-              tone={record.overdue > 0 ? colors.alert : undefined}
-            />
-          </View>
+      {/* Two halves of one app, read one at a time — the money, or the record. */}
+      <View style={styles.halfBar}>
+        {(
+          [
+            ['expense', 'EXPENSE'],
+            ['perai', 'PERAI'],
+          ] as const
+        ).map(([key, text]) => (
+          <Pressable
+            key={key}
+            onPress={() => setHalf(key)}
+            style={[styles.halfTab, half === key && styles.halfTabActive]}
+            accessibilityRole="button"
+          >
+            <Text style={[type.label, half === key ? styles.halfTextActive : styles.halfText]}>
+              {text}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
 
-          {/* ===================== MONEY ===================== */}
-          {expenses.length > 0 || income.length > 0 ? (
-            <>
-              <Section label="MONEY" inset={false}>
-                <View style={styles.headlineBlock}>
-                  <Text style={[type.figure, styles.headline]}>{fmtMoney(spent, symbol)}</Text>
-                  {spendDelta !== null ? (
-                    <Text
-                      style={[
-                        type.fine,
-                        { color: spendDelta > 0 ? colors.alert : colors.moss },
-                      ]}
-                    >
-                      {spendDelta > 0 ? 'Up' : 'Down'} {Math.abs(Math.round(spendDelta))}% on the
-                      previous {span} days ({fmtMoney(prevSpent, symbol)})
-                    </Text>
-                  ) : (
-                    <Text style={[type.fine, styles.quiet]}>
-                      Nothing spent in the previous period
-                    </Text>
-                  )}
+      {/* ======================== EXPENSE ======================== */}
+      {half === 'expense' ? (
+        noMoney ? (
+          <Text style={[type.body, styles.quiet]}>
+            No expenses or income recorded in this period yet.
+          </Text>
+        ) : (
+          <>
+            <View style={styles.tiles}>
+              <Tile
+                colors={colors}
+                label="SPENT"
+                value={fmtMoney(spent, symbol)}
+                hint="Expenses in this period"
+              />
+              <Tile
+                colors={colors}
+                label="INCOME"
+                value={fmtMoney(earned, symbol)}
+                hint="Income in this period"
+              />
+              <Tile
+                colors={colors}
+                label="NET"
+                value={fmtMoney(net, symbol)}
+                hint="Income minus spending"
+                tone={net < 0 ? colors.alert : colors.moss}
+              />
+              <Tile
+                colors={colors}
+                label="ENTRIES"
+                value={String(expenses.length)}
+                hint="Expenses recorded"
+              />
+            </View>
+
+            <Section label="SPENDING" inset={false}>
+              <View style={styles.headlineBlock}>
+                <Text style={[type.figure, styles.headline]}>{fmtMoney(spent, symbol)}</Text>
+                {spendDelta !== null ? (
+                  <Text style={[type.fine, { color: spendDelta > 0 ? colors.alert : colors.moss }]}>
+                    {spendDelta > 0 ? 'Up' : 'Down'} {Math.abs(Math.round(spendDelta))}% on the
+                    previous {span} days ({fmtMoney(prevSpent, symbol)})
+                  </Text>
+                ) : (
+                  <Text style={[type.fine, styles.quiet]}>
+                    Nothing spent in the previous period
+                  </Text>
+                )}
+              </View>
+
+              <View style={styles.statRow}>
+                <Stat
+                  colors={colors}
+                  label="Daily avg"
+                  value={fmtMoney(span > 0 ? spent / span : 0, symbol)}
+                />
+                <Stat colors={colors} label="Entries" value={String(expenses.length)} />
+                <Stat
+                  colors={colors}
+                  label="Avg entry"
+                  value={fmtMoney(expenses.length ? spent / expenses.length : 0, symbol)}
+                />
+              </View>
+            </Section>
+
+            {budgetUsed !== null && period === 'month' ? (
+              <Section label="BUDGET" inset={false}>
+                <View style={styles.budgetHead}>
+                  <Text style={type.body}>
+                    {fmtMoney(spent, symbol)} of {fmtMoney(budget, symbol)}
+                  </Text>
+                  <Text
+                    style={[type.figure, styles.budgetPct, budgetUsed > 1 ? { color: colors.alert } : null]}
+                  >
+                    {Math.round(budgetUsed * 100)}%
+                  </Text>
                 </View>
+                <View style={styles.meterTrack}>
+                  <View
+                    style={[
+                      styles.meterFill,
+                      {
+                        width: `${Math.min(budgetUsed, 1) * 100}%`,
+                        backgroundColor: budgetUsed > 1 ? colors.alert : colors.moss,
+                      },
+                    ]}
+                  />
+                </View>
+                <Text style={[type.fine, styles.quiet]}>
+                  {budgetUsed > 1
+                    ? `${fmtMoney(spent - budget, symbol)} over budget.`
+                    : `${fmtMoney(budget - spent, symbol)} left this month.`}
+                </Text>
+              </Section>
+            ) : null}
 
+            {expenses.length > 0 ? (
+              <Section
+                label={span <= 45 ? 'DAY BY DAY' : span <= 190 ? 'WEEK BY WEEK' : 'MONTH BY MONTH'}
+                inset={false}
+              >
+                <Bars data={spendSeries} width={chartWidth} />
+              </Section>
+            ) : null}
+
+            {income.length > 0 ? (
+              <Section label="IN AND OUT" inset={false}>
+                <DualBars data={inOutSeries} width={chartWidth} labels={['Income', 'Spending']} />
+                <View style={styles.statRow}>
+                  <Stat colors={colors} label="Income" value={fmtMoney(earned, symbol)} />
+                  <Stat colors={colors} label="Spent" value={fmtMoney(spent, symbol)} />
+                  <Stat
+                    colors={colors}
+                    label="Saved"
+                    value={savingsRate !== null ? `${Math.round(savingsRate * 100)}%` : '—'}
+                  />
+                </View>
+              </Section>
+            ) : null}
+
+            {categories.length > 0 ? (
+              <Section label="WHERE IT WENT" inset={false}>
+                <RankedCategories data={categories} total={spent} />
+              </Section>
+            ) : null}
+
+            {biggest.length > 0 ? (
+              <Section label="LARGEST" inset={false}>
+                {biggest.map((row) => (
+                  <View key={row.id} style={styles.lineRow}>
+                    <View style={styles.lineMain}>
+                      <Text style={type.body} numberOfLines={1}>
+                        {row.note || row.cat_name}
+                      </Text>
+                      <Text style={[type.stamp, styles.quiet]}>
+                        {row.cat_name.toUpperCase()} · {row.date}
+                      </Text>
+                    </View>
+                    <Text style={[type.figure, styles.lineFigure]}>
+                      {fmtMoney(row.amount, symbol)}
+                    </Text>
+                  </View>
+                ))}
+              </Section>
+            ) : null}
+
+            {methods.length > 0 ? (
+              <Section label="HOW IT WAS PAID" inset={false}>
+                {methods.map(([method, total]) => (
+                  <View key={method} style={styles.lineRow}>
+                    <Text style={[type.body, styles.lineMain]}>{method}</Text>
+                    <Text style={[type.figure, styles.lineFigure]}>{fmtMoney(total, symbol)}</Text>
+                  </View>
+                ))}
+              </Section>
+            ) : null}
+
+            {recurring.length > 0 ? (
+              <Section label="COMMITTED EVERY MONTH" inset={false}>
+                <View style={styles.statRow}>
+                  <Stat colors={colors} label="Bills" value={String(recurring.length)} />
+                  <Stat
+                    colors={colors}
+                    label="Per month"
+                    value={fmtMoney(monthlyCommitment, symbol)}
+                  />
+                  <Stat
+                    colors={colors}
+                    label="Per year"
+                    value={fmtMoney(monthlyCommitment * 12, symbol)}
+                  />
+                </View>
+              </Section>
+            ) : null}
+
+            {loans && (loans.totalLentActive > 0 || loans.totalBorrowedActive > 0) ? (
+              <Section label="LENT AND BORROWED" inset={false}>
                 <View style={styles.statRow}>
                   <Stat
                     colors={colors}
-                    label="Daily avg"
-                    value={fmtMoney(span > 0 ? spent / span : 0, symbol)}
+                    label="Owed to you"
+                    value={fmtMoney(loans.totalLentActive, symbol)}
                   />
-                  <Stat colors={colors} label="Entries" value={String(expenses.length)} />
                   <Stat
                     colors={colors}
-                    label="Avg entry"
-                    value={fmtMoney(expenses.length ? spent / expenses.length : 0, symbol)}
+                    label="You owe"
+                    value={fmtMoney(loans.totalBorrowedActive, symbol)}
+                  />
+                  <Stat
+                    colors={colors}
+                    label="Net"
+                    value={fmtMoney(loans.totalLentActive - loans.totalBorrowedActive, symbol)}
                   />
                 </View>
               </Section>
+            ) : null}
 
-              {budgetUsed !== null && period === 'month' ? (
-                <Section label="BUDGET" inset={false}>
-                  <View style={styles.budgetHead}>
-                    <Text style={type.body}>
-                      {fmtMoney(spent, symbol)} of {fmtMoney(budget, symbol)}
-                    </Text>
-                    <Text
-                      style={[
-                        type.figure,
-                        styles.budgetPct,
-                        budgetUsed > 1 ? { color: colors.alert } : null,
-                      ]}
-                    >
-                      {Math.round(budgetUsed * 100)}%
-                    </Text>
-                  </View>
-                  <View style={styles.meterTrack}>
-                    <View
-                      style={[
-                        styles.meterFill,
-                        {
-                          width: `${Math.min(budgetUsed, 1) * 100}%`,
-                          backgroundColor: budgetUsed > 1 ? colors.alert : colors.moss,
-                        },
-                      ]}
-                    />
-                  </View>
-                  <Text style={[type.fine, styles.quiet]}>
-                    {budgetUsed > 1
-                      ? `${fmtMoney(spent - budget, symbol)} over budget.`
-                      : `${fmtMoney(budget - spent, symbol)} left this month.`}
-                  </Text>
-                </Section>
-              ) : null}
+            <Section label="AGAINST THE PERIOD BEFORE" inset={false}>
+              <Compare
+                colors={colors}
+                label="Spending"
+                now={fmtMoney(spent, symbol)}
+                before={fmtMoney(prevSpent, symbol)}
+                delta={spendDelta}
+                lowerIsBetter
+              />
+            </Section>
 
-              {expenses.length > 0 ? (
-                <Section
-                  label={span <= 45 ? 'DAY BY DAY' : span <= 190 ? 'WEEK BY WEEK' : 'MONTH BY MONTH'}
-                  inset={false}
-                >
-                  <Bars data={spendSeries} width={chartWidth} />
-                </Section>
-              ) : null}
+            <Glossary colors={colors} entries={MONEY_GLOSSARY} />
+          </>
+        )
+      ) : null}
 
-              {income.length > 0 ? (
-                <Section label="IN AND OUT" inset={false}>
-                  <DualBars
-                    data={inOutSeries}
-                    width={chartWidth}
-                    labels={['Income', 'Spending']}
+      {/* ========================= PERAI ========================= */}
+      {half === 'perai' ? (
+        noRecord ? (
+          <Text style={[type.body, styles.quiet]}>
+            Nothing captured in this period yet. Record something on the Record tab and it shows
+            up here.
+          </Text>
+        ) : (
+          <>
+            <View style={styles.tiles}>
+              <Tile
+                colors={colors}
+                label="CAPTURED"
+                value={String(record.captured)}
+                hint="Entries you recorded"
+              />
+              <Tile
+                colors={colors}
+                label="DONE"
+                value={String(record.done)}
+                hint="Ticked off, of those captured"
+              />
+              <Tile
+                colors={colors}
+                label="STILL OPEN"
+                value={String(record.open)}
+                hint="Captured but not done yet"
+              />
+              <Tile
+                colors={colors}
+                label="OVERDUE"
+                value={String(record.overdue)}
+                hint="Open and past its date, all time"
+                tone={record.overdue > 0 ? colors.alert : undefined}
+              />
+            </View>
+
+            <Section label="HOW YOU ARE DOING" inset={false}>
+              <View style={styles.donutRow}>
+                {record.completionRate !== null ? (
+                  <Donut
+                    fraction={record.completionRate}
+                    figure={`${Math.round(record.completionRate * 100)}%`}
+                    caption={`${record.done} of ${record.done + record.open} done`}
                   />
-                  <View style={styles.statRow}>
-                    <Stat colors={colors} label="Income" value={fmtMoney(earned, symbol)} />
-                    <Stat colors={colors} label="Spent" value={fmtMoney(spent, symbol)} />
-                    <Stat
-                      colors={colors}
-                      label="Saved"
-                      value={savingsRate !== null ? `${Math.round(savingsRate * 100)}%` : '—'}
-                    />
-                  </View>
-                </Section>
-              ) : null}
-
-              {categories.length > 0 ? (
-                <Section label="WHERE IT WENT" inset={false}>
-                  <RankedCategories data={categories} total={spent} />
-                </Section>
-              ) : null}
-
-              {biggest.length > 0 ? (
-                <Section label="LARGEST" inset={false}>
-                  {biggest.map((row) => (
-                    <View key={row.id} style={styles.lineRow}>
-                      <View style={styles.lineMain}>
-                        <Text style={type.body} numberOfLines={1}>
-                          {row.note || row.cat_name}
-                        </Text>
-                        <Text style={[type.stamp, styles.quiet]}>
-                          {row.cat_name.toUpperCase()} · {row.date}
-                        </Text>
-                      </View>
-                      <Text style={[type.figure, styles.lineFigure]}>
-                        {fmtMoney(row.amount, symbol)}
-                      </Text>
-                    </View>
-                  ))}
-                </Section>
-              ) : null}
-
-              {methods.length > 0 ? (
-                <Section label="HOW IT WAS PAID" inset={false}>
-                  {methods.map(([method, total]) => (
-                    <View key={method} style={styles.lineRow}>
-                      <Text style={[type.body, styles.lineMain]}>{method}</Text>
-                      <Text style={[type.figure, styles.lineFigure]}>
-                        {fmtMoney(total, symbol)}
-                      </Text>
-                    </View>
-                  ))}
-                </Section>
-              ) : null}
-            </>
-          ) : null}
-
-          {recurring.length > 0 ? (
-            <Section label="COMMITTED EVERY MONTH" inset={false}>
-              <View style={styles.statRow}>
-                <Stat colors={colors} label="Bills" value={String(recurring.length)} />
-                <Stat colors={colors} label="Per month" value={fmtMoney(monthlyCommitment, symbol)} />
-                <Stat
-                  colors={colors}
-                  label="Per year"
-                  value={fmtMoney(monthlyCommitment * 12, symbol)}
-                />
+                ) : null}
+                <View style={styles.donutStats}>
+                  <Stat colors={colors} label="Captured" value={String(record.captured)} />
+                  <Stat colors={colors} label="Still open" value={String(record.open)} />
+                  <Stat
+                    colors={colors}
+                    label="Day streak"
+                    value={record.streak > 0 ? `${record.streak}` : '—'}
+                  />
+                </View>
               </View>
+              <Text style={[type.fine, styles.quiet]}>
+                The ring is the share of tasks, reminders and appointments captured in this period
+                that you have since ticked off.
+              </Text>
             </Section>
-          ) : null}
 
-          {loans && (loans.totalLentActive > 0 || loans.totalBorrowedActive > 0) ? (
-            <Section label="LENT AND BORROWED" inset={false}>
-              <View style={styles.statRow}>
-                <Stat colors={colors} label="Owed to you" value={fmtMoney(loans.totalLentActive, symbol)} />
-                <Stat
-                  colors={colors}
-                  label="You owe"
-                  value={fmtMoney(loans.totalBorrowedActive, symbol)}
-                />
-                <Stat
-                  colors={colors}
-                  label="Net"
-                  value={fmtMoney(loans.totalLentActive - loans.totalBorrowedActive, symbol)}
-                />
-              </View>
+            <Section label="WHAT YOU CAPTURED" inset={false}>
+              <Bars data={record.perDay} width={chartWidth} />
             </Section>
-          ) : null}
 
-          {/* ===================== RECORD ===================== */}
-          {record.captured > 0 ? (
-            <>
-              <Section label="YOUR RECORD" inset={false}>
-                <View style={styles.donutRow}>
-                  {record.completionRate !== null ? (
-                    <Donut
-                      fraction={record.completionRate}
-                      figure={`${Math.round(record.completionRate * 100)}%`}
-                      caption={`${record.done} of ${record.done + record.open} done`}
-                    />
-                  ) : null}
-                  <View style={styles.donutStats}>
-                    <Stat colors={colors} label="Captured" value={String(record.captured)} />
-                    <Stat colors={colors} label="Still open" value={String(record.open)} />
-                    <Stat
-                      colors={colors}
-                      label="Day streak"
-                      value={record.streak > 0 ? `${record.streak}` : '—'}
-                    />
-                  </View>
+            {typeRows.length > 0 ? (
+              <Section label="BY KIND" inset={false}>
+                <RankedCounts data={typeRows} />
+              </Section>
+            ) : null}
+
+            {record.byCategory.length > 0 ? (
+              <Section label="BY CATEGORY" inset={false}>
+                <RankedCounts data={record.byCategory} />
+              </Section>
+            ) : null}
+
+            {record.topPeople.length > 0 ? (
+              <Section label="WHO COMES UP MOST" inset={false}>
+                <RankedCounts data={record.topPeople} unit="times" />
+              </Section>
+            ) : null}
+
+            {record.busiestWeekday ? (
+              <Section label="WHEN YOU RECORD" inset={false}>
+                <View style={styles.lineRow}>
+                  <Text style={[type.body, styles.lineMain]}>Busiest day</Text>
+                  <Text style={[type.figure, styles.lineFigure]}>{record.busiestWeekday.name}</Text>
                 </View>
               </Section>
+            ) : null}
 
-              <Section label="WHAT YOU CAPTURED" inset={false}>
-                <Bars data={record.perDay} width={chartWidth} />
+            {record.wishlistOpen > 0 || record.wishlistDone > 0 ? (
+              <Section label="LISTS" inset={false}>
+                <View style={styles.statRow}>
+                  <Stat colors={colors} label="Still to do" value={String(record.wishlistOpen)} />
+                  <Stat colors={colors} label="Ticked off" value={String(record.wishlistDone)} />
+                  <Stat
+                    colors={colors}
+                    label="Done"
+                    value={
+                      record.wishlistOpen + record.wishlistDone > 0
+                        ? `${Math.round(
+                            (record.wishlistDone /
+                              (record.wishlistOpen + record.wishlistDone)) *
+                              100
+                          )}%`
+                        : '—'
+                    }
+                  />
+                </View>
               </Section>
+            ) : null}
 
-              {typeRows.length > 0 ? (
-                <Section label="BY KIND" inset={false}>
-                  <RankedCounts data={typeRows} />
-                </Section>
-              ) : null}
-
-              {record.byCategory.length > 0 ? (
-                <Section label="BY CATEGORY" inset={false}>
-                  <RankedCounts data={record.byCategory} />
-                </Section>
-              ) : null}
-
-              {record.topPeople.length > 0 ? (
-                <Section label="WHO COMES UP MOST" inset={false}>
-                  <RankedCounts data={record.topPeople} unit="times" />
-                </Section>
-              ) : null}
-
-              {record.busiestWeekday ? (
-                <Section label="WHEN YOU RECORD" inset={false}>
-                  <View style={styles.lineRow}>
-                    <Text style={[type.body, styles.lineMain]}>Busiest day</Text>
-                    <Text style={[type.figure, styles.lineFigure]}>
-                      {record.busiestWeekday.name}
-                    </Text>
-                  </View>
-                </Section>
-              ) : null}
-            </>
-          ) : null}
-
-          {record.wishlistOpen > 0 || record.wishlistDone > 0 ? (
-            <Section label="LISTS" inset={false}>
-              <View style={styles.statRow}>
-                <Stat colors={colors} label="Still to do" value={String(record.wishlistOpen)} />
-                <Stat colors={colors} label="Ticked off" value={String(record.wishlistDone)} />
-                <Stat
-                  colors={colors}
-                  label="Done"
-                  value={
-                    record.wishlistOpen + record.wishlistDone > 0
-                      ? `${Math.round(
-                          (record.wishlistDone / (record.wishlistOpen + record.wishlistDone)) * 100
-                        )}%`
-                      : '—'
-                  }
-                />
-              </View>
+            <Section label="AGAINST THE PERIOD BEFORE" inset={false}>
+              <Compare
+                colors={colors}
+                label="Captured"
+                now={`${record.captured}`}
+                before={`${prevRecord.captured}`}
+                delta={
+                  prevRecord.captured > 0
+                    ? ((record.captured - prevRecord.captured) / prevRecord.captured) * 100
+                    : null
+                }
+              />
+              <Compare
+                colors={colors}
+                label="Completed"
+                now={
+                  record.completionRate !== null
+                    ? `${Math.round(record.completionRate * 100)}%`
+                    : '—'
+                }
+                before={
+                  prevRecord.completionRate !== null
+                    ? `${Math.round(prevRecord.completionRate * 100)}%`
+                    : '—'
+                }
+                delta={
+                  record.completionRate !== null && prevRecord.completionRate !== null
+                    ? (record.completionRate - prevRecord.completionRate) * 100
+                    : null
+                }
+              />
             </Section>
-          ) : null}
 
-          {/* ===================== REVIEW ===================== */}
-          <Section label="AGAINST THE PERIOD BEFORE" inset={false}>
-            <Compare
-              colors={colors}
-              label="Spending"
-              now={fmtMoney(spent, symbol)}
-              before={fmtMoney(prevSpent, symbol)}
-              delta={spendDelta}
-              lowerIsBetter
-            />
-            <Compare
-              colors={colors}
-              label="Captured"
-              now={`${record.captured}`}
-              before={`${prevRecord.captured}`}
-              delta={
-                prevRecord.captured > 0
-                  ? ((record.captured - prevRecord.captured) / prevRecord.captured) * 100
-                  : null
-              }
-            />
-            <Compare
-              colors={colors}
-              label="Completed"
-              now={
-                record.completionRate !== null
-                  ? `${Math.round(record.completionRate * 100)}%`
-                  : '—'
-              }
-              before={
-                prevRecord.completionRate !== null
-                  ? `${Math.round(prevRecord.completionRate * 100)}%`
-                  : '—'
-              }
-              delta={
-                record.completionRate !== null && prevRecord.completionRate !== null
-                  ? (record.completionRate - prevRecord.completionRate) * 100
-                  : null
-              }
-            />
-          </Section>
-        </>
-      )}
+            <Glossary colors={colors} entries={RECORD_GLOSSARY} />
+          </>
+        )
+      ) : null}
     </ScrollView>
   );
 }
@@ -481,11 +610,13 @@ function Tile({
   colors,
   label,
   value,
+  hint,
   tone,
 }: {
   colors: Colors;
   label: string;
   value: string;
+  hint?: string;
   tone?: string;
 }) {
   const { type } = useTheme();
@@ -494,6 +625,7 @@ function Tile({
     <View style={styles.tile}>
       <Text style={[type.stamp, styles.quiet]}>{label}</Text>
       <Text style={[type.figure, styles.tileValue, tone ? { color: tone } : null]}>{value}</Text>
+      {hint ? <Text style={[type.fine, styles.tileHint]}>{hint}</Text> : null}
     </View>
   );
 }
@@ -538,17 +670,46 @@ function Compare({
       <View style={styles.compareRight}>
         <Text style={[type.figure, styles.lineFigure]}>{now}</Text>
         {delta !== null ? (
-          <Text
-            style={[
-              type.stamp,
-              { color: good ? colors.moss : colors.alert },
-            ]}
-          >
+          <Text style={[type.stamp, { color: good ? colors.moss : colors.alert }]}>
             {delta > 0 ? '+' : ''}
             {Math.round(delta)}%
           </Text>
         ) : null}
       </View>
+    </View>
+  );
+}
+
+/**
+ * What every figure above actually counts. Folded away by default — it is
+ * there to be read once, not to sit between you and the numbers.
+ */
+function Glossary({
+  colors,
+  entries,
+}: {
+  colors: Colors;
+  entries: { term: string; meaning: string }[];
+}) {
+  const { type } = useTheme();
+  const styles = makeStyles(colors);
+  const [open, setOpen] = useState(false);
+
+  return (
+    <View style={styles.glossary}>
+      <Pressable onPress={() => setOpen((current) => !current)} hitSlop={8}>
+        <Text style={[type.label, styles.glossaryToggle]}>
+          {open ? 'HIDE WHAT THESE MEAN' : 'WHAT DO THESE MEAN?'}
+        </Text>
+      </Pressable>
+      {open
+        ? entries.map((entry) => (
+            <View key={entry.term} style={styles.glossaryRow}>
+              <Text style={[type.body, styles.glossaryTerm]}>{entry.term}</Text>
+              <Text style={[type.fine, styles.quiet]}>{entry.meaning}</Text>
+            </View>
+          ))
+        : null}
     </View>
   );
 }
@@ -565,6 +726,17 @@ function makeStyles(colors: Colors) {
     subtitle: { color: colors.mist, marginTop: 3 },
     chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
     quiet: { color: colors.mist },
+    halfBar: { flexDirection: 'row', marginTop: -6 },
+    halfTab: {
+      flex: 1,
+      alignItems: 'center',
+      paddingVertical: 10,
+      borderBottomWidth: 2,
+      borderBottomColor: colors.rule,
+    },
+    halfTabActive: { borderBottomColor: colors.moss },
+    halfText: { color: colors.mist },
+    halfTextActive: { color: colors.ink },
     tiles: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
     tile: {
       flexGrow: 1,
@@ -575,6 +747,7 @@ function makeStyles(colors: Colors) {
       borderTopColor: colors.rule,
     },
     tileValue: { fontSize: 21, color: colors.ink },
+    tileHint: { color: colors.mist, marginTop: 1 },
     headlineBlock: { gap: 3, paddingVertical: 4 },
     headline: { fontSize: 30, color: colors.ink },
     statRow: { flexDirection: 'row', gap: 16, paddingVertical: 10 },
@@ -604,5 +777,9 @@ function makeStyles(colors: Colors) {
     compareRight: { alignItems: 'flex-end', gap: 2 },
     donutRow: { flexDirection: 'row', alignItems: 'center', gap: 20, paddingVertical: 8 },
     donutStats: { flex: 1, gap: 12 },
+    glossary: { gap: 10, paddingTop: 4 },
+    glossaryToggle: { color: colors.mist },
+    glossaryRow: { gap: 2 },
+    glossaryTerm: { color: colors.ink },
   });
 }
