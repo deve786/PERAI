@@ -30,8 +30,8 @@ export default function TabsLayout() {
         },
         tabBarLabelStyle: {
           fontFamily: FONTS.mono,
-          fontSize: 10,
-          letterSpacing: 0.9,
+          fontSize: 9,
+          letterSpacing: 0.2,
           marginTop: 3,
         },
         sceneStyle: { backgroundColor: colors.paper },
@@ -61,6 +61,15 @@ export default function TabsLayout() {
           title: 'CALENDAR',
           tabBarIcon: ({ color }) => (
             <Ionicons name="calendar-outline" size={18} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="insights"
+        options={{
+          title: 'INSIGHTS',
+          tabBarIcon: ({ color }) => (
+            <Ionicons name="stats-chart-outline" size={17} color={color} />
           ),
         }}
       />

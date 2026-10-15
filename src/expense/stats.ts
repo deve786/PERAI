@@ -18,7 +18,7 @@ export function byCategory(rows: ExpenseRow[]): CatTotal[] {
 }
 
 /** Daily totals for short ranges (<= 45 days), weekly buckets for longer ones, monthly for very long. */
-export function trend(rows: ExpenseRow[], from: string, to: string): DayTotal[] {
+export function trend(rows: { date: string; amount: number }[], from: string, to: string): DayTotal[] {
   const span = daysBetween(from, to);
   const out: DayTotal[] = [];
   if (span <= 45) {

@@ -7,6 +7,19 @@ export interface ChangelogEntry {
 /** Newest first. Add a new entry here with every release that changes user-visible behaviour. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.11.0',
+    date: '2026-10-15',
+    highlights: [
+      'New Insights tab: one review of both halves of the app — what you spent, what you captured, what is still open, with charts and a comparison against the period before',
+      'One app, one navigation: the mode switch is gone and every screen now lives in a single tab bar',
+      'Expense is now the second tab, Calendar the third',
+      'Calendar decluttered: no more duplicate summary bars, and a day with nothing on it stays quiet',
+      'Quick Note and Brain Dump merged into a single capture box — it always picks apart everything you say',
+      'Upcoming Bills only appears once you actually have a recurring bill',
+      'Fixed receipt scanning, which had stopped working after Gemini retired the model it used',
+    ],
+  },
+  {
     version: '1.0.14',
     date: '2026-10-14',
     highlights: [
