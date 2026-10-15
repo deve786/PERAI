@@ -6,6 +6,7 @@ import { FONTS, SPACE, type Colors } from '@/theme';
 import type { Memory } from '@/types';
 import { planDay } from '@/today';
 import { listExpenses, listRecurring, getSetting, type ExpenseRow, type Recurring } from '@/expense/db';
+import { listBorrowLend } from '@/expense/borrowLendDb';
 import { monthRange, todayStr } from '@/expense/dates';
 import { sum, fmtMoney } from '@/expense/stats';
 
@@ -23,6 +24,7 @@ export function DailyBriefing({ memories, onOpenEntry }: Props) {
   const [monthlyBudget, setMonthlyBudget] = useState<number>(0);
   const [currencySymbol, setCurrencySymbol] = useState('₹');
   const [upcomingBills, setUpcomingBills] = useState<{ name: string; amount: number; dueInDays: number }[]>([]);
+  const [loanAlert, setLoanAlert] = useState<{ person: string; amount: number; dueText: string; isOverdue: boolean } | null>(null);
 
   const today = todayStr();
   const plan = useMemo(() => planDay(memories), [memories]);
@@ -43,11 +45,12 @@ export function DailyBriefing({ memories, onOpenEntry }: Props) {
         const month0 = Number(today.slice(5, 7)) - 1;
         const { from, to } = monthRange(year, month0);
 
-        const [monthExpenses, recurringList, budgetStr, sym] = await Promise.all([
+        const [monthExpenses, recurringList, budgetStr, sym, blList] = await Promise.all([
           listExpenses(from, to),
           listRecurring(),
           getSetting('monthly_budget', '0'),
           getSetting('currency_symbol', '₹'),
+          listBorrowLend({ status: 'active' }).catch(() => []),
         ]);
 
         if (!mounted) return;
@@ -74,6 +77,34 @@ export function DailyBriefing({ memories, onOpenEntry }: Props) {
           .sort((a, b) => a.dueInDays - b.dueInDays);
 
         setUpcomingBills(upcoming);
+
+        // Check active borrow/lend items due soon or overdue
+        const activeWithDue = blList.filter((b) => b.due_date && (b.type === 'lent' || b.type === 'borrowed'));
+        const urgent = activeWithDue.map((b) => {
+          const diffMs = new Date(b.due_date! + 'T00:00:00').getTime() - new Date(today + 'T00:00:00').getTime();
+          const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
+          return { ...b, diffDays };
+        }).filter((b) => b.diffDays <= 3)
+          .sort((a, b) => a.diffDays - b.diffDays)[0];
+
+        if (urgent) {
+          let dueText = '';
+          if (urgent.diffDays < 0) {
+            dueText = `${Math.abs(urgent.diffDays)}d overdue`;
+          } else if (urgent.diffDays === 0) {
+            dueText = 'due today';
+          } else if (urgent.diffDays === 1) {
+            dueText = 'due tomorrow';
+          } else {
+            dueText = `due in ${urgent.diffDays} days`;
+          }
+          setLoanAlert({
+            person: urgent.person_name,
+            amount: urgent.amount,
+            dueText,
+            isOverdue: urgent.diffDays < 0,
+          });
+        }
       } catch (err) {
         console.warn('Could not load DailyBriefing metrics:', err);
       }
@@ -99,7 +130,9 @@ export function DailyBriefing({ memories, onOpenEntry }: Props) {
       parts.push('Your schedule is clear for today.');
     }
 
-    if (urgentBill) {
+    if (loanAlert) {
+      parts.push(`${loanAlert.person}'s loan of ${currencySymbol}${loanAlert.amount} is ${loanAlert.dueText}.`);
+    } else if (urgentBill) {
       const whenStr = urgentBill.dueInDays === 0 ? 'today' : urgentBill.dueInDays === 1 ? 'tomorrow' : `in ${urgentBill.dueInDays} days`;
       parts.push(`${urgentBill.name} (${currencySymbol}${urgentBill.amount}) is due ${whenStr}.`);
     } else if (spentThisMonth !== null && monthlyBudget > 0) {
@@ -108,7 +141,7 @@ export function DailyBriefing({ memories, onOpenEntry }: Props) {
     }
 
     return parts.join(' ');
-  }, [overdueCount, todayCount, urgentBill, spentThisMonth, monthlyBudget, currencySymbol]);
+  }, [overdueCount, todayCount, urgentBill, spentThisMonth, monthlyBudget, currencySymbol, loanAlert]);
 
   return (
     <View style={styles.card}>
@@ -162,7 +195,17 @@ export function DailyBriefing({ memories, onOpenEntry }: Props) {
               </Text>
             </View>
 
-            {urgentBill ? (
+            {loanAlert ? (
+              <>
+                <View style={styles.metricDivider} />
+                <View style={styles.metricItem}>
+                  <Text style={[type.stamp, styles.metricLabel]}>LOAN DUE</Text>
+                  <Text style={[type.figure, loanAlert.isOverdue ? styles.alertValue : styles.billValue]} numberOfLines={1}>
+                    {loanAlert.dueText}
+                  </Text>
+                </View>
+              </>
+            ) : urgentBill ? (
               <>
                 <View style={styles.metricDivider} />
                 <View style={styles.metricItem}>

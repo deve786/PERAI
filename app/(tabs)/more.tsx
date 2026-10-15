@@ -18,6 +18,7 @@ export default function More() {
       <NavRow label="Timeline" icon="reorder-two-outline" onPress={() => router.push('/timeline')} />
       <NavRow label="Expense history" icon="receipt-outline" onPress={() => router.push('/expense-history')} />
       <NavRow label="Expense analytics" icon="stats-chart-outline" onPress={() => router.push('/expense-analytics')} />
+      <NavRow label="Borrow & Lend" icon="people-outline" onPress={() => router.push('/expense/borrow-lend')} />
       <NavRow label="Activity log" icon="pulse-outline" onPress={() => router.push('/logs')} />
       <NavRow label="Settings" icon="settings-outline" onPress={() => router.push('/settings')} />
     </ScrollView>

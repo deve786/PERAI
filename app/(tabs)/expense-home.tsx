@@ -3,6 +3,7 @@ import { Pressable, ScrollView, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { listExpenses, listIncome, listRecurring, refreshRecurring, type ExpenseRow, type IncomeRow, type Recurring } from '@/expense/db';
+import { getBorrowLendSummary, type BorrowLendSummary } from '@/expense/borrowLendDb';
 import { monthName, monthRange, todayStr, addDays } from '@/expense/dates';
 import { byCategory, fmtMoney, sum } from '@/expense/stats';
 import { budgetTone, useTheme } from '@/expense/theme';
@@ -21,6 +22,7 @@ export default function Home() {
   const [incomeRows, setIncomeRows] = useState<IncomeRow[]>([]);
   const [recent, setRecent] = useState<Recent[]>([]);
   const [recurring, setRecurring] = useState<Recurring[]>([]);
+  const [borrowLend, setBorrowLend] = useState<BorrowLendSummary | null>(null);
 
   // Derived from the date string rather than a Date object: primitives keep the
   // memoised range referentially stable, which the focus effect depends on.
@@ -36,18 +38,20 @@ export default function Home() {
     const prevMonth0 = month0 === 0 ? 11 : month0 - 1;
     const prevYear = month0 === 0 ? year - 1 : year;
     const prevRange = monthRange(prevYear, prevMonth0);
-    const [monthExpenses, monthIncome, allExpenses, allIncome, prevExpenses, recList] = await Promise.all([
+    const [monthExpenses, monthIncome, allExpenses, allIncome, prevExpenses, recList, blSummary] = await Promise.all([
       listExpenses(from, to),
       listIncome(from, to),
       listExpenses(),
       listIncome(),
       listExpenses(prevRange.from, prevRange.to),
       listRecurring(),
+      getBorrowLendSummary().catch(() => null),
     ]);
     setRows(monthExpenses);
     setIncomeRows(monthIncome);
     setLastMonthTotal(sum(prevExpenses));
     setRecurring(recList);
+    setBorrowLend(blSummary);
     const merged: Recent[] = [
       ...allExpenses.map((row): Recent => ({ kind: 'expense', row })),
       ...allIncome.map((row): Recent => ({ kind: 'income', row })),
@@ -75,6 +79,14 @@ export default function Home() {
         <Row style={{ justifyContent: 'space-between', alignItems: 'center' }}>
           <T size={14} sub>{monthName(month0)} {year}</T>
           <Row style={{ gap: 16, alignItems: 'center' }}>
+            <Pressable
+              onPress={() => router.push('/expense/borrow-lend')}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel="Borrow & Lend"
+            >
+              <Ionicons name="people-outline" size={21} color={c.sub} />
+            </Pressable>
             <Pressable
               onPress={() => router.push('/expense-history')}
               hitSlop={10}
@@ -145,6 +157,60 @@ export default function Home() {
           </View>
         </Row>
 
+        {borrowLend && (borrowLend.totalLentActive > 0 || borrowLend.pendingRequestsCount > 0 || borrowLend.totalBorrowedActive > 0) ? (
+          <Pressable
+            onPress={() => router.push('/expense/borrow-lend')}
+            style={({ pressed }) => ({
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              backgroundColor: c.card,
+              borderRadius: 8,
+              paddingVertical: 12,
+              paddingHorizontal: 14,
+              marginTop: 18,
+              borderWidth: 1,
+              borderColor: c.line,
+              opacity: pressed ? 0.75 : 1,
+            })}
+          >
+            <Row style={{ gap: 12, alignItems: 'center', flex: 1 }}>
+              <View
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: 16,
+                  backgroundColor: `${c.good}20`,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Ionicons name="people" size={16} color={c.good} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Row style={{ alignItems: 'center', gap: 6 }}>
+                  <T size={13} weight="600">Borrow & Lend</T>
+                  {borrowLend.pendingRequestsCount > 0 && (
+                    <View style={{ backgroundColor: '#F59E0B25', paddingHorizontal: 6, paddingVertical: 1, borderRadius: 6 }}>
+                      <T size={10} weight="700" style={{ color: '#D97706' }}>
+                        {borrowLend.pendingRequestsCount} new request{borrowLend.pendingRequestsCount > 1 ? 's' : ''}
+                      </T>
+                    </View>
+                  )}
+                </Row>
+                <T size={12} sub numberOfLines={1}>
+                  {borrowLend.totalLentActive > 0
+                    ? `${fmtMoney(borrowLend.totalLentActive, symbol)} owed to you`
+                    : borrowLend.totalBorrowedActive > 0
+                    ? `You owe ${fmtMoney(borrowLend.totalBorrowedActive, symbol)}`
+                    : `${borrowLend.pendingRequestsCount} pending requests`}
+                </T>
+              </View>
+            </Row>
+            <Ionicons name="chevron-forward" size={16} color={c.sub} />
+          </Pressable>
+        ) : null}
+
         {top && (
           <>
             <Divider style={{ marginTop: 20 }} />
@@ -160,17 +226,33 @@ export default function Home() {
         )}
 
         <Button title="Add expense" icon="add" onPress={() => router.push('/expense/expense')} style={{ marginTop: 24 }} />
-        <Pressable
-          onPress={() => router.push('/expense/income')}
-          hitSlop={8}
-          style={({ pressed }) => ({
-            flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-            marginTop: 14, opacity: pressed ? 0.6 : 1,
-          })}
-        >
-          <Ionicons name="add-circle-outline" size={16} color={c.good} />
-          <T size={13.5} weight="600" style={{ color: c.good }}>Add income</T>
-        </Pressable>
+        <Row style={{ justifyContent: 'center', alignItems: 'center', gap: 16, marginTop: 14 }}>
+          <Pressable
+            onPress={() => router.push('/expense/income')}
+            hitSlop={8}
+            style={({ pressed }) => ({
+              flexDirection: 'row', alignItems: 'center', gap: 6,
+              opacity: pressed ? 0.6 : 1,
+            })}
+          >
+            <Ionicons name="add-circle-outline" size={16} color={c.good} />
+            <T size={13.5} weight="600" style={{ color: c.good }}>Add income</T>
+          </Pressable>
+
+          <View style={{ width: 1, height: 12, backgroundColor: c.line }} />
+
+          <Pressable
+            onPress={() => router.push('/expense/borrow-lend')}
+            hitSlop={8}
+            style={({ pressed }) => ({
+              flexDirection: 'row', alignItems: 'center', gap: 6,
+              opacity: pressed ? 0.6 : 1,
+            })}
+          >
+            <Ionicons name="people-outline" size={16} color={c.sub} />
+            <T size={13.5} weight="600" style={{ color: c.sub }}>Borrow & Lend</T>
+          </Pressable>
+        </Row>
 
         <UpcomingBills recurring={recurring} onBillPaid={load} />
 
