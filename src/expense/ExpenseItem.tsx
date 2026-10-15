@@ -7,7 +7,7 @@ import { prettyDate } from './dates';
 import { FONTS, useTheme } from './theme';
 import { ConfirmDialog, IconDot, Money, Row, T } from './ui';
 
-export function ExpenseItem({ e, showDate = true, onDeleted }: { e: ExpenseRow; showDate?: boolean; onDeleted?: () => void }) {
+export function ExpenseItem({ e, showDate = true, onDeleted, trip }: { e: ExpenseRow; showDate?: boolean; onDeleted?: () => void; /** Title of the PERAI entry this belongs to, when it belongs to one. */ trip?: string }) {
   const { c } = useTheme();
   const router = useRouter();
   const [confirming, setConfirming] = useState(false);
@@ -18,6 +18,7 @@ export function ExpenseItem({ e, showDate = true, onDeleted }: { e: ExpenseRow; 
     showDate ? prettyDate(e.date).toUpperCase() : null,
     e.recurring_id ? 'REPEATS' : null,
     e.item_count > 1 ? `${e.item_count} ITEMS` : null,
+    trip ? trip.toUpperCase() : null,
   ]
     .filter(Boolean)
     .join('  ·  ');

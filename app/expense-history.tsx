@@ -1,7 +1,8 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import { FlatList, ScrollView, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
-import { listCategories, listExpenses, listIncome, listIncomeCategories, type Category, type ExpenseRow, type IncomeRow } from '@/expense/db';
+import { expenseTripLabels, listCategories, listExpenses, listIncome, listIncomeCategories, type Category, type ExpenseRow, type IncomeRow } from '@/expense/db';
+import { getAllMemories } from '@/db/queries';
 import { sum } from '@/expense/stats';
 import { useTheme } from '@/expense/theme';
 import { Chip, Divider, Empty, Field, Row, Screen, T, Title } from '@/expense/ui';
@@ -17,18 +18,33 @@ export default function History() {
   const [incomeRows, setIncomeRows] = useState<IncomeRow[]>([]);
   const [expenseCats, setExpenseCats] = useState<Category[]>([]);
   const [incomeCats, setIncomeCats] = useState<Category[]>([]);
+  /** Entry title per expense id, for the trip badge. */
+  const [tripFor, setTripFor] = useState<Map<string, string>>(new Map());
   const [q, setQ] = useState('');
   const [catName, setCatName] = useState<string | null>(null);
   const [kind, setKind] = useState<Kind>('all');
 
   const load = useCallback(async () => {
-    const [ex, inc, exCats, incCats] = await Promise.all([
+    const [ex, inc, exCats, incCats, links, memories] = await Promise.all([
       listExpenses(), listIncome(), listCategories(), listIncomeCategories(),
+      expenseTripLabels(), getAllMemories().catch(() => []),
     ]);
     setExpenseRows(ex);
     setIncomeRows(inc);
     setExpenseCats(exCats);
     setIncomeCats(incCats);
+
+    // The link table knows entry ids; the titles live in the other database,
+    // so they are joined here rather than in SQL.
+    const titles = new Map(memories.map((m) => [m.id, m.title]));
+    setTripFor(
+      new Map(
+        [...links].flatMap(([expenseId, memoryId]) => {
+          const title = titles.get(memoryId);
+          return title ? ([[expenseId, title]] as [string, string][]) : [];
+        })
+      )
+    );
   }, []);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
@@ -116,7 +132,7 @@ export default function History() {
         contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 40 }}
         renderItem={({ item }) =>
           item.kind === 'expense'
-            ? <ExpenseItem e={item.row} onDeleted={load} />
+            ? <ExpenseItem e={item.row} onDeleted={load} trip={tripFor.get(item.row.id)} />
             : <IncomeItem e={item.row} onDeleted={load} />
         }
         ListEmptyComponent={

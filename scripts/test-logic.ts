@@ -35,6 +35,25 @@ import { hasPassed, isStruck, overdueToClose, sinkStruck } from '../src/strike';
 import { nextOccurrence } from '../src/repeat';
 import { planDay } from '../src/today';
 import { weekInReview } from '../src/review';
+import {
+  budgetTone,
+  budgetTotals,
+  categoryBudgetStatus,
+  crossedThreshold,
+} from '../src/expense/budgets';
+import { monthRange } from '../src/expense/dates';
+import {
+  categoryBreakdown,
+  isValidSpan,
+  linkId,
+  suggestExpenses,
+  totalsByCurrency,
+  type LinkableExpense,
+} from '../src/expense/tripSpending';
+import { tripSpendQuestion } from '../src/tripQuestion';
+
+import type { Category as ExpenseCategory } from '../src/expense/db';
+
 import { nextCursor, shouldApplyRemote, toLocal, toRemote } from '../src/sync/mapping';
 import { isQuotaError, nextDailyReset, quotaMessage, quotaWait } from '../src/ai/quota';
 import { acceptCorrection, similarity } from '../src/titleMatch';
@@ -83,6 +102,7 @@ function memory(partial: Partial<Memory> & { title: string; eventDate: string })
     status: 'active',
     confirmed: true,
     repeat: null,
+    endDate: null,
     ...partial,
   };
 }
@@ -932,6 +952,178 @@ section('net worth and wealth calculations');
   // Test empty case
   const emptyRes = computeNetWorth([], { totalLentActive: 0, totalBorrowedActive: 0 });
   check('empty accounts have zero net worth', emptyRes.netWorth === 0 && emptyRes.accountsCount === 0);
+}
+
+section('per-category budgets');
+{
+  const category = (
+    id: string,
+    name: string,
+    monthly_budget: number | null
+  ): ExpenseCategory => ({ id, name, icon: 'cart-outline', color: '#2E7DB8', monthly_budget });
+
+  const cats = [
+    category('food', 'Food', 3000),
+    category('fuel', 'Fuel', 2000),
+    category('gifts', 'Gifts', null), // no budget: left out entirely
+    category('zero', 'Zero', 0), // a budget of nothing says nothing
+  ];
+
+  const spent = new Map([
+    ['food', 2100], // exactly 70%
+    ['fuel', 2600], // over
+    ['gifts', 900],
+    ['zero', 50],
+  ]);
+
+  const status = categoryBudgetStatus(cats, spent);
+  check('only categories with a budget are shown', status.map((s) => s.id).join('|') === 'fuel|food', status.map((s) => s.id));
+  check('the most used comes first', status[0].id === 'fuel');
+  check('exactly 70% is a warning, not green', status[1].tone === 'warn', status[1]);
+  check('over budget is red', status[0].tone === 'over');
+  check('what is left can go negative', status[0].remaining === -600, status[0].remaining);
+
+  check('just under 70% is still green', budgetTone(0.6999) === 'good');
+  check('exactly 100% is not yet over', budgetTone(1) === 'warn');
+  check('a hair over 100% is over', budgetTone(1.0001) === 'over');
+
+  const empty = categoryBudgetStatus(cats, new Map());
+  check('a month with nothing spent reads as zero, not missing', empty.length === 2 && empty[0].spent === 0 && empty[0].fraction === 0);
+
+  const totals = budgetTotals(cats, 6000);
+  check('budgets add up', totals.allocated === 5000, totals.allocated);
+  check('what is left unallocated is reported', totals.unallocated === 1000);
+  check('promising less than the overall budget is fine', totals.overAllocated === false);
+  check('promising more is flagged', budgetTotals(cats, 4000).overAllocated === true);
+  check('with no overall budget nothing is over-allocated', budgetTotals(cats, 0).overAllocated === false);
+
+  // Thresholds: the moment of crossing, not every expense after it.
+  check('crossing 80% is announced', crossedThreshold(3000, 2300, 2500) === 0.8);
+  check('landing exactly on 80% counts', crossedThreshold(3000, 2000, 2400) === 0.8);
+  check('crossing the whole budget is announced', crossedThreshold(3000, 2900, 3100) === 1);
+  check('landing exactly on the budget counts', crossedThreshold(3000, 2900, 3000) === 1);
+  check('one expense crossing both reports the higher', crossedThreshold(3000, 100, 3100) === 1);
+  check('already over says nothing more', crossedThreshold(3000, 3100, 3600) === null);
+  check('well short says nothing', crossedThreshold(3000, 100, 200) === null);
+  check('no budget says nothing', crossedThreshold(null, 0, 5000) === null);
+  check('a zero budget says nothing', crossedThreshold(0, 0, 5000) === null);
+}
+
+section('budget month boundaries');
+{
+  // The month's spend is a SQL range query; these check the range itself.
+  const { from, to } = monthRange(2026, 9); // October 2026
+  check('a month starts on the 1st', from === '2026-10-01', from);
+  check('and ends on its last day', to === '2026-10-31', to);
+  check('February is handled', monthRange(2027, 1).to === '2027-02-28', monthRange(2027, 1).to);
+  check('a leap February is handled', monthRange(2028, 1).to === '2028-02-29', monthRange(2028, 1).to);
+  check('December rolls over correctly', monthRange(2026, 11).to === '2026-12-31');
+
+  const within = (date: string) => date >= from && date <= to;
+  check('the first day of the month counts', within('2026-10-01'));
+  check('the last day counts', within('2026-10-31'));
+  check('the day before does not', !within('2026-09-30'));
+  check('the day after does not', !within('2026-11-01'));
+}
+
+section('a trip and the spending during it');
+{
+  const spend = (
+    id: string,
+    date: string,
+    amount: number,
+    cat_name = 'Food',
+    currency?: string
+  ): LinkableExpense => ({ id, date, amount, cat_name, currency });
+
+  const rows = [
+    spend('a', '2026-10-02', 500), // the day before
+    spend('b', '2026-10-03', 1200, 'Travel'), // first day
+    spend('c', '2026-10-04', 800),
+    spend('d', '2026-10-06', 300, 'Travel'), // last day
+    spend('e', '2026-10-07', 900), // the day after
+  ];
+
+  const span = { from: '2026-10-03', to: '2026-10-06' };
+
+  const suggested = suggestExpenses(rows, span);
+  check('both boundary days are inside the trip', suggested.map((r) => r.id).join('') === 'bcd', suggested.map((r) => r.id));
+  check('the day before is outside', !suggested.some((r) => r.id === 'a'));
+  check('the day after is outside', !suggested.some((r) => r.id === 'e'));
+  check('suggestions run in date order', suggested[0].date <= suggested[1].date);
+
+  const oneDay = suggestExpenses(rows, { from: '2026-10-04', to: '2026-10-04' });
+  check('a single-day trip still gathers that day', oneDay.map((r) => r.id).join('') === 'c', oneDay.map((r) => r.id));
+
+  check('a span that ends before it starts is refused', isValidSpan('2026-10-06', '2026-10-03') === false);
+  check('and gathers nothing', suggestExpenses(rows, { from: '2026-10-06', to: '2026-10-03' }).length === 0);
+  check('a single day is a valid span', isValidSpan('2026-10-04', '2026-10-04') === true);
+  check('a missing end is not a span', isValidSpan('2026-10-04', '') === false);
+
+  const alreadyLinked = suggestExpenses(rows, span, new Set(['c']));
+  check('what is already linked is not offered again', alreadyLinked.map((r) => r.id).join('') === 'bd', alreadyLinked.map((r) => r.id));
+
+  // Deleted expenses never reach here: listExpenses filters deleted = 0, and
+  // the suggestion list is built from it.
+  check('an empty list suggests nothing', suggestExpenses([], span).length === 0);
+
+  const totals = totalsByCurrency(suggested, '₹');
+  check('one currency totals to one figure', totals.length === 1 && totals[0].total === 2300, totals);
+  check('and counts the expenses behind it', totals[0].count === 3);
+
+  const mixed = totalsByCurrency(
+    [spend('x', '2026-10-03', 4000), spend('y', '2026-10-04', 40, 'Food', '$')],
+    '₹'
+  );
+  check('two currencies are never added together', mixed.length === 2, mixed);
+  check('the larger total leads', mixed[0].currency === '₹' && mixed[0].total === 4000);
+  check('and the other keeps its own', mixed[1].currency === '$' && mixed[1].total === 40);
+
+  const breakdown = categoryBreakdown(suggested);
+  check('categories are totalled, biggest first', breakdown[0].name === 'Travel' && breakdown[0].total === 1500, breakdown);
+  check('and counted', breakdown[0].count === 2);
+
+  check('a link id is derived from the pair', linkId('mem1', 'exp1') === 'mem1:exp1');
+  check('so the same pair is always the same row', linkId('mem1', 'exp1') === linkId('mem1', 'exp1'));
+}
+
+section('asking what a trip cost');
+{
+  const trip = (title: string, endDate: string | null, over: Partial<Memory> = {}) =>
+    memory({
+      title,
+      type: 'memory',
+      category: 'Travel',
+      eventDate: '2026-10-03T12:00:00.000Z',
+      endDate,
+      ...over,
+    });
+
+  const kozhikode = trip('Kozhikode trip', '2026-10-06T12:00:00.000Z');
+  const goa = trip('Goa weekend', '2026-10-20T12:00:00.000Z');
+  const haircut = trip('Got a haircut', null);
+  const all = [kozhikode, goa, haircut];
+
+  check(
+    'a spend question naming the trip finds it',
+    tripSpendQuestion('how much did I spend on my Kozhikode trip', all)?.id === kozhikode.id
+  );
+  check('case does not matter', tripSpendQuestion('what did the KOZHIKODE trip cost', all)?.id === kozhikode.id);
+  check('another trip is matched on its own name', tripSpendQuestion('how much was the Goa weekend', all)?.id === goa.id);
+  check(
+    'a question with no money in it is not ours',
+    tripSpendQuestion('when was my Kozhikode trip', all) === null
+  );
+  check(
+    'a spend question naming nothing is not ours',
+    tripSpendQuestion('how much did I spend last month', all) === null
+  );
+  check(
+    'common words alone do not match a trip',
+    tripSpendQuestion('how much did I spend on the trip', all) === null
+  );
+  check('an entry with no end date is never a trip', tripSpendQuestion('what did the haircut cost', all) === null);
+  check('with nothing recorded there is nothing to match', tripSpendQuestion('how much did I spend on my Kozhikode trip', []) === null);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

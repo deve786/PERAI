@@ -12,6 +12,7 @@ import {
   View,
 } from 'react-native';
 import { ChipRow } from '@/components/Chip';
+import { TripSpending } from '@/components/TripSpending';
 import { completeMemory, reopenMemory } from '@/complete';
 import { deleteMemory, getMemory, rememberSpelling, updateMemory } from '@/db/queries';
 import { fullDateLabel, hasStatedTime, timeLabel } from '@/format';
@@ -57,6 +58,13 @@ const SNOOZE_PRESETS: { label: string; calc: () => { date: Date; desc: string } 
       return { date: d, desc: 'next Monday at 9:00 AM' };
     },
   },
+];
+
+/** How long a span runs, counted from the day it starts. */
+const ENDS: { label: string; days: number }[] = [
+  { label: 'SAME DAY', days: 0 },
+  { label: '+2 DAYS', days: 2 },
+  { label: '+1 WEEK', days: 7 },
 ];
 
 /** Moving an entry on: the handful of answers that cover almost every case. */
@@ -125,6 +133,29 @@ export default function EntryScreen() {
     await patch({ eventDate: target.date.toISOString(), dateExpression: target.desc });
     await syncReminders().catch(() => {});
     logOk('Snoozed entry', entry.title);
+  };
+
+  /** Give the entry a span of this many days, or clear it with 0. */
+  const setEnd = async (days: number) => {
+    if (days === 0) {
+      await patch({ endDate: null });
+      return;
+    }
+    const end = new Date(entry.eventDate);
+    end.setDate(end.getDate() + days);
+    await patch({ endDate: end.toISOString() });
+  };
+
+  /** Lengthen or shorten the span, never past the day it starts. */
+  const nudgeEnd = async (days: number) => {
+    if (!entry.endDate) return;
+    const end = new Date(entry.endDate);
+    end.setDate(end.getDate() + days);
+    if (end.getTime() < new Date(entry.eventDate).getTime()) {
+      Alert.alert('It cannot end before it starts', 'Pick a day on or after the start.');
+      return;
+    }
+    await patch({ endDate: end.toISOString() });
   };
 
   const saveTitle = async () => {
@@ -212,6 +243,38 @@ export default function EntryScreen() {
             </Pressable>
           </View>
         </View>
+
+        {/* An entry that covers days rather than a moment — a trip. Gives the
+            Spending card below a span to gather expenses from. */}
+        <View style={styles.field}>
+          <Text style={type.label}>ENDS</Text>
+          <Text style={type.body}>
+            {entry.endDate ? fullDateLabel(entry.endDate) : 'Same day'}
+          </Text>
+          <View style={styles.pushRow}>
+            {ENDS.map((option) => (
+              <Pressable
+                key={option.label}
+                onPress={() => void setEnd(option.days)}
+                style={({ pressed }) => [styles.push, pressed && styles.pressed]}
+              >
+                <Text style={[type.label, styles.pushText]}>{option.label}</Text>
+              </Pressable>
+            ))}
+          </View>
+          {entry.endDate ? (
+            <View style={styles.stepRow}>
+              <Pressable onPress={() => void nudgeEnd(-1)} hitSlop={8}>
+                <Text style={[type.label, styles.step]}>A DAY SHORTER</Text>
+              </Pressable>
+              <Pressable onPress={() => void nudgeEnd(1)} hitSlop={8}>
+                <Text style={[type.label, styles.step]}>A DAY LONGER</Text>
+              </Pressable>
+            </View>
+          ) : null}
+        </View>
+
+        {entry.endDate ? <TripSpending memory={entry} /> : null}
 
         <View style={styles.field}>
           <Text style={type.label}>REPEATS</Text>

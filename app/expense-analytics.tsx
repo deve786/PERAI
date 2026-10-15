@@ -1,9 +1,9 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Platform, Pressable, ScrollView, View, useWindowDimensions } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
-import { listExpenses, type ExpenseRow } from '@/expense/db';
+import { listCategories, listExpenses, type ExpenseRow } from '@/expense/db';
 import { addDays, daysBetween, fromStr, monthName, monthRange, prettyRange, toStr, todayStr } from '@/expense/dates';
 import { byCategory, fmtMoney, previousRange, sum, trend } from '@/expense/stats';
 import { radius, useTheme } from '@/expense/theme';
@@ -43,6 +43,27 @@ export default function Analytics() {
   const prevTotal = sum(prevRows);
   const span = daysBetween(from, to);
   const cats = useMemo(() => byCategory(rows), [rows]);
+  const [catBudgets, setCatBudgets] = useState<Map<string, number>>(new Map());
+
+  // Budget markers on the bars; categories without one simply have no mark.
+  useEffect(() => {
+    let alive = true;
+    listCategories()
+      .then((list) => {
+        if (!alive) return;
+        setCatBudgets(
+          new Map(
+            list
+              .filter((k) => k.monthly_budget !== null && k.monthly_budget > 0)
+              .map((k) => [k.name, k.monthly_budget as number])
+          )
+        );
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
   const series = useMemo(() => trend(rows, from, to), [rows, from, to]);
   const biggest = useMemo(() => [...rows].sort((a, b) => b.amount - a.amount).slice(0, 5), [rows]);
   const methods = useMemo(() => {
@@ -162,7 +183,7 @@ export default function Analytics() {
           <>
             <Section title="Where it went" />
             <Divider />
-            <RankedCategories data={cats} total={total} />
+            <RankedCategories data={cats} total={total} budgets={catBudgets} />
 
             <Section title={span <= 45 ? 'Day by day' : span <= 190 ? 'Week by week' : 'Month by month'} />
             <Bars data={series} width={width - 40} />

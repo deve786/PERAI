@@ -47,27 +47,59 @@ export function Bars({ data, width, height = 140 }: { data: DayTotal[]; width: n
  * Ranked magnitude comparison. Every row is directly labelled, so the colour is
  * identity only — never the sole carrier of meaning.
  */
-export function RankedCategories({ data, total }: { data: CatTotal[]; total: number }) {
+export function RankedCategories({
+  data,
+  total,
+  budgets,
+}: {
+  data: CatTotal[];
+  total: number;
+  /** Monthly budget per category name, for the ones that have one. */
+  budgets?: Map<string, number>;
+}) {
   const { c } = useTheme();
   const max = Math.max(...data.map((d) => d.total), 1);
 
   return (
     <View>
-      {data.map((k) => (
-        <View key={k.name} style={{ paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: c.line }}>
-          <Row style={{ justifyContent: 'space-between', marginBottom: 8 }}>
-            <Row style={{ gap: 9, flex: 1 }}>
-              <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: k.color }} />
-              <T size={15} weight="600" numberOfLines={1}>{k.name}</T>
+      {data.map((k) => {
+        const budget = budgets?.get(k.name);
+        // Where the budget falls on the same scale as the bars. Past the end
+        // of the track means the budget is larger than the biggest category,
+        // and there is nowhere honest to draw it.
+        const mark = budget && budget > 0 ? budget / max : null;
+        return (
+          <View key={k.name} style={{ paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: c.line }}>
+            <Row style={{ justifyContent: 'space-between', marginBottom: 8 }}>
+              <Row style={{ gap: 9, flex: 1 }}>
+                <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: k.color }} />
+                <T size={15} weight="600" numberOfLines={1}>{k.name}</T>
+              </Row>
+              <Row style={{ gap: 10 }}>
+                <T size={13} sub tabular>{total > 0 ? Math.round((k.total / total) * 100) : 0}%</T>
+                <Money value={k.total} size={15} weight="600" />
+              </Row>
             </Row>
-            <Row style={{ gap: 10 }}>
-              <T size={13} sub tabular>{total > 0 ? Math.round((k.total / total) * 100) : 0}%</T>
-              <Money value={k.total} size={15} weight="600" />
-            </Row>
-          </Row>
-          <Meter fraction={k.total / max} tone={k.color} height={4} />
-        </View>
-      ))}
+            <View>
+              <Meter fraction={k.total / max} tone={k.color} height={4} />
+              {mark !== null && mark <= 1 && (
+                <View
+                  pointerEvents="none"
+                  accessibilityLabel={`Budget mark for ${k.name}`}
+                  style={{
+                    position: 'absolute',
+                    left: `${mark * 100}%`,
+                    top: -2,
+                    width: 2,
+                    height: 8,
+                    backgroundColor: c.text,
+                  }}
+                />
+              )}
+            </View>
+          </View>
+        );
+      })}
     </View>
   );
 }

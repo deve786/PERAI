@@ -32,7 +32,9 @@ import { FONTS, GUTTER, SPACE, type Colors } from '@/theme';
 import { formatAmount, shortDate } from '@/format';
 import { reminderTime } from '@/reminderTime';
 import { useMemories } from '@/useMemories';
+import { answerTripSpend } from '@/expense/tripAnswer';
 import { knownPeople } from '@/speechText';
+import { tripSpendQuestion } from '@/tripQuestion';
 import { useVoiceInput } from '@/useVoiceInput';
 
 // Prompts that work even on day one, before any week-of-data facts exist.
@@ -183,7 +185,16 @@ export default function AskScreen() {
         Number(await getSetting('budget', '0')) || 0
       ).catch(() => undefined);
 
-      const result = await askAI(q, new Date().toISOString(), await getAllMemories(), history, expenseContext);
+      const all = await getAllMemories();
+
+      // "How much did I spend on my Kozhikode trip?" is a SUM over the link
+      // table: answered here, at once and exactly, rather than by the model.
+      // Anything it cannot answer falls through to the ordinary flow.
+      const trip = tripSpendQuestion(q, all);
+      const tripAnswer = trip ? await answerTripSpend(trip) : null;
+
+      const result =
+        tripAnswer ?? (await askAI(q, new Date().toISOString(), all, history, expenseContext));
       setThread((current) => [{ question: q, result }, ...current]);
       await saveQuestion(q);
       await loadRecent();

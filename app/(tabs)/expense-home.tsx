@@ -2,17 +2,26 @@ import React, { useCallback, useMemo, useState } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { listExpenses, listIncome, listRecurring, refreshRecurring, type ExpenseRow, type IncomeRow, type Recurring } from '@/expense/db';
+import { categorySpendBetween, listCategories, listExpenses, listIncome, listRecurring, refreshRecurring, type Category, type ExpenseRow, type IncomeRow, type Recurring } from '@/expense/db';
+import { categoryBudgetStatus } from '@/expense/budgets';
+import { takeBudgetAlert } from '@/expense/budgetAlerts';
 import { getBorrowLendSummary, type BorrowLendSummary } from '@/expense/borrowLendDb';
 import { getNetWorthSummary, type NetWorthSummary } from '@/expense/accountsDb';
 import { monthName, monthRange, todayStr, addDays } from '@/expense/dates';
 import { byCategory, fmtMoney, sum } from '@/expense/stats';
-import { budgetTone, useTheme } from '@/expense/theme';
+import { budgetTone, radius, useTheme, type Colors } from '@/expense/theme';
 import { Button, Divider, Empty, Meter, Money, Row, Screen, Section, T } from '@/expense/ui';
 import { ExpenseItem } from '@/expense/ExpenseItem';
 import { IncomeItem } from '@/expense/IncomeItem';
 import { ExpenseSyncButton } from '@/components/ExpenseSyncButton';
 import { UpcomingBills } from '@/components/UpcomingBills';
+
+/** The pure tone names from budgets.ts, in this zone's colours. */
+function budgetToneColor(tone: 'good' | 'warn' | 'over', c: Colors) {
+  if (tone === 'over') return c.danger;
+  if (tone === 'warn') return c.warn;
+  return c.good;
+}
 
 type Recent = { kind: 'expense'; row: ExpenseRow } | { kind: 'income'; row: IncomeRow };
 
@@ -25,6 +34,9 @@ export default function Home() {
   const [recurring, setRecurring] = useState<Recurring[]>([]);
   const [borrowLend, setBorrowLend] = useState<BorrowLendSummary | null>(null);
   const [netWorth, setNetWorth] = useState<NetWorthSummary | null>(null);
+  const [cats, setCats] = useState<Category[]>([]);
+  const [spentPerCat, setSpentPerCat] = useState<Map<string, number>>(new Map());
+  const [budgetAlert, setBudgetAlert] = useState<string | null>(null);
 
   // Derived from the date string rather than a Date object: primitives keep the
   // memoised range referentially stable, which the focus effect depends on.
@@ -40,7 +52,7 @@ export default function Home() {
     const prevMonth0 = month0 === 0 ? 11 : month0 - 1;
     const prevYear = month0 === 0 ? year - 1 : year;
     const prevRange = monthRange(prevYear, prevMonth0);
-    const [monthExpenses, monthIncome, allExpenses, allIncome, prevExpenses, recList, blSummary, nwSummary] = await Promise.all([
+    const [monthExpenses, monthIncome, allExpenses, allIncome, prevExpenses, recList, blSummary, nwSummary, catList, perCategory] = await Promise.all([
       listExpenses(from, to),
       listIncome(from, to),
       listExpenses(),
@@ -49,6 +61,8 @@ export default function Home() {
       listRecurring(),
       getBorrowLendSummary().catch(() => null),
       getNetWorthSummary().catch(() => null),
+      listCategories(),
+      categorySpendBetween(from, to),
     ]);
     setRows(monthExpenses);
     setIncomeRows(monthIncome);
@@ -56,6 +70,10 @@ export default function Home() {
     setRecurring(recList);
     setBorrowLend(blSummary);
     setNetWorth(nwSummary);
+    setCats(catList);
+    setSpentPerCat(perCategory);
+    // Left behind by the expense screen when a budget was just crossed.
+    setBudgetAlert(await takeBudgetAlert());
     const merged: Recent[] = [
       ...allExpenses.map((row): Recent => ({ kind: 'expense', row })),
       ...allIncome.map((row): Recent => ({ kind: 'income', row })),
@@ -73,6 +91,8 @@ export default function Home() {
   const top = byCategory(rows)[0];
   const pct = budget > 0 ? total / budget : 0;
   const tone = budgetTone(pct, c);
+  // Only categories with a budget, most-used first (src/expense/budgets.ts).
+  const catBudgets = useMemo(() => categoryBudgetStatus(cats, spentPerCat), [cats, spentPerCat]);
   const vsLastMonth = lastMonthTotal !== null && lastMonthTotal > 0
     ? Math.round(((total - lastMonthTotal) / lastMonthTotal) * 100)
     : null;
@@ -80,6 +100,27 @@ export default function Home() {
   return (
     <Screen>
       <ScrollView contentContainerStyle={{ padding: 20, paddingTop: 12, paddingBottom: 40 }}>
+        {/* Left here by the expense screen when a budget was just crossed.
+            Tapping it away is the only thing it asks of you. */}
+        {budgetAlert !== null && (
+          <Pressable
+            onPress={() => setBudgetAlert(null)}
+            accessibilityRole="button"
+            accessibilityLabel={`${budgetAlert}. Tap to dismiss.`}
+            style={{
+              marginBottom: 14,
+              paddingVertical: 11,
+              paddingHorizontal: 14,
+              borderRadius: radius.md,
+              borderLeftWidth: 3,
+              borderLeftColor: c.warn,
+              backgroundColor: c.card,
+            }}
+          >
+            <T size={13.5} weight="600">{budgetAlert}</T>
+          </Pressable>
+        )}
+
         <Row style={{ justifyContent: 'space-between', alignItems: 'center' }}>
           <T size={14} sub>{monthName(month0)} {year}</T>
           <Row style={{ gap: 16, alignItems: 'center' }}>
@@ -141,6 +182,27 @@ export default function Home() {
                   : `${fmtMoney(budget - total, symbol)} left`}
               </T>
             </Row>
+          </View>
+        )}
+
+        {/* Per-category budgets, tightest first. Categories without one are
+            left out entirely — not setting a budget is a choice. */}
+        {catBudgets.length > 0 && (
+          <View style={{ marginTop: budget > 0 ? 16 : 18, gap: 11 }}>
+            {catBudgets.map((k) => (
+              <View key={k.id}>
+                <Row style={{ justifyContent: 'space-between', marginBottom: 5 }}>
+                  <Row style={{ gap: 8, flex: 1 }}>
+                    <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: k.color }} />
+                    <T size={13} weight="600" numberOfLines={1}>{k.name}</T>
+                  </Row>
+                  <T size={12} sub tabular>
+                    {fmtMoney(k.spent, symbol)} / {fmtMoney(k.budget, symbol)}
+                  </T>
+                </Row>
+                <Meter fraction={k.fraction} tone={budgetToneColor(k.tone, c)} />
+              </View>
+            ))}
           </View>
         )}
 

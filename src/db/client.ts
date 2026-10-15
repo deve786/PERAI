@@ -86,6 +86,7 @@ export interface RawRow {
   status: string;
   confirmed: number;
   repeat: string | null;
+  endDate: string | null;
   updatedAt: string;
 }
 

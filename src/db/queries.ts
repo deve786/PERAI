@@ -1,4 +1,6 @@
 import { getDb, toMemory, type RawRow } from './client';
+import { unlinkAllForMemory } from '../expense/db';
+import { logFail } from '../log';
 import { spellingKey, type Spelling } from '../dictionary';
 import { backoffFor, type PendingNote, type PendingTitle } from '../pendingNotes';
 import type { Category, Memory, MemoryDraft, MemoryType, Status } from '../types';
@@ -34,6 +36,7 @@ const COLUMNS = `
   status,
   confirmed,
   repeat,
+  end_date         AS endDate,
   updated_at       AS updatedAt
 `;
 
@@ -49,6 +52,7 @@ export async function insertMemory(
     rawInput,
     createdAt,
     confirmed: true,
+    endDate: null,
     updatedAt: createdAt,
   };
 
@@ -56,8 +60,8 @@ export async function insertMemory(
     `INSERT INTO memories (
        id, raw_input, title, type, category, event_date, date_expression,
        created_at, amount, currency, people, location, tags, priority,
-       status, confirmed, repeat, updated_at, deleted, dirty
-     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,1)`,
+       status, confirmed, repeat, end_date, updated_at, deleted, dirty
+     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,1)`,
     [
       memory.id,
       memory.rawInput,
@@ -76,6 +80,7 @@ export async function insertMemory(
       memory.status,
       1,
       memory.repeat,
+      memory.endDate,
       memory.updatedAt,
     ]
   );
@@ -176,6 +181,18 @@ export async function deleteMemories(ids: string[]): Promise<void> {
      WHERE id IN (${placeholders})`,
     [new Date().toISOString(), ...ids]
   );
+
+  // Any spending tied to these entries loses its tie. That table lives in the
+  // expense database, so it is a separate call rather than a foreign key, and
+  // it must not take the delete down with it if the other zone is unavailable.
+  for (const id of ids) {
+    await unlinkAllForMemory(id).catch((err: unknown) => {
+      logFail(
+        'Could not unlink spending from a deleted entry',
+        err instanceof Error ? err.message : String(err)
+      );
+    });
+  }
 }
 
 export async function deleteAllMemories(): Promise<void> {
@@ -436,6 +453,7 @@ export async function updateMemory(
       | 'priority'
       | 'status'
       | 'repeat'
+      | 'endDate'
     >
   >
 ): Promise<void> {
@@ -453,6 +471,7 @@ export async function updateMemory(
     priority: 'priority',
     status: 'status',
     repeat: 'repeat',
+    endDate: 'end_date',
   };
 
   const sets: string[] = [];

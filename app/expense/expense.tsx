@@ -14,6 +14,7 @@ import {
   type Category, type ExpenseItem as ExpenseItemRow, type TaggedUser,
 } from '@/expense/db';
 import { fromStr, prettyDate, toStr, todayStr } from '@/expense/dates';
+import { noteBudgetCrossing } from '@/expense/budgetAlerts';
 import { numerals, radius, useTheme } from '@/expense/theme';
 import { Button, Chip, ConfirmDialog, Divider, Field, Header, IconDot, Money, Row, Screen, T } from '@/expense/ui';
 
@@ -316,6 +317,8 @@ export default function ExpenseForm() {
           .filter((it) => it.quantity * it.amount > 0)
       : [];
     await saveExpenseItems(newId, cleanItems);
+    // Shown on Home, since this screen closes itself below.
+    await noteBudgetCrossing(finalCatId, round2(value), symbol);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
     router.back();
   }

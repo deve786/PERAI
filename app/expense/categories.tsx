@@ -1,8 +1,10 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { CATEGORY_COLORS, addCategory, deleteCategory, listCategories, type Category } from '@/expense/db';
+import { budgetTotals } from '@/expense/budgets';
+import { CATEGORY_COLORS, addCategory, deleteCategory, listCategories, setCategoryBudget, type Category } from '@/expense/db';
+import { fmtMoney } from '@/expense/stats';
 import { radius, useTheme } from '@/expense/theme';
 import { Button, ConfirmDialog, Divider, Field, Header, IconDot, Row, Screen, Section, T } from '@/expense/ui';
 
@@ -12,16 +14,50 @@ const ICONS = [
 ];
 
 export default function Categories() {
-  const { c } = useTheme();
+  const { c, symbol, budget } = useTheme();
   const router = useRouter();
   const [cats, setCats] = useState<Category[]>([]);
   const [name, setName] = useState('');
   const [icon, setIcon] = useState(ICONS[0]);
   const [color, setColor] = useState(CATEGORY_COLORS[0]);
   const [toDelete, setToDelete] = useState<Category | null>(null);
+  /** Which row is having its budget edited, and what has been typed into it. */
+  const [editing, setEditing] = useState<string | null>(null);
+  const [budgetText, setBudgetText] = useState('');
 
   const load = useCallback(async () => setCats(await listCategories()), []);
   useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  const allocation = useMemo(() => budgetTotals(cats, budget), [cats, budget]);
+
+  function startEditing(k: Category) {
+    setEditing(editing === k.id ? null : k.id);
+    setBudgetText(k.monthly_budget === null ? '' : String(k.monthly_budget));
+  }
+
+  async function saveBudget(k: Category) {
+    const typed = budgetText.trim();
+    // Empty means no budget, which is not the same as a budget of nothing.
+    if (typed === '') {
+      await clearBudget(k);
+      return;
+    }
+    const value = Number(typed);
+    if (!Number.isFinite(value) || value < 0) {
+      Alert.alert('That is not a budget', 'Enter an amount of zero or more, or leave it empty for none.');
+      return;
+    }
+    await setCategoryBudget(k.id, value);
+    setEditing(null);
+    load();
+  }
+
+  async function clearBudget(k: Category) {
+    await setCategoryBudget(k.id, null);
+    setEditing(null);
+    setBudgetText('');
+    load();
+  }
 
   async function add() {
     const n = name.trim();
@@ -57,14 +93,57 @@ export default function Categories() {
 
         <Divider />
         {cats.map((k) => (
-          <Row key={k.id} style={{ paddingVertical: 11, gap: 13, borderBottomWidth: 1, borderBottomColor: c.line }}>
-            <IconDot icon={k.icon} color={k.color} />
-            <T size={15} weight="600" style={{ flex: 1 }}>{k.name}</T>
-            <Pressable onPress={() => remove(k)} hitSlop={12} accessibilityLabel={`Delete ${k.name}`}>
-              <Ionicons name="trash-outline" size={19} color={c.faint} />
-            </Pressable>
-          </Row>
+          <View key={k.id} style={{ borderBottomWidth: 1, borderBottomColor: c.line }}>
+            <Row style={{ paddingVertical: 11, gap: 13 }}>
+              <IconDot icon={k.icon} color={k.color} />
+              <Pressable
+                style={{ flex: 1 }}
+                onPress={() => startEditing(k)}
+                accessibilityLabel={`Set a monthly budget for ${k.name}`}
+              >
+                <T size={15} weight="600">{k.name}</T>
+                <T size={12} sub style={{ marginTop: 2 }}>
+                  {k.monthly_budget === null
+                    ? 'No budget'
+                    : `${fmtMoney(k.monthly_budget, symbol)} a month`}
+                </T>
+              </Pressable>
+              <Pressable onPress={() => remove(k)} hitSlop={12} accessibilityLabel={`Delete ${k.name}`}>
+                <Ionicons name="trash-outline" size={19} color={c.faint} />
+              </Pressable>
+            </Row>
+
+            {editing === k.id && (
+              <View style={{ paddingBottom: 12, gap: 10 }}>
+                <Field
+                  value={budgetText}
+                  onChangeText={setBudgetText}
+                  placeholder={`Monthly budget in ${symbol}`}
+                  keyboardType="numeric"
+                  autoFocus
+                />
+                <Row style={{ gap: 10 }}>
+                  <View style={{ flex: 1 }}>
+                    <Button title="Save" onPress={() => saveBudget(k)} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Button title="Clear" kind="ghost" onPress={() => clearBudget(k)} />
+                  </View>
+                </Row>
+              </View>
+            )}
+          </View>
         ))}
+
+        {allocation.allocated > 0 && (
+          <T size={13} sub style={{ marginTop: 12 }}>
+            {allocation.overAllocated
+              ? `Category budgets come to ${fmtMoney(allocation.allocated, symbol)}, more than your ${fmtMoney(allocation.overall, symbol)} monthly budget.`
+              : allocation.overall > 0
+                ? `${fmtMoney(allocation.unallocated, symbol)} of your ${fmtMoney(allocation.overall, symbol)} budget is unallocated.`
+                : `${fmtMoney(allocation.allocated, symbol)} budgeted across categories. No overall budget is set.`}
+          </T>
+        )}
 
         <Section title="Add a category" />
         <Field value={name} onChangeText={setName} placeholder="Name" maxLength={30} />

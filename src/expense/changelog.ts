@@ -7,6 +7,15 @@ export interface ChangelogEntry {
 /** Newest first. Add a new entry here with every release that changes user-visible behaviour. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.13.0',
+    date: '2026-10-15',
+    highlights: [
+      'Trip Spending: Link expenses directly to trip memories, auto-suggest expenses during trip dates, and view multi-currency totals & category breakdowns',
+      'Ask Trip Costs: Ask "how much did I spend on my Kozhikode trip" or "what did the Goa trip cost" in Ask for instant totals',
+      'Category Budgets: Set monthly budget limits per category, see spending progress bars, and receive 80% and 100% threshold alerts',
+    ],
+  },
+  {
     version: '1.12.0',
     date: '2026-10-15',
     highlights: [

@@ -24,6 +24,8 @@ export type Colors = {
   accentSoft: string;
   danger: string;
   good: string;
+  /** Between comfortable and spent — the only amber in the app. */
+  warn: string;
 };
 
 function colorsFor(scheme: 'light' | 'dark'): Colors {
@@ -41,6 +43,9 @@ function colorsFor(scheme: 'light' | 'dark'): Colors {
     accentSoft: p.mossSoft,
     danger: p.alert,
     good: p.moss,
+    // The palette has no amber, and a budget at 80% is neither fine nor over.
+    // Readable on both paper and the dark surface.
+    warn: scheme === 'dark' ? '#D9A441' : '#B07D1A',
   };
 }
 

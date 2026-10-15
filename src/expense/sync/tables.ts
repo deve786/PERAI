@@ -18,10 +18,12 @@ export interface TableDef {
 }
 
 export const TABLES: TableDef[] = [
-  { name: 'categories', columns: ['name', 'icon', 'color'], numeric: [] },
+  { name: 'categories', columns: ['name', 'icon', 'color', 'monthly_budget'], numeric: ['monthly_budget'] },
   { name: 'income_categories', columns: ['name', 'icon', 'color'], numeric: [] },
   { name: 'recurring', columns: ['amount', 'category_id', 'note', 'method', 'day', 'last_ym'], numeric: ['amount'] },
   { name: 'expenses', columns: ['amount', 'category_id', 'date', 'note', 'notes', 'method', 'recurring_id'], numeric: ['amount'] },
   { name: 'expense_items', columns: ['expense_id', 'name', 'quantity', 'amount'], numeric: ['quantity', 'amount'] },
   { name: 'income', columns: ['amount', 'category_id', 'date', 'note', 'notes', 'method'], numeric: ['amount'] },
+  // Last: it points at expenses, so those must land first.
+  { name: 'memory_expense_links', columns: ['memory_id', 'expense_id'], numeric: [] },
 ];

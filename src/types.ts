@@ -61,6 +61,8 @@ export interface Memory {
   confirmed: boolean;
   /** Set when this comes round again — "gym every Monday". */
   repeat: Repeat | null;
+  /** Closing date of a span, e.g. the last day of a trip. Null for a moment. */
+  endDate: string | null;
   /** Last change to this entry, and what sync compares. */
   updatedAt: string;
   /** Linked ID in Expense tracker if this purchase was saved as an expense. */
@@ -74,7 +76,7 @@ export interface Memory {
  */
 export type MemoryDraft = Omit<
   Memory,
-  'id' | 'createdAt' | 'confirmed' | 'rawInput' | 'updatedAt'
+  'id' | 'createdAt' | 'confirmed' | 'rawInput' | 'updatedAt' | 'endDate'
 >;
 
 /** A draft carrying a local key so the preview list can track it per-card. */

@@ -198,6 +198,7 @@ async function main() {
       status: 'active',
       confirmed: true,
       repeat: null,
+      endDate: null,
       ...partial,
     };
   };
