@@ -81,6 +81,7 @@ export default function Settings() {
         <NavRow label="Categories" icon="pricetags-outline" onPress={() => router.push('/expense/categories')} />
         <NavRow label="Recurring expenses" icon="repeat-outline" onPress={() => router.push('/expense/recurring')} />
         <NavRow label="Borrow & Lend" icon="people-outline" onPress={() => router.push('/expense/borrow-lend')} />
+        <NavRow label="Net Worth & Accounts" icon="wallet-outline" onPress={() => router.push('/expense/net-worth')} />
         <NavRow
           label="Export as CSV"
           icon="download-outline"

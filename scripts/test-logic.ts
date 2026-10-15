@@ -41,6 +41,7 @@ import { acceptCorrection, similarity } from '../src/titleMatch';
 import { lookupSpelling, spellingHints, spellingKey } from '../src/dictionary';
 import { backoffFor, nextDue, shouldRetry, MAX_ATTEMPTS, type PendingNote } from '../src/pendingNotes';
 import { widgetItems } from '../src/widget/widgetItems';
+import { computeNetWorth } from '../src/expense/accountsLogic';
 
 let passed = 0;
 let failed = 0;
@@ -899,6 +900,38 @@ section('the week in review');
   check('what is late is called out', week.slipped.map((m) => m.title).join('|') === 'Missed dentist');
   check('what is still ahead is kept apart', week.ahead.map((m) => m.title).join('|') === 'Gym tomorrow');
   check('spending covers this week only', week.spent[0].total === 1200 && week.spent[0].currency === 'INR', week.spent);
+}
+
+section('net worth and wealth calculations');
+{
+  const mockAccounts = [
+    { type: 'bank' as const, balance: 150000 },
+    { type: 'cash' as const, balance: 12000 },
+    { type: 'stock' as const, balance: 80000 },
+    { type: 'crypto' as const, balance: 25000 },
+    { type: 'other' as const, balance: 10000 },
+  ];
+  const mockBorrowLend = {
+    totalLentActive: 30000,
+    totalBorrowedActive: 15000,
+  };
+
+  const res = computeNetWorth(mockAccounts, mockBorrowLend);
+
+  check('bank total aggregates correctly', res.bankTotal === 150000, res.bankTotal);
+  check('liquid total is bank + cash', res.liquidTotal === 162000, res.liquidTotal);
+  check('total with stocks is liquid + stocks', res.totalWithStocks === 242000, res.totalWithStocks);
+  check('total with lend includes active money lent', res.totalWithLend === 272000, res.totalWithLend);
+  check(
+    'total net worth calculates (all assets + active lent) - borrowed debt',
+    res.netWorth === 292000 && res.totalAssets === 277000 && res.totalBorrowed === 15000 && res.totalLent === 30000,
+    res
+  );
+  check('accounts count is correct', res.accountsCount === 5, res.accountsCount);
+
+  // Test empty case
+  const emptyRes = computeNetWorth([], { totalLentActive: 0, totalBorrowedActive: 0 });
+  check('empty accounts have zero net worth', emptyRes.netWorth === 0 && emptyRes.accountsCount === 0);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

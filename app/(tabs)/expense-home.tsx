@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { listExpenses, listIncome, listRecurring, refreshRecurring, type ExpenseRow, type IncomeRow, type Recurring } from '@/expense/db';
 import { getBorrowLendSummary, type BorrowLendSummary } from '@/expense/borrowLendDb';
+import { getNetWorthSummary, type NetWorthSummary } from '@/expense/accountsDb';
 import { monthName, monthRange, todayStr, addDays } from '@/expense/dates';
 import { byCategory, fmtMoney, sum } from '@/expense/stats';
 import { budgetTone, useTheme } from '@/expense/theme';
@@ -23,6 +24,7 @@ export default function Home() {
   const [recent, setRecent] = useState<Recent[]>([]);
   const [recurring, setRecurring] = useState<Recurring[]>([]);
   const [borrowLend, setBorrowLend] = useState<BorrowLendSummary | null>(null);
+  const [netWorth, setNetWorth] = useState<NetWorthSummary | null>(null);
 
   // Derived from the date string rather than a Date object: primitives keep the
   // memoised range referentially stable, which the focus effect depends on.
@@ -38,7 +40,7 @@ export default function Home() {
     const prevMonth0 = month0 === 0 ? 11 : month0 - 1;
     const prevYear = month0 === 0 ? year - 1 : year;
     const prevRange = monthRange(prevYear, prevMonth0);
-    const [monthExpenses, monthIncome, allExpenses, allIncome, prevExpenses, recList, blSummary] = await Promise.all([
+    const [monthExpenses, monthIncome, allExpenses, allIncome, prevExpenses, recList, blSummary, nwSummary] = await Promise.all([
       listExpenses(from, to),
       listIncome(from, to),
       listExpenses(),
@@ -46,12 +48,14 @@ export default function Home() {
       listExpenses(prevRange.from, prevRange.to),
       listRecurring(),
       getBorrowLendSummary().catch(() => null),
+      getNetWorthSummary().catch(() => null),
     ]);
     setRows(monthExpenses);
     setIncomeRows(monthIncome);
     setLastMonthTotal(sum(prevExpenses));
     setRecurring(recList);
     setBorrowLend(blSummary);
+    setNetWorth(nwSummary);
     const merged: Recent[] = [
       ...allExpenses.map((row): Recent => ({ kind: 'expense', row })),
       ...allIncome.map((row): Recent => ({ kind: 'income', row })),
@@ -79,6 +83,14 @@ export default function Home() {
         <Row style={{ justifyContent: 'space-between', alignItems: 'center' }}>
           <T size={14} sub>{monthName(month0)} {year}</T>
           <Row style={{ gap: 16, alignItems: 'center' }}>
+            <Pressable
+              onPress={() => router.push('/expense/net-worth')}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel="Net Worth & Accounts"
+            >
+              <Ionicons name="wallet-outline" size={21} color={c.sub} />
+            </Pressable>
             <Pressable
               onPress={() => router.push('/expense/borrow-lend')}
               hitSlop={10}
@@ -210,6 +222,54 @@ export default function Home() {
             <Ionicons name="chevron-forward" size={16} color={c.sub} />
           </Pressable>
         ) : null}
+
+        <Pressable
+          onPress={() => router.push('/expense/net-worth')}
+          style={({ pressed }) => ({
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            backgroundColor: c.card,
+            borderRadius: 8,
+            paddingVertical: 12,
+            paddingHorizontal: 14,
+            marginTop: 14,
+            borderWidth: 1,
+            borderColor: c.line,
+            opacity: pressed ? 0.75 : 1,
+          })}
+        >
+          <Row style={{ gap: 12, alignItems: 'center', flex: 1 }}>
+            <View
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: 16,
+                backgroundColor: '#3B82F620',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <Ionicons name="wallet" size={16} color="#3B82F6" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Row style={{ alignItems: 'center', justifyContent: 'space-between' }}>
+                <T size={13} weight="600">Net Worth & Wealth</T>
+                {netWorth && netWorth.accountsCount > 0 && (
+                  <T size={14} weight="700" tabular style={{ color: c.good }}>
+                    {fmtMoney(netWorth.netWorth, symbol)}
+                  </T>
+                )}
+              </Row>
+              <T size={12} sub numberOfLines={1}>
+                {netWorth && netWorth.accountsCount > 0
+                  ? `Bank: ${fmtMoney(netWorth.bankTotal, symbol)} · Stocks: ${fmtMoney(netWorth.stockTotal, symbol)}${netWorth.totalLent > 0 ? ` · Lent: ${fmtMoney(netWorth.totalLent, symbol)}` : ''}`
+                  : 'Add Bank, Stocks, Cash & track total wealth'}
+              </T>
+            </View>
+          </Row>
+          <Ionicons name="chevron-forward" size={16} color={c.sub} style={{ marginLeft: 8 }} />
+        </Pressable>
 
         {top && (
           <>

@@ -190,6 +190,19 @@ const SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_borrow_lend_status ON borrow_lend(status);
   CREATE INDEX IF NOT EXISTS idx_borrow_lend_person ON borrow_lend(person_name);
   CREATE INDEX IF NOT EXISTS idx_borrow_lend_date ON borrow_lend(date);
+  CREATE TABLE IF NOT EXISTS accounts (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    type TEXT NOT NULL,
+    balance REAL NOT NULL DEFAULT 0,
+    currency TEXT NOT NULL DEFAULT '₹',
+    notes TEXT NOT NULL DEFAULT '',
+    institution TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL,
+    dirty INTEGER NOT NULL DEFAULT 1,
+    deleted INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE INDEX IF NOT EXISTS idx_accounts_type ON accounts(type);
 `;
 
 type OldRow = Record<string, unknown> & { id: number };

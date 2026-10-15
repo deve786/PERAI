@@ -10,6 +10,9 @@ export const CHANGELOG: ChangelogEntry[] = [
     version: '1.12.0',
     date: '2026-10-15',
     highlights: [
+      'Net Worth & Wealth Hub: Track money across Bank accounts, Stocks, Cash, Crypto, and custom assets',
+      'Flexible Total Wealth Filters: Instantly view your total amount with or without Money Lent, Stocks, and liabilities',
+      'Borrow & Lend tracking: Record money borrowed or lent with transaction dates, repayment tracking, and status chips',
       'Ask can now do things, not just answer: say "mark the bank call done", "push everything to tomorrow", "delete last week\'s coffee expenses" or "set my budget to 20k"',
       'Every change is shown for confirmation first, with the exact entries it would touch — and anything reversible gets an Undo afterwards',
       'Asking questions costs exactly what it did before: an instruction is recognised on the phone, so only a real command spends an extra call',
