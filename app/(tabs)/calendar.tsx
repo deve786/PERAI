@@ -46,7 +46,7 @@ export default function CalendarScreen() {
   const [snoozingMemory, setSnoozingMemory] = useState<Memory | null>(null);
 
   // PERAI memories data
-  const { memories, loading: memoriesLoading } = useMemories();
+  const { memories } = useMemories();
   const plan = useMemo(() => planDay(memories), [memories]);
 
   // Expense & Financial data for the selected date
@@ -139,7 +139,6 @@ export default function CalendarScreen() {
   const isViewingToday = selectedDate === todayStr;
   const totalDaySpent = sum(dayExpenses);
   const totalDayIncome = sum(dayIncome);
-  const hasTasksToday = plan.overdue.length + plan.today.length + plan.tomorrow.length > 0;
 
   return (
     <ScrollView style={styles.flex} contentContainerStyle={styles.content}>
@@ -239,24 +238,12 @@ export default function CalendarScreen() {
           {plan.tomorrow.length > 0 ? (
             <Section label="TOMORROW">{memoryRows(plan.tomorrow)}</Section>
           ) : null}
-
-          {!memoriesLoading && !hasTasksToday ? (
-            <Text style={[type.body, styles.clearText]}>
-              No tasks due today or tomorrow. Anything you record with a date shows up here.
-            </Text>
-          ) : null}
         </>
-      ) : (
+      ) : selectedDateMemories.length > 0 ? (
         <Section label={`TASKS & REMINDERS · ${selectedDate}`}>
-          {selectedDateMemories.length > 0 ? (
-            memoryRows(selectedDateMemories)
-          ) : (
-            <Text style={[type.body, styles.clearText]}>
-              No tasks or reminders recorded for {selectedDate}.
-            </Text>
-          )}
+          {memoryRows(selectedDateMemories)}
         </Section>
-      )}
+      ) : null}
 
       {/* ======================================================== */}
       {/* EXPENSE SECTION: Financial entries for this day */}
@@ -291,20 +278,14 @@ export default function CalendarScreen() {
         </View>
         <View style={styles.sectionRule} />
 
-        {dayExpenses.length > 0 ? (
-          dayExpenses.map((exp) => (
-            <ExpenseItem
-              key={exp.id}
-              e={exp}
-              showDate={false}
-              onDeleted={loadFinancialData}
-            />
-          ))
-        ) : (
-          <Text style={[type.body, styles.clearText]}>
-            No expenses recorded for this day.
-          </Text>
-        )}
+        {dayExpenses.map((exp) => (
+          <ExpenseItem
+            key={exp.id}
+            e={exp}
+            showDate={false}
+            onDeleted={loadFinancialData}
+          />
+        ))}
       </View>
 
       {/* ======================================================== */}
@@ -466,10 +447,6 @@ function makeStyles(colors: Colors) {
     },
     loanRowPressed: {
       opacity: 0.55,
-    },
-    clearText: {
-      maxWidth: 320,
-      color: colors.graphite,
     },
     rowContainer: {
       flexDirection: 'row',
