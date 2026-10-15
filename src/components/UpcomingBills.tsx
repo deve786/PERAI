@@ -99,22 +99,7 @@ export function UpcomingBills({ recurring, onBillPaid }: Props) {
   };
 
   if (scheduled.length === 0) {
-    return (
-      <View style={[styles.card, { backgroundColor: c.card, borderColor: c.line }]}>
-        <Row style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-          <Row style={{ gap: 8, alignItems: 'center' }}>
-            <Ionicons name="calendar-outline" size={17} color={c.sub} />
-            <T size={14} weight="600">Upcoming Bills & Renewals</T>
-          </Row>
-          <Pressable onPress={() => router.push('/expense/recurring')} hitSlop={8}>
-            <T size={12.5} sub>Manage ›</T>
-          </Pressable>
-        </Row>
-        <T size={13} sub style={{ marginTop: 8 }}>
-          No recurring subscriptions or bills active. Set them up in settings to track renewal forecasts.
-        </T>
-      </View>
-    );
+    return null;
   }
 
   return (
