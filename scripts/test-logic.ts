@@ -66,6 +66,8 @@ import { looksLikeCommand } from '../src/ai/commandGate';
 import {
   groupNames,
   groupSummaries,
+  MAX_TASKS_AT_ONCE,
+  splitTasks,
   membersOf,
   normalizeGroupName,
   sameGroup,
@@ -1504,6 +1506,55 @@ section('groups: what each one has left');
 
   check('the names offered are the ones in use', groupNames([...trip, ...work]).includes('Work'));
   check('and nothing else', groupNames(loose).length === 0);
+}
+
+section('groups: several tasks out of one line');
+{
+  check('commas separate them', splitTasks('book tickets, pack bags, get cash').length === 3);
+  check('so do new lines', splitTasks('book tickets\npack bags').length === 2);
+  check('so do semicolons', splitTasks('book tickets; pack bags').length === 2);
+  check('spacing is tidied', splitTasks('  book   tickets ,  pack bags ')[0] === 'book tickets');
+
+  check('one line with "and" splits', splitTasks('book tickets and pack bags').length === 2);
+  check(
+    'but "and" inside a listed item is left alone',
+    splitTasks('fish and chips, pack bags').length === 2,
+    splitTasks('fish and chips, pack bags')
+  );
+  check('one plain task stays one', splitTasks('pack bags').length === 1);
+  check('nothing typed is nothing added', splitTasks('   ').length === 0);
+  check('the same thing twice is added once', splitTasks('pack bags, Pack Bags').length === 1);
+
+  const many = Array.from({ length: 40 }, (_, i) => `task ${i}`).join(', ');
+  check('a flood is capped', splitTasks(many).length === MAX_TASKS_AT_ONCE);
+}
+
+section('groups: a group that exists before its work does');
+{
+  const now = new Date('2026-10-16T09:00:00+05:30');
+  const entries = [
+    memory({ id: 'e1', title: 'Send the invoice', eventDate: '2026-10-20T09:00:00+05:30', groupName: 'Work' }),
+  ];
+
+  const groups = groupSummaries(entries, now, ['House move']);
+  check('a group with nothing in it still exists', groups.some((g) => g.name === 'House move'));
+  check('and reads as empty', groups.find((g) => g.name === 'House move')?.total === 0);
+  check('it is not mistaken for finished', groups[groups.length - 1]?.name !== 'House move', groups.map((g) => g.name));
+
+  const both = groupSummaries(entries, now, ['Work']);
+  check('a name that is also in use does not double up', both.filter((g) => g.name === 'Work').length === 1);
+  check('and keeps its entries', both.find((g) => g.name === 'Work')?.total === 1);
+
+  const named = groupSummaries(entries, now, ['work']);
+  check('the deliberate spelling wins', named.find((g) => g.total === 1)?.name === 'work');
+
+  check('empty groups are offered in the picker', groupNames(entries, ['House move']).includes('House move'));
+
+  const finished = [
+    memory({ id: 'e2', title: 'Return the keys', eventDate: '2026-10-01T09:00:00+05:30', groupName: 'Goa trip', status: 'done' }),
+  ];
+  const mixed = groupSummaries([...entries, ...finished], now, ['House move']);
+  check('a finished group still sinks below an empty one', mixed[mixed.length - 1]?.name === 'Goa trip', mixed.map((g) => g.name));
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

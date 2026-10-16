@@ -17,6 +17,7 @@ import { logOk } from '@/log';
 import { clearDrafts, removeDraft, updateDraft, usePendingDrafts } from '@/draftStore';
 import { ChipRow } from '@/components/Chip';
 import { groupNames, normalizeGroupName, sameGroup } from '@/groups';
+import { useGroups } from '@/useGroups';
 import { useMemories } from '@/useMemories';
 import { useTheme } from '@/ThemeContext';
 import { FONTS, SPACE, type Colors } from '@/theme';
@@ -33,7 +34,8 @@ export default function PreviewScreen() {
   /** A group being typed, before it is put on the drafts. */
   const [groupDraft, setGroupDraft] = useState('');
   const { memories } = useMemories();
-  const existingGroups = groupNames(memories);
+  const { empty: madeGroups } = useGroups();
+  const existingGroups = groupNames(memories, madeGroups);
   /** The group they all share, or null when they differ or have none. */
   const sharedGroup =
     drafts.length > 0 && drafts.every((entry) => sameGroup(entry.draft.groupName, drafts[0].draft.groupName))

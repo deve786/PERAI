@@ -1,11 +1,11 @@
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Section } from '@/components/Section';
-import { groupSummaries } from '@/groups';
+import { NewGroupField } from '@/components/NewGroupField';
 import { fullDateLabel } from '@/format';
 import { useTheme } from '@/ThemeContext';
 import { SPACE, type Colors } from '@/theme';
-import { useMemories } from '@/useMemories';
+import { useGroups } from '@/useGroups';
 
 /**
  * Jobs made of several entries: a trip, a move, a week at work.
@@ -19,12 +19,16 @@ export default function GroupsScreen() {
   const styles = makeStyles(colors);
   const router = useRouter();
 
-  const { memories, loading } = useMemories();
-  const groups = groupSummaries(memories);
+  const { groups, loading } = useGroups();
 
   return (
-    <ScrollView style={styles.flex} contentContainerStyle={styles.content}>
+    <ScrollView style={styles.flex} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
       <Text style={type.display}>Groups</Text>
+
+      {/* Made here, filled later: a group can exist before its work does. */}
+      <NewGroupField
+        onCreated={(name) => router.push(`/group/${encodeURIComponent(name)}`)}
+      />
 
       {groups.length > 0 ? (
         <Section label={`GROUPS  ·  ${groups.length}`}>
@@ -49,7 +53,9 @@ export default function GroupsScreen() {
               </View>
 
               <Text style={[type.fine, group.overdue > 0 && styles.late]}>
-                {group.open === 0
+                {group.total === 0
+                  ? 'Nothing in it yet'
+                  : group.open === 0
                   ? 'All done'
                   : group.overdue > 0
                     ? `${group.overdue} overdue · ${group.open} left`

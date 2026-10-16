@@ -29,6 +29,44 @@ export function sameGroup(a: string | null, b: string | null): boolean {
   return a.toLowerCase() === b.toLowerCase();
 }
 
+/** No more than this from one line, so a stray paste cannot flood a group. */
+export const MAX_TASKS_AT_ONCE = 25;
+
+/**
+ * Several tasks out of one line: "book tickets, pack bags, get cash".
+ *
+ * Split on the marks people actually use for a list — new lines, commas,
+ * semicolons — and on "and" only when nothing else separated them, so "fish
+ * and chips" typed on its own stays one thing while "book tickets and pack
+ * bags" becomes two.
+ */
+export function splitTasks(text: string): string[] {
+  const parts = text
+    .split(/[\n;,]+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  const pieces =
+    parts.length === 1
+      ? parts[0]
+          .split(/\s+(?:and|&)\s+/i)
+          .map((part) => part.trim())
+          .filter(Boolean)
+      : parts;
+
+  const seen = new Set<string>();
+  const tasks: string[] = [];
+  for (const piece of pieces) {
+    const task = piece.replace(/\s+/g, ' ').slice(0, 200);
+    const key = task.toLowerCase();
+    if (!task || seen.has(key)) continue;
+    seen.add(key);
+    tasks.push(task);
+    if (tasks.length >= MAX_TASKS_AT_ONCE) break;
+  }
+  return tasks;
+}
+
 export interface GroupSummary {
   name: string;
   /** Everything in it, newest work first — see `membersOf` for the order. */
@@ -50,8 +88,22 @@ export interface GroupSummary {
  * soonest, then finished groups last, so a trip that is over sinks below the
  * one being planned.
  */
-export function groupSummaries(memories: Memory[], now: Date = new Date()): GroupSummary[] {
+export function groupSummaries(
+  memories: Memory[],
+  now: Date = new Date(),
+  /** Groups made on their own, before anything has been put in them. */
+  empty: string[] = []
+): GroupSummary[] {
   const byKey = new Map<string, { name: string; items: Memory[] }>();
+
+  // Named first so a group made deliberately keeps the spelling it was given,
+  // even once entries arrive under a different capitalisation.
+  for (const name of empty) {
+    const clean = normalizeGroupName(name);
+    if (clean && !byKey.has(clean.toLowerCase())) {
+      byKey.set(clean.toLowerCase(), { name: clean, items: [] });
+    }
+  }
 
   for (const memory of memories) {
     const name = normalizeGroupName(memory.groupName);
@@ -81,8 +133,12 @@ export function groupSummaries(memories: Memory[], now: Date = new Date()): Grou
     };
   });
 
+  // A group with nothing in it yet is waiting, not finished: it was just made
+  // and needs filling, so it sits with the live ones rather than at the end.
+  const finished = (group: GroupSummary) => group.total > 0 && group.open === 0;
+
   return summaries.sort((a, b) => {
-    if (a.open === 0 !== (b.open === 0)) return a.open === 0 ? 1 : -1;
+    if (finished(a) !== finished(b)) return finished(a) ? 1 : -1;
     if (a.overdue !== b.overdue) return b.overdue - a.overdue;
     if (a.nextDue && b.nextDue) return a.nextDue.localeCompare(b.nextDue);
     return a.name.localeCompare(b.name);
@@ -104,7 +160,7 @@ export function membersOf(memories: Memory[], name: string): Memory[] {
   return [...open, ...done];
 }
 
-/** Group names already in use, for the picker, most used first. */
-export function groupNames(memories: Memory[]): string[] {
-  return groupSummaries(memories).map((group) => group.name);
+/** Every group that exists, for the pickers — including the empty ones. */
+export function groupNames(memories: Memory[], empty: string[] = []): string[] {
+  return groupSummaries(memories, new Date(), empty).map((group) => group.name);
 }

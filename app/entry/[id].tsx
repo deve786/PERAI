@@ -20,6 +20,7 @@ import { logOk } from '@/log';
 import { syncReminders } from '@/reminders';
 import { groupNames, normalizeGroupName } from '@/groups';
 import { nextOccurrence } from '@/repeat';
+import { useGroups } from '@/useGroups';
 import { useMemories } from '@/useMemories';
 import { useTheme } from '@/ThemeContext';
 import { FONTS, SPACE, type Colors } from '@/theme';
@@ -96,7 +97,8 @@ export default function EntryScreen() {
   /** A group being typed, before it is committed to the entry. */
   const [groupDraft, setGroupDraft] = useState('');
   const { memories } = useMemories();
-  const existingGroups = groupNames(memories);
+  const { empty: madeGroups } = useGroups();
+  const existingGroups = groupNames(memories, madeGroups);
 
   const load = useCallback(async () => {
     const found = await getMemory(String(id));

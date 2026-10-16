@@ -11,6 +11,11 @@ export interface FilingContext {
   people?: string[];
   /** Titles already on the play/watch/wish lists — free, exact spellings. */
   listTitles?: string[];
+  /**
+   * File everything in this note under one group, whatever the note says —
+   * what a note dictated from inside a group is for.
+   */
+  groupName?: string | null;
 }
 
 /**
@@ -45,8 +50,9 @@ export async function fileNote(text: string, context: FilingContext = {}): Promi
   const memories: Memory[] = [];
   for (const draft of drafts) {
     const remembered = lookupSpelling(draft.title, known);
+    const named = remembered ? { ...draft, title: remembered } : draft;
     const memory = await insertMemory(
-      remembered ? { ...draft, title: remembered } : draft,
+      context.groupName === undefined ? named : { ...named, groupName: context.groupName },
       text
     );
 

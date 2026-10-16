@@ -250,6 +250,42 @@ export async function setSetting(key: string, value: string): Promise<void> {
 }
 
 /**
+ * Groups made before anything is in them.
+ *
+ * A group is otherwise just a name carried by its entries, which is what keeps
+ * it from ever disagreeing with its contents — but a group has to be able to
+ * exist for the moment between making it and filling it. Those names are kept
+ * here until an entry carries them.
+ */
+const EMPTY_GROUPS_KEY = 'groups.empty';
+
+export async function getEmptyGroups(): Promise<string[]> {
+  const stored = await getSetting(EMPTY_GROUPS_KEY);
+  if (!stored) return [];
+  try {
+    const parsed = JSON.parse(stored);
+    return Array.isArray(parsed) ? parsed.filter((name): name is string => typeof name === 'string') : [];
+  } catch {
+    // A corrupted value is worth no more than an empty list.
+    return [];
+  }
+}
+
+export async function addEmptyGroup(name: string): Promise<void> {
+  const clean = name.trim();
+  if (!clean) return;
+  const current = await getEmptyGroups();
+  if (current.some((existing) => existing.toLowerCase() === clean.toLowerCase())) return;
+  await setSetting(EMPTY_GROUPS_KEY, JSON.stringify([...current, clean]));
+}
+
+export async function removeEmptyGroup(name: string): Promise<void> {
+  const current = await getEmptyGroups();
+  const next = current.filter((existing) => existing.toLowerCase() !== name.trim().toLowerCase());
+  if (next.length !== current.length) await setSetting(EMPTY_GROUPS_KEY, JSON.stringify(next));
+}
+
+/**
  * Remember how a title is really spelled. A correction typed by hand always
  * wins over one found by search, so a name the web cannot know stays fixed.
  */

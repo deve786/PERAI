@@ -7,6 +7,19 @@ export interface ChangelogEntry {
 /** Newest first. Add a new entry here with every release that changes user-visible behaviour. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.16.0',
+    date: '2026-10-16',
+    highlights: [
+      'Make a group on its own: name it first and fill it later, from the Groups page or straight from Record (＋ NEW GROUP)',
+      'Add several tasks at once inside a group — "book tickets, pack bags, get cash" becomes three, instantly, with no waiting',
+      'Or say them: spoken tasks are understood first, so "book tickets tomorrow and pack bags on Friday" lands two tasks on two days',
+      'Rename a group by editing its heading — every entry in it moves with it',
+      'Delete a group, choosing whether to keep its entries or delete them too',
+      'Hold any task in a group to edit or delete it; tap still ticks it off',
+      'Record now has a Groups button beside Lists and Timeline',
+    ],
+  },
+  {
     version: '1.15.0',
     date: '2026-10-16',
     highlights: [

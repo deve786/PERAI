@@ -33,6 +33,7 @@ import type { Memory, MemoryDraft, MemoryType } from '@/types';
 import { useMemories } from '@/useMemories';
 import { knownPeople } from '@/speechText';
 import { useVoiceInput } from '@/useVoiceInput';
+import { NewGroupField } from '@/components/NewGroupField';
 import { SyncButton } from '@/components/SyncButton';
 
 interface Saved {
@@ -67,6 +68,8 @@ export default function CaptureScreen() {
   const [text, setText] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** The new-group field, opened on request so it is never in the way. */
+  const [makingGroup, setMakingGroup] = useState(false);
   const [saved, setSaved] = useState<Saved | null>(null);
 
   const configured = hasApiKey();
@@ -252,6 +255,14 @@ export default function CaptureScreen() {
               <Ionicons name="bookmark-outline" size={22} color={colors.graphite} />
             </Pressable>
             <Pressable
+              onPress={() => router.push('/groups')}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel="Groups"
+            >
+              <Ionicons name="albums-outline" size={21} color={colors.graphite} />
+            </Pressable>
+            <Pressable
               onPress={() => router.push('/timeline')}
               hitSlop={10}
               accessibilityRole="button"
@@ -337,6 +348,23 @@ export default function CaptureScreen() {
             />
           </View>
         </View>
+
+        {/* A group can be made here with nothing in it yet, so the name
+            exists before the work does. */}
+        {makingGroup ? (
+          <NewGroupField
+            autoFocus
+            onCreated={(name) => {
+              setMakingGroup(false);
+              router.push(`/group/${encodeURIComponent(name)}`);
+            }}
+          />
+        ) : (
+          <Pressable onPress={() => setMakingGroup(true)} hitSlop={10} style={styles.newGroup}>
+            <Ionicons name="add" size={15} color={colors.graphite} />
+            <Text style={[type.label, styles.newGroupText]}>NEW GROUP</Text>
+          </Pressable>
+        )}
 
         {!configured ? (
           <Notice>No API key yet. Add EXPO_PUBLIC_GEMINI_API_KEY to .env.</Notice>
@@ -502,6 +530,8 @@ function makeStyles(colors: Colors) {
     },
     titleActions: { flexDirection: 'row', alignItems: 'center', gap: 16 },
     composer: { gap: 14 },
+    newGroup: { flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start' },
+    newGroupText: { color: colors.graphite },
     input: {
       fontFamily: FONTS.sans,
       fontSize: 19,
