@@ -7,7 +7,7 @@ export interface ChangelogEntry {
 /** Newest first. Add a new entry here with every release that changes user-visible behaviour. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
-    version: '1.16.0',
+    version: '1.17.0',
     date: '2026-10-16',
     highlights: [
       'Make a group on its own: name it first and fill it later, from the Groups page or straight from Record (＋ NEW GROUP)',
