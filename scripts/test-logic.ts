@@ -1257,6 +1257,16 @@ section('instructions: telling one from a question');
   check('a question is not', looksLikeCommand('what did i spend last month') === false);
   check('nor is one without a question mark', looksLikeCommand('how much is left in groceries') === false);
 
+  check(
+    'a politely-phrased order is still one',
+    looksLikeCommand('can you change the priority set to high for the chair parcel') === true
+  );
+  check('so is "could you"', looksLikeCommand('could you move the gym reminder to friday') === true);
+  check(
+    'but "can you" asking something stays a question',
+    looksLikeCommand('can you tell me what i spent on food') === false
+  );
+
   check('manglish puts its verb last', looksLikeCommand('dentist nale maattu') === true);
   check('and finished is an order', looksLikeCommand('gym kazhinju') === true);
   check('so is adding', looksLikeCommand('nale meeting cherkku') === true);

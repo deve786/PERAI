@@ -55,9 +55,15 @@ export function looksLikeCommand(text: string): boolean {
   const t = text.trim().toLowerCase();
   if (!t) return false;
   if (t.endsWith('?')) return false;
-  if (QUESTION_OPENERS.test(t)) return false;
 
+  // Checked first: "can you", "could you", "would" open both an ordinary
+  // question ("can you tell me...") and a politely-phrased order ("can you
+  // change the priority..."). IMPERATIVE only matches the latter — it
+  // requires one of its own action verbs right after the opener — so letting
+  // it win first tells the two apart instead of QUESTION_OPENERS claiming
+  // every "can"/"could"/"would" sentence before IMPERATIVE is ever checked.
   if (IMPERATIVE.test(t)) return true;
+  if (QUESTION_OPENERS.test(t)) return false;
   if (CORRECTION.test(t) && CORRECTION_TARGET.test(t)) return true;
   if (PRIORITY_STATEMENT.test(t)) return true;
 
