@@ -37,6 +37,7 @@ const COLUMNS = `
   confirmed,
   repeat,
   end_date         AS endDate,
+  group_name       AS groupName,
   updated_at       AS updatedAt
 `;
 
@@ -60,8 +61,8 @@ export async function insertMemory(
     `INSERT INTO memories (
        id, raw_input, title, type, category, event_date, date_expression,
        created_at, amount, currency, people, location, tags, priority,
-       status, confirmed, repeat, end_date, updated_at, deleted, dirty
-     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,1)`,
+       status, confirmed, repeat, end_date, group_name, updated_at, deleted, dirty
+     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,1)`,
     [
       memory.id,
       memory.rawInput,
@@ -81,6 +82,7 @@ export async function insertMemory(
       1,
       memory.repeat,
       memory.endDate,
+      memory.groupName,
       memory.updatedAt,
     ]
   );
@@ -454,6 +456,7 @@ export async function updateMemory(
       | 'status'
       | 'repeat'
       | 'endDate'
+      | 'groupName'
     >
   >
 ): Promise<void> {
@@ -471,6 +474,7 @@ export async function updateMemory(
     priority: 'priority',
     status: 'status',
     repeat: 'repeat',
+    groupName: 'group_name',
     endDate: 'end_date',
   };
 

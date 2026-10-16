@@ -18,7 +18,9 @@ import { deleteMemory, getMemory, rememberSpelling, updateMemory } from '@/db/qu
 import { fullDateLabel, hasStatedTime, timeLabel } from '@/format';
 import { logOk } from '@/log';
 import { syncReminders } from '@/reminders';
+import { groupNames, normalizeGroupName } from '@/groups';
 import { nextOccurrence } from '@/repeat';
+import { useMemories } from '@/useMemories';
 import { useTheme } from '@/ThemeContext';
 import { FONTS, SPACE, type Colors } from '@/theme';
 import { CATEGORIES, MEMORY_TYPES, PRIORITIES, REPEATS, type Memory } from '@/types';
@@ -91,6 +93,10 @@ export default function EntryScreen() {
   const [memory, setMemory] = useState<Memory | null>(null);
   const [title, setTitle] = useState('');
   const [gone, setGone] = useState(false);
+  /** A group being typed, before it is committed to the entry. */
+  const [groupDraft, setGroupDraft] = useState('');
+  const { memories } = useMemories();
+  const existingGroups = groupNames(memories);
 
   const load = useCallback(async () => {
     const found = await getMemory(String(id));
@@ -319,6 +325,33 @@ export default function EntryScreen() {
           />
         </View>
 
+        {/* A group is only a name: picking one here is what puts this entry
+            with the others, and clearing it takes it back out. */}
+        <View style={styles.field}>
+          <Text style={type.label}>GROUP</Text>
+          {existingGroups.length > 0 ? (
+            <ChipRow
+              options={existingGroups}
+              value={entry.groupName}
+              onChange={(value) => void patch({ groupName: value })}
+              allLabel="None"
+            />
+          ) : null}
+          <TextInput
+            value={groupDraft}
+            onChangeText={setGroupDraft}
+            onSubmitEditing={() => {
+              const name = normalizeGroupName(groupDraft);
+              setGroupDraft('');
+              if (name) void patch({ groupName: name });
+            }}
+            placeholder={entry.groupName ? 'Move to another group…' : 'New group…'}
+            placeholderTextColor={colors.mist}
+            returnKeyType="done"
+            style={styles.groupInput}
+          />
+        </View>
+
         <View style={styles.actions}>
           <Pressable
             onPress={async () => {
@@ -365,6 +398,14 @@ function makeStyles(colors: Colors) {
       borderBottomColor: colors.rule,
     },
     field: { gap: 8 },
+    groupInput: {
+      fontFamily: FONTS.sans,
+      fontSize: 15,
+      color: colors.ink,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.rule,
+      paddingVertical: 6,
+    },
     pushRow: { flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
     push: {
       paddingVertical: 8,

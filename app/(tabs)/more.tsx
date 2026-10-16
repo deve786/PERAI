@@ -14,7 +14,8 @@ export default function More() {
       <Text style={type.display}>More</Text>
 
       <NavRow label="Calendar" icon="calendar-outline" onPress={() => router.push('/calendar')} />
-      <NavRow label="Lists" icon="bookmark-outline" onPress={() => router.push('/lists')} />
+      <NavRow label="Groups" icon="albums-outline" onPress={() => router.push("/groups")} />
+      <NavRow label="Lists" icon="bookmark-outline" onPress={() => router.push("/lists")} />
       <NavRow label="Timeline" icon="reorder-two-outline" onPress={() => router.push('/timeline')} />
       <NavRow label="Expense history" icon="receipt-outline" onPress={() => router.push('/expense-history')} />
       <NavRow label="Expense analytics" icon="stats-chart-outline" onPress={() => router.push('/expense-analytics')} />

@@ -14,6 +14,7 @@ import { DEFAULT_CURRENCY } from '../constants';
 import { localTimestamp } from '../format';
 import { EXTRACT_MODEL, requestJson } from './client';
 import type { TitleLanguage } from '../settings';
+import { normalizeGroupName } from '../groups';
 
 /** Thrown when the model replied but we could not read a memory out of it. */
 export class ExtractionError extends Error {
@@ -57,6 +58,7 @@ const EXTRACTION_SCHEMA = {
           tags: NULLABLE_STRING,
           priority: NULLABLE_STRING,
           repeat: NULLABLE_STRING,
+          groupName: NULLABLE_STRING,
           status: { type: 'string', enum: [...STATUSES] },
         },
         required: [
@@ -72,6 +74,7 @@ const EXTRACTION_SCHEMA = {
           'tags',
           'priority',
           'repeat',
+          'groupName',
           'status',
         ],
         additionalProperties: false,
@@ -136,6 +139,11 @@ OTHER FIELDS:
 - priority: one of ${PRIORITIES.join(', ')} — only when urgency is expressed.
 - status: "active" unless the note says it is already finished, then "done".
 - repeat: "daily", "weekly" or "monthly" when the note says it comes round again
+- groupName: the job several tasks belong to, when the note names one — "for the
+  Kozhikode trip: book tickets, pack bags, get cash" puts "Kozhikode trip" on
+  all three. Use the person's own words for it, and the SAME words on every
+  entry from that note. Null when the note is about one thing on its own; never
+  invent a group to tidy entries together
   ("every Monday" -> weekly, "every day" -> daily, "on the 1st" / "every month"
   -> monthly). Null for a one-off. Set eventDate to the NEXT time it happens.
 - title: a short factual summary, no invented detail. For "play", "watch" and
@@ -277,6 +285,7 @@ function normaliseDraft(item: unknown, nowISO: string): MemoryDraft | null {
         : pickEnum<Priority>(raw.priority, PRIORITIES, 'medium'),
     status: pickEnum(raw.status, STATUSES, 'active'),
     repeat: raw.repeat == null ? null : pickEnum<Repeat>(raw.repeat, REPEATS, 'weekly'),
+    groupName: normalizeGroupName(nullableString(raw.groupName)),
   };
 }
 

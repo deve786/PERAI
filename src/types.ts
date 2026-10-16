@@ -63,6 +63,11 @@ export interface Memory {
   repeat: Repeat | null;
   /** Closing date of a span, e.g. the last day of a trip. Null for a moment. */
   endDate: string | null;
+  /**
+   * The group this belongs to — "Kozhikode trip", "Work" — or null when it
+   * stands alone. Just a name: see src/groups.ts.
+   */
+  groupName: string | null;
   /** Last change to this entry, and what sync compares. */
   updatedAt: string;
   /** Linked ID in Expense tracker if this purchase was saved as an expense. */

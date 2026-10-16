@@ -52,11 +52,11 @@ const EXPECTED = [
   'id', 'raw_input', 'title', 'type', 'category', 'event_date',
   'date_expression', 'created_at', 'amount', 'currency', 'people',
   'location', 'tags', 'priority', 'status', 'confirmed',
-  'updated_at', 'deleted', 'dirty', 'repeat', 'end_date',
+  'updated_at', 'deleted', 'dirty', 'repeat', 'end_date', 'group_name',
 ];
 
 check(
-  'all 21 columns present',
+  'all 22 columns present',
   EXPECTED.every((c) => columns.includes(c)) && columns.length === EXPECTED.length,
   columns
 );
@@ -267,7 +267,7 @@ console.log('\nupgrading a phone that predates sync');
   const after = columnsOf();
   check(
     'the sync columns are added to an existing table',
-    ['updated_at', 'deleted', 'dirty', 'repeat', 'end_date'].every((c) => after.includes(c)),
+    ['updated_at', 'deleted', 'dirty', 'repeat', 'end_date', 'group_name'].every((c) => after.includes(c)),
     after
   );
 

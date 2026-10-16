@@ -26,6 +26,7 @@ export interface RemoteRow {
   confirmed: boolean;
   repeat: string | null;
   end_date: string | null;
+  group_name: string | null;
   deleted: boolean;
   updated_at: string;
 }
@@ -55,6 +56,7 @@ export function toRemote(row: LocalRow): Omit<RemoteRow, 'updated_at'> {
     confirmed: row.confirmed,
     repeat: row.repeat,
     end_date: row.endDate,
+    group_name: row.groupName,
     deleted: row.deleted,
   };
 }
@@ -79,6 +81,7 @@ export function toLocal(row: RemoteRow): LocalRow {
     confirmed: row.confirmed,
     repeat: (row.repeat as Repeat | null) ?? null,
     endDate: row.end_date,
+    groupName: row.group_name,
     updatedAt: row.updated_at,
     deleted: row.deleted,
   };

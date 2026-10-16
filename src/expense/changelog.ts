@@ -7,6 +7,18 @@ export interface ChangelogEntry {
 /** Newest first. Add a new entry here with every release that changes user-visible behaviour. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.15.0',
+    date: '2026-10-16',
+    highlights: [
+      'Groups: keep the tasks of one job together — a trip, a move, a week at work — with a finish line. More → Groups lists them, overdue first',
+      'Say it in one breath: "for the Kozhikode trip: book tickets, pack bags, get cash" files all three under that group. The review screen shows the group and lets you change it for every entry at once',
+      'Inside a group you can type tasks straight in, one line each, with no waiting; tick them off, tick off everything left, or ungroup without deleting any of the work',
+      'Any entry can be put into a group, or taken out, from its own screen',
+      'Ask now hears instructions it used to answer as questions: "make the electricity bill high priority", "the dinner at Paragon was actually 1450", "rename it to…", "cancel the gym reminder"',
+      'Ask fixes: an instruction that adds and changes now does both, a delete no longer removes Undo from the other changes beside it, "move it to Fitness" works on entries, and spending from the last year can be corrected rather than only the last four months',
+    ],
+  },
+  {
     version: '1.14.0',
     date: '2026-10-15',
     highlights: [

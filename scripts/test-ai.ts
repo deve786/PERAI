@@ -7,6 +7,15 @@
  * step 6 (grounded answers, including the must-say-not-found case).
  */
 import { askAI } from '../src/ai/ask';
+import { ASK_MODEL, requestJson } from '../src/ai/client';
+import {
+  buildUserMessage,
+  COMMAND_SCHEMA,
+  planFromReply,
+  renderCandidates,
+  SYSTEM_PROMPT,
+} from '../src/ai/commandPlan';
+import type { ExpenseRow } from '../src/expense/db';
 import { hasApiKey } from '../src/ai/client';
 import { extractMemories } from '../src/ai/extract';
 import type { Memory, MemoryDraft } from '../src/types';
@@ -199,6 +208,7 @@ async function main() {
       confirmed: true,
       repeat: null,
       endDate: null,
+      groupName: null,
       ...partial,
     };
   };
@@ -252,6 +262,131 @@ async function main() {
     console.log(`     evidence: ${r.evidence.map((e) => e.title).join(', ') || '(none)'}\n`);
     check('unrecorded question returns not-found', r.found === false, r.found);
     check('unrecorded question cites nothing', r.evidence.length === 0, r.evidence.length);
+  }
+
+
+  console.log('\n=== Instructions (the Ask box changing things) ===\n');
+
+  {
+    const targets: Memory[] = [
+      m({ id: 'i1', title: 'Pay the electricity bill', eventDate: days(2), type: 'task', priority: 'low' }),
+      m({ id: 'i2', title: 'Dentist appointment', eventDate: days(-4), type: 'appointment', dateExpression: 'next Tuesday at 10' }),
+      m({ id: 'i3', title: 'Gym', eventDate: days(0), type: 'reminder', repeat: 'weekly' }),
+    ];
+    const expenses: ExpenseRow[] = [
+      {
+        id: 'x1', amount: 1200, category_id: 'c1', date: new Date(Date.now() - 86400000).toISOString().slice(0, 10),
+        note: 'Dinner at Paragon', notes: '', method: 'Card', user_tag: '', recurring_id: null,
+        cat_name: 'Food', cat_icon: 'food', cat_color: '#222', item_count: 0,
+      },
+    ];
+    const categories = ['Food', 'Travel', 'Bills'];
+
+    /** Plan one instruction the way the Ask tab does, minus the database. */
+    const planned = async (instruction: string) => {
+      const refs = renderCandidates(targets, expenses);
+      const body = await requestJson({
+        model: ASK_MODEL,
+        system: SYSTEM_PROMPT,
+        user: buildUserMessage({
+          instruction,
+          nowISO: NOW,
+          memories: refs.renderedMemories,
+          expenses: refs.renderedExpenses,
+          categories,
+        }),
+        schemaName: 'command_plan',
+        schema: COMMAND_SCHEMA,
+        retries: 0,
+      });
+      return planFromReply(body, {
+        instruction,
+        now: new Date(NOW),
+        memories: targets,
+        expenses,
+        categories,
+        memoryByRef: refs.memoryByRef,
+        expenseByRef: refs.expenseByRef,
+      });
+    };
+
+    const shown = (plan: Awaited<ReturnType<typeof planned>>) => {
+      if (!plan) return '(no plan)';
+      if ('question' in plan) return `clarify: ${plan.question}`;
+      if ('refusedOnly' in plan) return `refused: ${plan.refusedOnly.join(' ')}`;
+      return plan.changes.map((c) => `${c.label}: ${c.before} -> ${c.after}`).join('; ');
+    };
+
+    {
+      await pace();
+      const plan = await planned('make the electricity bill high priority');
+      console.log(`  I: make the electricity bill high priority\n  ->  ${shown(plan)}\n`);
+      const ok = plan && !('question' in plan) && !('refusedOnly' in plan);
+      check('a priority instruction proposes a change', !!ok);
+      check(
+        'and it is the right entry, low to high',
+        !!ok && plan.changes.some((c) => c.label.includes('electricity') && c.after === 'high'),
+        shown(plan)
+      );
+    }
+
+    {
+      // A correction, which opens with no verb at all.
+      await pace();
+      const plan = await planned('the dinner at paragon was actually 1450');
+      console.log(`  I: the dinner at paragon was actually 1450\n  ->  ${shown(plan)}\n`);
+      const ok = plan && !('question' in plan) && !('refusedOnly' in plan);
+      check('a corrected amount proposes a change', !!ok);
+      check(
+        'and it shows both figures',
+        !!ok && plan.changes.some((c) => c.before === '1200' && c.after === '1450'),
+        shown(plan)
+      );
+    }
+
+    {
+      // Ticking off something that repeats must say it comes back.
+      await pace();
+      const plan = await planned('gym kazhinju');
+      console.log(`  I: gym kazhinju\n  ->  ${shown(plan)}\n`);
+      const ok = plan && !('question' in plan) && !('refusedOnly' in plan);
+      check('a Manglish instruction proposes a change', !!ok);
+      check(
+        'and a repeating entry says it comes round again',
+        !!ok && plan.changes.some((c) => c.after.toLowerCase().includes('weekly')),
+        shown(plan)
+      );
+    }
+
+    {
+      // A question must never become a change.
+      await pace();
+      const plan = await planned('how much did i spend on food');
+      console.log(`  I: how much did i spend on food\n  ->  ${shown(plan)}\n`);
+      check('a question proposes nothing', plan === null || 'question' in plan || 'refusedOnly' in plan, shown(plan));
+    }
+  }
+
+  console.log('\n=== Groups ===\n');
+
+  {
+    await pace();
+    const drafts = await extractMemories(
+      'for the Kozhikode trip: book tickets, pack bags and get cash from the ATM',
+      NOW
+    );
+    show(drafts);
+    check('a named checklist becomes several entries', drafts.length >= 3, drafts.length);
+    const names = new Set(drafts.map((d) => (d.groupName ?? '').toLowerCase()));
+    check('all under one group', names.size === 1, [...names]);
+    check('named after what the person called it', [...names][0]?.includes('kozhikode'), [...names][0]);
+  }
+
+  {
+    await pace();
+    const drafts = await extractMemories('bought milk for 60 rupees', NOW);
+    show(drafts);
+    check('one thing on its own gets no group', drafts.every((d) => d.groupName === null), drafts.map((d) => d.groupName));
   }
 
   console.log(`\n${passed} passed, ${failed} failed\n`);

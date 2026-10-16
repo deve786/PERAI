@@ -87,6 +87,7 @@ export interface RawRow {
   confirmed: number;
   repeat: string | null;
   endDate: string | null;
+  groupName: string | null;
   updatedAt: string;
 }
 

@@ -7,6 +7,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { DraftCard } from '@/components/DraftCard';
@@ -14,8 +15,11 @@ import { insertMemory, rememberSpelling } from '@/db/queries';
 import { recordVoiceExpense } from '@/expense/voiceExpense';
 import { logOk } from '@/log';
 import { clearDrafts, removeDraft, updateDraft, usePendingDrafts } from '@/draftStore';
+import { ChipRow } from '@/components/Chip';
+import { groupNames, normalizeGroupName, sameGroup } from '@/groups';
+import { useMemories } from '@/useMemories';
 import { useTheme } from '@/ThemeContext';
-import { SPACE, type Colors } from '@/theme';
+import { FONTS, SPACE, type Colors } from '@/theme';
 
 export default function PreviewScreen() {
   const { colors, type } = useTheme();
@@ -25,6 +29,21 @@ export default function PreviewScreen() {
   const { rawInput, drafts } = usePendingDrafts();
   const [savedCount, setSavedCount] = useState(0);
   const dismissing = useRef(false);
+
+  /** A group being typed, before it is put on the drafts. */
+  const [groupDraft, setGroupDraft] = useState('');
+  const { memories } = useMemories();
+  const existingGroups = groupNames(memories);
+  /** The group they all share, or null when they differ or have none. */
+  const sharedGroup =
+    drafts.length > 0 && drafts.every((entry) => sameGroup(entry.draft.groupName, drafts[0].draft.groupName))
+      ? drafts[0].draft.groupName
+      : null;
+
+  const applyGroup = (name: string | null) => {
+    const next = name === sharedGroup ? null : name;
+    for (const entry of drafts) updateDraft(entry.key, { groupName: next });
+  };
 
   // Close once every card has been dealt with, but only if we ever had cards —
   // otherwise the screen would dismiss itself before the store is populated.
@@ -131,6 +150,33 @@ export default function PreviewScreen() {
           wrong.
         </Text>
 
+        {/* One group for everything in this note: a checklist said in one
+            breath — "for the Kozhikode trip: book tickets, pack bags" — is
+            kept together. Extraction fills this in when the note names one. */}
+        <View style={styles.group}>
+          <Text style={type.label}>GROUP {drafts.length > 1 ? '(ALL OF THEM)' : ''}</Text>
+          {existingGroups.length > 0 ? (
+            <ChipRow
+              options={existingGroups}
+              value={sharedGroup}
+              onChange={(value) => applyGroup(value)}
+              allLabel="None"
+            />
+          ) : null}
+          <TextInput
+            value={groupDraft}
+            onChangeText={setGroupDraft}
+            onSubmitEditing={() => {
+              applyGroup(normalizeGroupName(groupDraft));
+              setGroupDraft('');
+            }}
+            placeholder={sharedGroup ? 'Move to another group…' : 'New group…'}
+            placeholderTextColor={colors.mist}
+            returnKeyType="done"
+            style={styles.groupInput}
+          />
+        </View>
+
         {drafts.map((entry, index) => (
           <DraftCard
             key={entry.key}
@@ -173,6 +219,15 @@ function makeStyles(colors: Colors) {
     },
     saidText: { color: colors.ink },
     lead: { marginTop: -6, marginBottom: 4, maxWidth: 330 },
+    group: { gap: 8, marginBottom: 4 },
+    groupInput: {
+      fontFamily: FONTS.sans,
+      fontSize: 15,
+      color: colors.ink,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.rule,
+      paddingVertical: 6,
+    },
     bulk: { flexDirection: 'row', alignItems: 'center', paddingTop: 10 },
     bulkGhost: { paddingVertical: 10, paddingRight: 16 },
     bulkGhostText: { color: colors.mist },

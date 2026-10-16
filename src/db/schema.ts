@@ -31,6 +31,8 @@ CREATE TABLE IF NOT EXISTS memories (
   -- Optional closing date, so an entry can cover a span (a trip) rather than
   -- a moment. Null for everything that existed before.
   end_date TEXT,
+  -- The group this entry belongs to, by name. Null for anything on its own.
+  group_name TEXT,
   -- Sync bookkeeping. A deleted entry stays as a tombstone until the server has
   -- seen it, or the delete would come straight back on the next pull.
   updated_at TEXT NOT NULL DEFAULT '',
@@ -117,6 +119,7 @@ export const ADDED_COLUMNS: { name: string; ddl: string }[] = [
   { name: 'dirty', ddl: 'ALTER TABLE memories ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1' },
   { name: 'repeat', ddl: 'ALTER TABLE memories ADD COLUMN repeat TEXT' },
   { name: 'end_date', ddl: 'ALTER TABLE memories ADD COLUMN end_date TEXT' },
+  { name: 'group_name', ddl: 'ALTER TABLE memories ADD COLUMN group_name TEXT' },
 ];
 
 /** Entries from before sync existed still need a time and a push. */

@@ -62,8 +62,16 @@ create trigger memories_touch_updated_at
   before insert or update on public.memories
   for each row execute function public.touch_updated_at();
 
--- Added later, for repeating entries ("gym every Monday"). Safe to re-run.
+-- Added later. All safe to re-run, and all three are required: the app sends
+-- these columns on every push, so a project missing one rejects the whole
+-- batch and nothing is backed up.
+--   repeat     — repeating entries ("gym every Monday")
+--   end_date   — an entry covering a span rather than a moment (a trip)
+--   group_name — the group an entry belongs to ("Kozhikode trip")
 alter table public.memories add column if not exists repeat text;
+alter table public.memories add column if not exists end_date timestamptz;
+alter table public.memories add column if not exists group_name text;
+create index if not exists idx_memories_group on public.memories (group_name);
 
 -- Reload PostgREST schema cache
 notify pgrst, 'reload schema';
@@ -84,6 +92,28 @@ create table if not exists public.categories (
 alter table public.categories enable row level security;
 drop policy if exists "categories are private" on public.categories;
 create policy "categories are private" on public.categories for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- Added later, for per-category monthly budgets. Required: categories is the
+-- first table pushed, so without this nothing in Expense is backed up.
+alter table public.categories add column if not exists monthly_budget double precision;
+
+-- Which spending belongs to which entry — the trip-spending link table. Lives
+-- in the Expense project because that is where expenses are; the memory id is
+-- carried as plain text rather than a foreign key across projects.
+create table if not exists public.memory_expense_links (
+  id text primary key,
+  user_id uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  memory_id text not null,
+  expense_id text not null,
+  deleted boolean not null default false,
+  updated_at timestamptz not null default now()
+);
+alter table public.memory_expense_links enable row level security;
+drop policy if exists "memory_expense_links are private" on public.memory_expense_links;
+create policy "memory_expense_links are private" on public.memory_expense_links
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create index if not exists idx_mel_memory on public.memory_expense_links (memory_id);
+create index if not exists idx_mel_expense on public.memory_expense_links (expense_id);
 
 create table if not exists public.income_categories (
   id text primary key,

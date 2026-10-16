@@ -63,6 +63,13 @@ import {
   type ExpenseTarget,
 } from '../src/actions';
 import { looksLikeCommand } from '../src/ai/commandGate';
+import {
+  groupNames,
+  groupSummaries,
+  membersOf,
+  normalizeGroupName,
+  sameGroup,
+} from '../src/groups';
 
 
 import type { Category as ExpenseCategory } from '../src/expense/db';
@@ -1443,6 +1450,61 @@ section('instructions: corrections and the words that were missed');
   check('nor is one with nothing to correct to', looksLikeCommand('it was not great') === false);
 }
 
+section('groups: one name holds a job together');
+{
+  check('spacing is tidied', normalizeGroupName('  Kozhikode   trip ') === 'Kozhikode trip');
+  check('an empty name is no group', normalizeGroupName('   ') === null);
+  check('and so is nothing at all', normalizeGroupName(null) === null);
+  check('the words are kept as written', normalizeGroupName('Work') === 'Work');
+  check('a very long name is cut', (normalizeGroupName('x'.repeat(200)) ?? '').length === 60);
+
+  check('case does not make a second group', sameGroup('Work', 'work') === true);
+  check('different names are different groups', sameGroup('Work', 'Home') === false);
+  check('nothing matches nothing', sameGroup(null, null) === false);
+}
+
+section('groups: what each one has left');
+{
+  const now = new Date('2026-10-16T09:00:00+05:30');
+  const trip = [
+    memory({ id: 'g1', title: 'Book tickets', eventDate: '2026-10-14T09:00:00+05:30', groupName: 'Kozhikode trip', status: 'done' }),
+    memory({ id: 'g2', title: 'Pack bags', eventDate: '2026-10-18T09:00:00+05:30', groupName: 'Kozhikode trip' }),
+    memory({ id: 'g3', title: 'Get cash', eventDate: '2026-10-15T09:00:00+05:30', groupName: 'kozhikode trip' }),
+  ];
+  const work = [
+    memory({ id: 'g4', title: 'Send the invoice', eventDate: '2026-10-20T09:00:00+05:30', groupName: 'Work' }),
+  ];
+  const over = [
+    memory({ id: 'g5', title: 'Return the car', eventDate: '2026-10-01T09:00:00+05:30', groupName: 'Goa trip', status: 'done' }),
+  ];
+  const loose = [memory({ id: 'g6', title: 'Buy milk', eventDate: '2026-10-16T09:00:00+05:30' })];
+
+  const groups = groupSummaries([...trip, ...work, ...over, ...loose], now);
+
+  check('one group per name', groups.length === 3, groups.map((g) => g.name));
+  check('an ungrouped entry is in none of them', groups.every((g) => g.name !== 'Buy milk'));
+  check('case differences fold together', groups.find((g) => g.name === 'Kozhikode trip')?.total === 3);
+  check('the first spelling is the one shown', groups.some((g) => g.name === 'Kozhikode trip'));
+
+  const kozhikode = groups.find((g) => g.name === 'Kozhikode trip');
+  check('finished ones are counted', kozhikode?.done === 1);
+  check('and so is what is left', kozhikode?.open === 2);
+  check('overdue work is counted', kozhikode?.overdue === 1, kozhikode?.overdue);
+  check('the next due date is the soonest open one', kozhikode?.nextDue?.startsWith('2026-10-15') === true, kozhikode?.nextDue);
+  check('progress is the share finished', Math.round((kozhikode?.progress ?? 0) * 100) === 33);
+
+  check('the group with overdue work comes first', groups[0]?.name === 'Kozhikode trip', groups.map((g) => g.name));
+  check('a finished group sinks to the bottom', groups[groups.length - 1]?.name === 'Goa trip');
+  check('a finished group reads as done', groups[groups.length - 1]?.progress === 1);
+
+  const members = membersOf([...trip, ...work, ...loose], 'KOZHIKODE TRIP');
+  check('a group reads back whatever the case', members.length === 3);
+  check('unfinished work comes first, soonest first', members[0]?.title === 'Get cash', members.map((m) => m.title));
+  check('and what is done is last', members[members.length - 1]?.title === 'Book tickets');
+
+  check('the names offered are the ones in use', groupNames([...trip, ...work]).includes('Work'));
+  check('and nothing else', groupNames(loose).length === 0);
+}
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
