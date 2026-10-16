@@ -14,6 +14,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       'Add several tasks at once inside a group — "book tickets, pack bags, get cash" becomes three, instantly, with no waiting',
       'Typed tasks read their own dates: "table parcel by tomorrow 9am" is saved as Table parcel, due tomorrow at 9 — tonight, friday, 5 November, in 3 days and nale all work too',
       'Or say them: spoken tasks are understood first, so "book tickets tomorrow and pack bags on Friday" lands two tasks on two days',
+      'The ✨ button beside ADD reads typed text the way the Record tab does — several events at once, amounts, people and places, and a purchase still lands in Expense',
       'Rename a group by editing its heading — every entry in it moves with it',
       'Delete a group, choosing whether to keep its entries or delete them too',
       'Hold any task in a group to edit or delete it; tap still ticks it off',

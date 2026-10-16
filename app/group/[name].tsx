@@ -105,18 +105,28 @@ export default function GroupScreen() {
     }
   }
 
-  /** Spoken, it is read the way the Record tab reads it: one call for the lot. */
-  async function addSpoken(spoken: string) {
-    if (!spoken.trim() || saving) return;
+  /**
+   * Understood first, exactly as the Record tab understands a note: one call
+   * for the whole thing, which picks apart several events, reads amounts,
+   * people and places, and files a purchase to Expense as well. What the mic
+   * uses, and what the ✨ button runs on typed text.
+   */
+  async function addUnderstood(note: string, spoken: boolean) {
+    if (!note.trim() || saving) return;
     setSaving(true);
     setError(null);
     try {
-      const added = await fileNote(spoken, { people: knownPeople(memories), groupName });
-      if (added.length === 0) setError('Nothing could be made of that.');
-      else {
-        await removeEmptyGroup(groupName);
-        logOk(`Added ${added.length} by voice`, groupName);
+      const added = await fileNote(note, { people: knownPeople(memories), groupName });
+      if (added.length === 0) {
+        setError('Nothing could be made of that.');
+        return;
       }
+      await removeEmptyGroup(groupName);
+      logOk(
+        `Added ${added.length} to a group${spoken ? ' by voice' : ''}`,
+        `${groupName} · ${added.map((entry) => entry.title).join(', ')}`
+      );
+      if (!spoken) setText('');
     } catch (err) {
       setError(describeError(err));
     } finally {
@@ -124,7 +134,7 @@ export default function GroupScreen() {
     }
   }
 
-  const voice = useVoiceInput((spoken) => void addSpoken(spoken));
+  const voice = useVoiceInput((spoken) => void addUnderstood(spoken, true));
   const listening = voice.stage === 'listening';
 
   /** Renaming moves every entry with it, so nothing is left behind. */
@@ -255,9 +265,21 @@ export default function GroupScreen() {
             style={styles.input}
           />
           {text.trim() ? (
-            <Pressable onPress={() => void addTyped()} hitSlop={10} disabled={saving}>
-              <Text style={[type.label, styles.addOn]}>ADD</Text>
-            </Pressable>
+            <View style={styles.addActions}>
+              {/* Straight in, or read properly first — the same choice the
+                  mic already makes for anything spoken. */}
+              <Pressable
+                onPress={() => void addUnderstood(text, false)}
+                hitSlop={10}
+                disabled={saving}
+                accessibilityLabel="Add, understanding dates, amounts and people"
+              >
+                <Ionicons name="sparkles-outline" size={19} color={colors.moss} />
+              </Pressable>
+              <Pressable onPress={() => void addTyped()} hitSlop={10} disabled={saving}>
+                <Text style={[type.label, styles.addOn]}>ADD</Text>
+              </Pressable>
+            </View>
           ) : (
             <Pressable
               onPress={() => void voice.toggle()}
@@ -280,7 +302,9 @@ export default function GroupScreen() {
             ? 'Adding…'
             : listening
               ? 'Say everything at once — dates are understood'
-              : 'Type the date in and it is read: table parcel by tomorrow 9am'}
+              : text.trim()
+                ? 'ADD puts the lines in as typed, with their dates. ✨ reads the whole thing properly — amounts, people, several events.'
+                : 'Type the date in and it is read: table parcel by tomorrow 9am'}
         </Text>
 
         {error || voice.error ? (
@@ -376,6 +400,7 @@ function makeStyles(colors: Colors) {
       borderBottomColor: colors.rule,
     },
     input: { flex: 1, fontFamily: FONTS.sans, fontSize: 15, color: colors.ink, paddingVertical: 8 },
+    addActions: { flexDirection: 'row', alignItems: 'center', gap: 14 },
     addOn: { color: colors.moss },
     hint: { marginTop: -12 },
     error: { color: colors.alert },
