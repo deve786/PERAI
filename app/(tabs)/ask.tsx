@@ -164,14 +164,14 @@ export default function AskScreen() {
       // the check is local, so asking a question still costs one call as before.
       // Nothing is changed here: a plan only ever goes to the confirm step.
       if (looksLikeCommand(q)) {
-        const recentExpenses = await listExpenses(addDays(todayStr(), -120), todayStr()).catch(
+        const recentExpenses = await listExpenses(addDays(todayStr(), -365), todayStr()).catch(
           () => []
         );
         const proposed = await planCommand(
           q,
           new Date().toISOString(),
           await getAllMemories(),
-          recentExpenses.slice(0, 60)
+          recentExpenses.slice(0, 120)
         );
         if (proposed && 'question' in proposed) {
           // It matched more than one thing. Asking is cheaper than guessing.
@@ -227,6 +227,13 @@ export default function AskScreen() {
     setBusy(true);
     setError(null);
     try {
+      // Changes first, so an instruction that both alters something and
+      // records something new does both rather than only the new entry.
+      const changes = plan.actions.some((action) => action.kind !== 'add_entry');
+      const done = changes ? await runCommand(plan, { currentBudget: budget, setBudget }) : null;
+      setPlan(null);
+      if (done) setOutcome(done);
+
       // Something new said in the Ask box is not written from here: it is
       // understood and sent to the review screen, like any other capture.
       if (plan.capture) {
@@ -234,19 +241,13 @@ export default function AskScreen() {
           titleLanguage: await getTitleLanguage(),
           retries: 0,
         });
-        setPlan(null);
         if (drafts.length === 0) {
           setError('Nothing could be made of that. Try saying it on the Record tab.');
           return;
         }
         setPendingDrafts(plan.capture, drafts);
         router.push('/preview');
-        return;
       }
-
-      const done = await runCommand(plan, { currentBudget: budget, setBudget });
-      setPlan(null);
-      setOutcome(done);
     } catch (err) {
       setError(describeError(err));
     } finally {

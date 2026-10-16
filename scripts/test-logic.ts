@@ -116,6 +116,7 @@ function memory(partial: Partial<Memory> & { title: string; eventDate: string })
     confirmed: true,
     repeat: null,
     endDate: null,
+    groupName: null,
     ...partial,
   };
 }
@@ -1425,6 +1426,23 @@ section('instructions: undo puts back exactly what changed');
   check('the category comes back', patch.category === 'Health');
   check('and nothing else is touched', Object.keys(patch).length === 5, Object.keys(patch));
 }
+
+section('instructions: corrections and the words that were missed');
+{
+  check('making something a priority is an order', looksLikeCommand('make the electricity bill high priority') === true);
+  check('so is stating the priority', looksLikeCommand('the electricity bill is high priority') === true);
+  check('a corrected amount is an order', looksLikeCommand('the dinner at paragon was actually 1450') === true);
+  check('so is a replacement', looksLikeCommand("it's 1200 not 1450") === true);
+  check('so is a correction to a date', looksLikeCommand('the dentist is actually tomorrow') === true);
+  check('renaming is an order', looksLikeCommand('rename it to Ghost of Yotei') === true);
+  check('so is cancelling', looksLikeCommand('cancel the gym reminder') === true);
+
+  check('asking which is which is still a question', looksLikeCommand('which ones are high priority') === false);
+  check('and so is asking what happened', looksLikeCommand('what did i actually spend on food') === false);
+  check('a bare remark is not an order', looksLikeCommand('that was a good trip actually') === false);
+  check('nor is one with nothing to correct to', looksLikeCommand('it was not great') === false);
+}
+
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

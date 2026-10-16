@@ -325,15 +325,20 @@ export function isDestructive(action: ValidAction): boolean {
   return action.kind === 'delete_entry';
 }
 
-/** How many rows one batch touches, for "CHANGED 2 ENTRIES". */
+/**
+ * How many rows one batch touches, for "CHANGED 2 ENTRIES".
+ *
+ * Counted by id: an entry that two changes in the same batch both touch — a
+ * new date and a new priority, say — is one entry changed, not two.
+ */
 export function countTargets(actions: ValidAction[]): { memories: number; expenses: number } {
-  return actions.reduce(
-    (total, action) => ({
-      memories: total.memories + action.memories.length,
-      expenses: total.expenses + action.expenses.length,
-    }),
-    { memories: 0, expenses: 0 }
-  );
+  const memories = new Set<string>();
+  const expenses = new Set<string>();
+  for (const action of actions) {
+    for (const memory of action.memories) memories.add(memory.id);
+    for (const expense of action.expenses) expenses.add(expense.id);
+  }
+  return { memories: memories.size, expenses: expenses.size };
 }
 
 /**
