@@ -23,6 +23,7 @@ import { fullDateLabel } from '@/format';
 import { groupSummaries, membersOf, normalizeGroupName, splitTasks } from '@/groups';
 import { logOk } from '@/log';
 import { knownPeople } from '@/speechText';
+import { parseWhen } from '@/whenText';
 import { useTheme } from '@/ThemeContext';
 import { FONTS, SPACE, type Colors } from '@/theme';
 import type { Memory } from '@/types';
@@ -57,26 +58,29 @@ export default function GroupScreen() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  /** Typed lines go in as they are — several at once, instantly. */
+  /**
+   * Typed lines go in at once, several at a time, with their dates read on
+   * the phone: "table parcel by tomorrow 9am" is a title and a time, not a
+   * title. A line that says nothing about when is due today.
+   */
   async function addTyped() {
     const tasks = splitTasks(text);
     if (tasks.length === 0 || saving) return;
     setSaving(true);
     setError(null);
     try {
-      // Due today at nine, the same default the rest of the app uses for a
-      // task with no stated time.
-      const due = new Date();
-      due.setHours(9, 0, 0, 0);
+      const today = new Date();
+      today.setHours(9, 0, 0, 0);
 
       for (const task of tasks) {
+        const when = parseWhen(task);
         await insertMemory(
           {
-            title: task,
+            title: when.title || task,
             type: 'task',
             category: 'Other',
-            eventDate: due.toISOString(),
-            dateExpression: null,
+            eventDate: when.eventDate ?? today.toISOString(),
+            dateExpression: when.dateExpression,
             amount: null,
             currency: null,
             people: null,
@@ -276,7 +280,7 @@ export default function GroupScreen() {
             ? 'Adding…'
             : listening
               ? 'Say everything at once — dates are understood'
-              : 'Typed lines go in as they are. Speak instead and dates are understood.'}
+              : 'Type the date in and it is read: table parcel by tomorrow 9am'}
         </Text>
 
         {error || voice.error ? (

@@ -63,6 +63,7 @@ import {
   type ExpenseTarget,
 } from '../src/actions';
 import { looksLikeCommand } from '../src/ai/commandGate';
+import { parseWhen } from '../src/whenText';
 import {
   groupNames,
   groupSummaries,
@@ -1555,6 +1556,79 @@ section('groups: a group that exists before its work does');
   ];
   const mixed = groupSummaries([...entries, ...finished], now, ['House move']);
   check('a finished group still sinks below an empty one', mixed[mixed.length - 1]?.name === 'Goa trip', mixed.map((g) => g.name));
+}
+
+section('typed tasks: reading the date out of the line');
+{
+  // Friday 16 October 2026, 11:00 in the morning.
+  const now = new Date(2026, 9, 16, 11, 0, 0, 0);
+  const read = (text: string) => parseWhen(text, now);
+  const at = (text: string) => {
+    const when = read(text).eventDate;
+    return when ? new Date(when) : null;
+  };
+
+  {
+    const result = read('table parcel by tomorrow 9am');
+    check('the title loses the date words', result.title === 'Table parcel', result.title);
+    check('the day is tomorrow', at('table parcel by tomorrow 9am')?.getDate() === 17);
+    check('the hour is the one stated', at('table parcel by tomorrow 9am')?.getHours() === 9);
+    check('and the minutes are zero', at('table parcel by tomorrow 9am')?.getMinutes() === 0);
+    check('what was said is kept', result.dateExpression === 'tomorrow 9am', result.dateExpression);
+    check('so the time shows rather than hides', hasStatedTime(result.dateExpression) === true);
+  }
+
+  check('today stays today', at('call the bank today')?.getDate() === 16);
+  check('tonight is this evening', at('pack the bags tonight')?.getHours() === 20);
+  check('the day after tomorrow is two days on', at('dentist day after tomorrow')?.getDate() === 18);
+  check('next week is seven days on', at('review next week')?.getDate() === 23);
+  check('in three days counts them', at('follow up in 3 days')?.getDate() === 19);
+  check('in two weeks too', at('renew in 2 weeks')?.getDate() === 30);
+
+  check('a weekday means the next one', at('gym monday')?.getDate() === 19);
+  check('this friday is today when it is friday', at('report this friday')?.getDate() === 16);
+  check('a bare friday is the next one', at('report friday')?.getDate() === 23);
+
+  check('a date with a month is read', at('pay rent 5 november')?.getMonth() === 10);
+  check('and the day with it', at('pay rent 5 november')?.getDate() === 5);
+  check('the month can come first', at('pay rent november 5')?.getDate() === 5);
+  check('a month already past means next year', at('party january 5')?.getFullYear() === 2027);
+
+  check('half past is read', at('call at 9:30pm')?.getHours() === 21);
+  check('with its minutes', at('call at 9:30pm')?.getMinutes() === 30);
+  check('midday is noon', at('lunch at noon')?.getHours() === 12);
+  check('the morning is nine', at('tomorrow morning walk')?.getHours() === 9);
+  check('the evening is six', at('tomorrow evening call')?.getHours() === 18);
+
+  check('a bare small hour is the afternoon', at('meeting at 5')?.getHours() === 17);
+  check('a bare large hour is taken as written', at('meeting at 9')?.getHours() === 9);
+  check('midnight is zero', at('deadline at midnight')?.getHours() === 0);
+
+  {
+    // A time with no day: today while it is ahead, tomorrow once it is past.
+    const ahead = at('call at 3pm');
+    check('a time still ahead is today', ahead?.getDate() === 16 && ahead?.getHours() === 15);
+    const past = at('call at 10am');
+    check('a time already gone is tomorrow', past?.getDate() === 17 && past?.getHours() === 10);
+  }
+
+  {
+    const plain = read('table parcel');
+    check('a line with no date keeps every word', plain.title === 'Table parcel');
+    check('and gets no date at all', plain.eventDate === null);
+    check('nor any wording', plain.dateExpression === null);
+  }
+
+  check('a date with no time lands at nine', at('pack bags tomorrow')?.getHours() === 9);
+  check('and that time is not claimed as stated', hasStatedTime(read('pack bags tomorrow').dateExpression) === false);
+
+  check('words that only look like dates are left', read('may the best win').title === 'May the best win');
+  check('an "at" that is part of the title stays', read('meet at the cafe tomorrow').title === 'Meet at the cafe tomorrow'.replace(' tomorrow', ''), read('meet at the cafe tomorrow').title);
+
+  // Malayalam written in English letters, the way the rest of the app reads it.
+  check('nale is tomorrow', at('table parcel nale')?.getDate() === 17);
+  check('innu is today', at('bank call innu')?.getDate() === 16);
+  check('and the title survives it', read('table parcel nale').title === 'Table parcel');
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
