@@ -18,12 +18,12 @@ import {
   type CommandOutcome,
   type CommandPlan,
 } from '@/ai/command';
-import { MAX_BATCH } from '@/actions';
 import { extractMemories } from '@/ai/extract';
 import { setPendingDrafts } from '@/draftStore';
 import { getTitleLanguage } from '@/settings';
 import { describeError, hasApiKey } from '@/ai/client';
 import { MemoryRow } from '@/components/MemoryRow';
+import { PlanCard } from '@/components/PlanCard';
 import { ComposeButton, type ComposeMode } from '@/components/ComposeButton';
 import { Section } from '@/components/Section';
 import { VoiceWaveform } from '@/components/VoiceWaveform';
@@ -423,52 +423,7 @@ export default function AskScreen() {
             and before → after, so a misheard instruction is caught before it
             costs anything. */}
         {plan && !busy ? (
-          <View style={[styles.plan, plan.destructive && styles.planDestructive]}>
-            <Text style={[type.label, plan.destructive ? styles.planLabelWarn : styles.planLabel]}>
-              {plan.destructive ? 'THIS CANNOT BE UNDONE' : 'ABOUT TO CHANGE'}
-            </Text>
-            <Text style={type.answer}>{plan.summary}</Text>
-
-            <View style={styles.planList}>
-              {plan.changes.map((change, index) => (
-                <View key={`${change.label}-${index}`} style={styles.change}>
-                  <Text style={[type.body, styles.changeTitle]} numberOfLines={2}>
-                    {change.label}
-                  </Text>
-                  <Text style={[type.body, styles.changeFrom]} numberOfLines={1}>
-                    {change.before}
-                  </Text>
-                  <Text style={[type.body, styles.changeTo]} numberOfLines={1}>
-                    → {change.after}
-                  </Text>
-                </View>
-              ))}
-            </View>
-
-            {plan.trimmed ? (
-              <Text style={[type.body, styles.planNote]}>
-                Only the first {MAX_BATCH} are included — ask again for the rest.
-              </Text>
-            ) : null}
-            {plan.refused.map((reason, index) => (
-              <Text key={`${reason}-${index}`} style={[type.body, styles.planNote]}>
-                {reason}
-              </Text>
-            ))}
-
-            <View style={styles.planActions}>
-              <Pressable onPress={() => setPlan(null)} hitSlop={10}>
-                <Text style={[type.label, styles.cancel]}>CANCEL</Text>
-              </Pressable>
-              <Pressable onPress={() => void confirmPlan()} hitSlop={10}>
-                <Text
-                  style={[type.label, plan.destructive ? styles.confirmWarn : styles.confirm]}
-                >
-                  {plan.destructive ? 'DELETE' : plan.capture ? 'REVIEW' : 'CONFIRM'}
-                </Text>
-              </Pressable>
-            </View>
-          </View>
+          <PlanCard plan={plan} onCancel={() => setPlan(null)} onConfirm={() => void confirmPlan()} />
         ) : null}
 
         {outcome && !busy ? (
@@ -634,22 +589,9 @@ function makeStyles(colors: Colors) {
       paddingLeft: 12,
       paddingVertical: 2,
     },
-    planDestructive: { borderLeftColor: colors.alert },
     planLabel: { color: colors.moss },
-    planLabelWarn: { color: colors.alert },
-    planList: { gap: 2 },
-    change: {
-      paddingVertical: 6,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: colors.rule,
-    },
-    changeTitle: { color: colors.ink },
-    changeFrom: { color: colors.mist, textDecorationLine: 'line-through' },
-    changeTo: { color: colors.moss },
-    planNote: { color: colors.mist },
     planActions: { flexDirection: 'row', gap: 20, paddingTop: 2 },
     confirm: { color: colors.moss },
-    confirmWarn: { color: colors.alert },
     answerBlock: { gap: 14 },
     headline: { fontSize: 30, lineHeight: 36, color: colors.ink, marginBottom: -6 },
     items: { gap: 2, marginTop: -4 },
