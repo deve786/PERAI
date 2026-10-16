@@ -63,7 +63,7 @@ import {
   type ExpenseTarget,
 } from '../src/actions';
 import { looksLikeCommand } from '../src/ai/commandGate';
-import { parseWhen } from '../src/whenText';
+import { dueToday, parseWhen } from '../src/whenText';
 import {
   groupNames,
   groupSummaries,
@@ -1629,6 +1629,39 @@ section('typed tasks: reading the date out of the line');
   check('nale is tomorrow', at('table parcel nale')?.getDate() === 17);
   check('innu is today', at('bank call innu')?.getDate() === 16);
   check('and the title survives it', read('table parcel nale').title === 'Table parcel');
+}
+
+section('typed tasks: today without a time is not already late');
+{
+  const morning = new Date(2026, 9, 16, 7, 15, 0, 0);
+  const afternoon = new Date(2026, 9, 16, 13, 14, 0, 0);
+  const night = new Date(2026, 9, 16, 23, 50, 0, 0);
+
+  check('before nine, it is nine', dueToday(morning).getHours() === 9 && dueToday(morning).getMinutes() === 0);
+  check('after nine, it is still ahead', dueToday(afternoon).getTime() > afternoon.getTime());
+  check('and only minutes ahead', dueToday(afternoon).getTime() - afternoon.getTime() <= 60 * 60000);
+  check('landing on a half hour', dueToday(afternoon).getMinutes() === 30, dueToday(afternoon).getMinutes());
+  check('late at night it rolls over the hour', dueToday(night).getHours() === 0 && dueToday(night).getDate() === 17);
+
+  // The bug: three tasks added at one in the afternoon read "2 overdue".
+  // A line with no date of its own gets none here — the caller falls back to
+  // dueToday, which is what must not be a time already gone.
+  const added = parseWhen('get cash from the ATM', afternoon);
+  check('a line with no date words is left alone', added.eventDate === null);
+  check('and what it falls back to is still ahead', dueToday(afternoon).getTime() > afternoon.getTime());
+  check('but is still today', dueToday(afternoon).getDate() === 16);
+
+  const stated = parseWhen('call the bank today', afternoon);
+  check('saying "today" is the same', new Date(stated.eventDate!).getTime() > afternoon.getTime());
+
+  const earlier = parseWhen('call the bank today', morning);
+  check('and before nine it is nine', new Date(earlier.eventDate!).getHours() === 9);
+
+  const tomorrow = parseWhen('pack bags tomorrow', afternoon);
+  check('another day keeps the nine', new Date(tomorrow.eventDate!).getHours() === 9);
+
+  const timed = parseWhen('dinner at 8pm', afternoon);
+  check('a stated time is left exactly as stated', new Date(timed.eventDate!).getHours() === 20);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

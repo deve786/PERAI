@@ -26,6 +26,25 @@ export interface When {
 /** Where a day lands when a date was given with no time of day. */
 const DEFAULT_HOUR = 9;
 
+/**
+ * When something due today, with no time said, should land.
+ *
+ * Nine in the morning for anything added before nine — but a task written at
+ * one in the afternoon must not be filed at nine and read as already overdue
+ * the moment it is made. Past that, it goes to the next half hour, which is
+ * both later than now and soon enough to be today's work.
+ */
+export function dueToday(now: Date = new Date()): Date {
+  const morning = new Date(now);
+  morning.setHours(DEFAULT_HOUR, 0, 0, 0);
+  if (morning.getTime() > now.getTime()) return morning;
+
+  const soon = new Date(now);
+  soon.setSeconds(0, 0);
+  soon.setMinutes(soon.getMinutes() < 30 ? 30 : 60);
+  return soon;
+}
+
 const WEEKDAYS = [
   'sunday',
   'monday',
@@ -217,7 +236,12 @@ export function parseWhen(text: string, now: Date = new Date()): When {
   }
 
   const when = day ?? startOfDay(now);
-  when.setHours(hour ?? DEFAULT_HOUR, minute, 0, 0);
+  if (hour === null && when.getTime() === startOfDay(now).getTime()) {
+    // Today, with no time said: later today, never a time already gone.
+    when.setTime(dueToday(now).getTime());
+  } else {
+    when.setHours(hour ?? DEFAULT_HOUR, minute, 0, 0);
+  }
 
   // A time on its own means today when it is still ahead, tomorrow once it is
   // past: "9am" typed at eleven in the morning is not nine this morning.

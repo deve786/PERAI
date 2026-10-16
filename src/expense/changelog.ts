@@ -19,6 +19,8 @@ export const CHANGELOG: ChangelogEntry[] = [
       'Delete a group, choosing whether to keep its entries or delete them too',
       'Hold any task in a group to edit or delete it; tap still ticks it off',
       'Record now has a Groups button beside Lists and Timeline',
+      'Fixed: a task added during the day no longer reads as overdue the moment you write it — with no time said, it lands later today rather than at nine this morning',
+      'Fixed: editing a task title or a group name and then leaving the screen now keeps the change, and a SAVE button shows while one is unsaved',
     ],
   },
   {

@@ -1,5 +1,5 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -114,6 +114,26 @@ export default function EntryScreen() {
     void load();
   }, [load]);
 
+  // A title typed and then left — by the back gesture, not by tapping away —
+  // used to be lost, because nothing but losing focus ever saved it.
+  const latest = useRef<{ title: string; entry: Memory | null }>({ title: '', entry: null });
+  useEffect(() => {
+    latest.current = { title, entry: memory };
+  }, [title, memory]);
+  useEffect(
+    () => () => {
+      const { title: typed, entry } = latest.current;
+      const next = typed.trim();
+      if (!entry || !next || next === entry.title) return;
+      void (async () => {
+        await rememberSpelling(entry.title, next, 'user');
+        await updateMemory(entry.id, { title: next });
+        logOk('Learned your spelling', `${entry.title} → ${next}`);
+      })();
+    },
+    []
+  );
+
   if (gone) {
     return (
       <View style={styles.center}>
@@ -166,6 +186,8 @@ export default function EntryScreen() {
     await patch({ endDate: end.toISOString() });
   };
 
+  const titleChanged = title.trim().length > 0 && title.trim() !== memory.title;
+
   const saveTitle = async () => {
     const next = title.trim();
     if (!next || next === entry.title) return;
@@ -212,6 +234,13 @@ export default function EntryScreen() {
           style={styles.title}
           multiline
         />
+        {/* Leaving the screen saves it too, but an edit you can see is
+            pending should have something to press. */}
+        {titleChanged ? (
+          <Pressable onPress={() => void saveTitle()} hitSlop={10} style={styles.saveTitle}>
+            <Text style={[type.label, styles.saveTitleText]}>SAVE TITLE</Text>
+          </Pressable>
+        ) : null}
 
         <View style={styles.field}>
           <Text style={type.label}>WHEN</Text>
@@ -372,7 +401,14 @@ export default function EntryScreen() {
           </Pressable>
         </View>
 
-        <Pressable onPress={() => router.back()} hitSlop={8} style={styles.close}>
+        <Pressable
+          onPress={async () => {
+            await saveTitle();
+            router.back();
+          }}
+          hitSlop={8}
+          style={styles.close}
+        >
           <Text style={[type.label, styles.closeText]}>CLOSE</Text>
         </Pressable>
       </ScrollView>
@@ -435,6 +471,8 @@ function makeStyles(colors: Colors) {
     primaryText: { color: colors.moss },
     delete: { color: colors.alert },
     pressed: { opacity: 0.5 },
+    saveTitle: { alignSelf: 'flex-start', marginTop: -10 },
+    saveTitleText: { color: colors.moss },
     close: { alignItems: 'center', paddingTop: 10 },
     closeText: { color: colors.mist },
   });

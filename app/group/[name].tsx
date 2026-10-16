@@ -1,5 +1,5 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -23,7 +23,7 @@ import { fullDateLabel } from '@/format';
 import { groupSummaries, membersOf, normalizeGroupName, splitTasks } from '@/groups';
 import { logOk } from '@/log';
 import { knownPeople } from '@/speechText';
-import { parseWhen } from '@/whenText';
+import { dueToday, parseWhen } from '@/whenText';
 import { useTheme } from '@/ThemeContext';
 import { FONTS, SPACE, type Colors } from '@/theme';
 import type { Memory } from '@/types';
@@ -69,8 +69,9 @@ export default function GroupScreen() {
     setSaving(true);
     setError(null);
     try {
-      const today = new Date();
-      today.setHours(9, 0, 0, 0);
+      // Anything with no date of its own is today's work, timed so it does
+      // not read as overdue the moment it is written.
+      const today = dueToday();
 
       for (const task of tasks) {
         const when = parseWhen(task);
@@ -138,7 +139,7 @@ export default function GroupScreen() {
   const listening = voice.stage === 'listening';
 
   /** Renaming moves every entry with it, so nothing is left behind. */
-  async function rename() {
+  async function rename(follow = true) {
     const next = normalizeGroupName(title);
     if (!next || next === groupName) {
       setTitle(groupName);
@@ -148,8 +149,19 @@ export default function GroupScreen() {
     await removeEmptyGroup(groupName);
     if (members.length === 0) await addEmptyGroup(next);
     logOk('Renamed a group', `${groupName} → ${next}`);
-    router.replace(`/group/${encodeURIComponent(next)}`);
+    // Leaving the screen saves the name too, and then there is nothing left
+    // to point the route at.
+    if (follow) router.replace(`/group/${encodeURIComponent(next)}`);
   }
+
+  // Typing a new name and pressing back used to lose it: the field never lost
+  // focus, so nothing was ever saved. Whatever is in the box when the screen
+  // goes away is kept.
+  const pendingRename = useRef<(() => Promise<void>) | null>(null);
+  useEffect(() => {
+    pendingRename.current = () => rename(false);
+  });
+  useEffect(() => () => void pendingRename.current?.(), []);
 
   function confirmDeleteGroup() {
     if (members.length === 0) {
@@ -231,8 +243,14 @@ export default function GroupScreen() {
           onSubmitEditing={() => void rename()}
           style={styles.title}
           returnKeyType="done"
-          multiline
+          submitBehavior="blurAndSubmit"
         />
+        {/* A name you can see is changed should have something to press. */}
+        {normalizeGroupName(title) && normalizeGroupName(title) !== groupName ? (
+          <Pressable onPress={() => void rename()} hitSlop={10} style={styles.saveName}>
+            <Text style={[type.label, styles.saveNameText]}>SAVE NAME</Text>
+          </Pressable>
+        ) : null}
 
         {summary && summary.total > 0 ? (
           <View style={styles.progress}>
@@ -368,7 +386,13 @@ export default function GroupScreen() {
           <Pressable onPress={confirmDeleteGroup} hitSlop={8}>
             <Text style={[type.label, styles.delete]}>DELETE GROUP</Text>
           </Pressable>
-          <Pressable onPress={() => router.back()} hitSlop={8}>
+          <Pressable
+            onPress={async () => {
+              await rename(false);
+              router.back();
+            }}
+            hitSlop={8}
+          >
             <Text style={[type.label, styles.closeText]}>CLOSE</Text>
           </Pressable>
         </View>
@@ -388,6 +412,8 @@ function makeStyles(colors: Colors) {
       color: colors.ink,
       padding: 0,
     },
+    saveName: { alignSelf: 'flex-start', marginTop: -12 },
+    saveNameText: { color: colors.moss },
     progress: { gap: 6, marginTop: -8 },
     track: { height: 2, backgroundColor: colors.rule },
     fill: { height: 2, backgroundColor: colors.moss },
