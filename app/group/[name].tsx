@@ -16,6 +16,15 @@ import { Section } from '@/components/Section';
 import { VoiceWaveform } from '@/components/VoiceWaveform';
 import { completeMemory, reopenMemory } from '@/complete';
 import { describeError } from '@/ai/client';
+import {
+  looksLikeCommand,
+  planCommand,
+  runCommand,
+  type CommandOutcome,
+  type CommandPlan,
+} from '@/ai/command';
+import { PlanCard } from '@/components/PlanCard';
+import { useTheme as useExpenseTheme } from '@/expense/theme';
 import { addEmptyGroup, deleteMemory, insertMemory, removeEmptyGroup, updateMemory } from '@/db/queries';
 import { fileNote } from '@/fileNote';
 import { fullDateLabel } from '@/format';
@@ -58,6 +67,60 @@ export default function GroupScreen() {
   const [text, setText] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** What was just put in, shown back so a mishearing is caught at once. */
+  const [added, setAdded] = useState<Memory[] | null>(null);
+  /** A change worked out from an instruction, waiting to be confirmed. */
+  const [plan, setPlan] = useState<CommandPlan | null>(null);
+  /** The change just carried out, kept so it can be undone. */
+  const [outcome, setOutcome] = useState<CommandOutcome | null>(null);
+  const { budget, setBudget } = useExpenseTheme();
+
+  /**
+   * An instruction rather than a task: "push the cab to Friday", "make the
+   * tickets high priority", "gym kazhinju".
+   *
+   * Only this group's own entries are offered to it, so an instruction typed
+   * here can never reach past the group it was typed into. The check is local,
+   * so adding an ordinary task still costs nothing. Returns true when it was
+   * an instruction, whatever came of it.
+   */
+  async function planInstruction(): Promise<boolean> {
+    if (members.length === 0 || !looksLikeCommand(text)) return false;
+    setSaving(true);
+    setError(null);
+    try {
+      const proposed = await planCommand(text, new Date().toISOString(), members, []);
+      if (!proposed) return false;
+      setAdded(null);
+      setOutcome(null);
+      if ('question' in proposed) {
+        setError(proposed.question);
+        return true;
+      }
+      setPlan(proposed);
+      return true;
+    } catch (err) {
+      setError(describeError(err));
+      return true;
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function confirmPlan() {
+    if (!plan || saving) return;
+    setSaving(true);
+    try {
+      const done = await runCommand(plan, { currentBudget: budget, setBudget });
+      setPlan(null);
+      setOutcome(done);
+      setText('');
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setSaving(false);
+    }
+  }
 
   /**
    * Typed lines go in at once, several at a time, with their dates read on
@@ -67,6 +130,10 @@ export default function GroupScreen() {
   async function addTyped() {
     const tasks = splitTasks(text);
     if (tasks.length === 0 || saving) return;
+
+    // An instruction about what is already here is carried out, not written
+    // down as another task.
+    if (await planInstruction()) return;
 
     // Malayalam, in either script, goes through the model instead: writing it
     // in as typed would keep a Malayalam title, and what the record is written
@@ -84,26 +151,29 @@ export default function GroupScreen() {
       // not read as overdue the moment it is written.
       const today = dueToday();
 
+      const kept: Memory[] = [];
       for (const task of tasks) {
         const when = parseWhen(task);
-        await insertMemory(
-          {
-            title: when.title || task,
-            type: 'task',
-            category: 'Other',
-            eventDate: when.eventDate ?? today.toISOString(),
-            dateExpression: when.dateExpression,
-            amount: null,
-            currency: null,
-            people: null,
-            location: null,
-            tags: null,
-            priority: null,
-            status: 'active',
-            repeat: null,
-            groupName,
-          },
-          text.trim()
+        kept.push(
+          await insertMemory(
+            {
+              title: when.title || task,
+              type: 'task',
+              category: 'Other',
+              eventDate: when.eventDate ?? today.toISOString(),
+              dateExpression: when.dateExpression,
+              amount: null,
+              currency: null,
+              people: null,
+              location: null,
+              tags: null,
+              priority: null,
+              status: 'active',
+              repeat: null,
+              groupName,
+            },
+            text.trim()
+          )
         );
       }
       await removeEmptyGroup(groupName);
@@ -111,6 +181,8 @@ export default function GroupScreen() {
         tasks.length === 1 ? 'Added to a group' : `Added ${tasks.length} to a group`,
         `${groupName} · ${tasks.join(', ')}`
       );
+      setAdded(kept);
+      setOutcome(null);
       setText('');
     } finally {
       setSaving(false);
@@ -128,16 +200,18 @@ export default function GroupScreen() {
     setSaving(true);
     setError(null);
     try {
-      const added = await fileNote(note, { people: knownPeople(memories), groupName });
-      if (added.length === 0) {
+      const kept = await fileNote(note, { people: knownPeople(memories), groupName });
+      if (kept.length === 0) {
         setError('Nothing could be made of that.');
         return;
       }
       await removeEmptyGroup(groupName);
       logOk(
-        `Added ${added.length} to a group${spoken ? ' by voice' : ''}`,
-        `${groupName} · ${added.map((entry) => entry.title).join(', ')}`
+        `Added ${kept.length} to a group${spoken ? ' by voice' : ''}`,
+        `${groupName} · ${kept.map((entry) => entry.title).join(', ')}`
       );
+      setAdded(kept);
+      setOutcome(null);
       if (!spoken) setText('');
     } catch (err) {
       setError(describeError(err));
@@ -368,6 +442,71 @@ export default function GroupScreen() {
           <Text style={[type.body, styles.error]}>{error ?? voice.error}</Text>
         ) : null}
 
+        {/* Nothing has happened yet: this is what an instruction would do. */}
+        {plan && !saving ? (
+          <PlanCard plan={plan} onCancel={() => setPlan(null)} onConfirm={() => void confirmPlan()} />
+        ) : null}
+
+        {outcome && !saving ? (
+          <View style={styles.card}>
+            <Text style={[type.label, styles.cardLabel]}>{outcome.label}</Text>
+            <Text style={type.body}>{outcome.summary}</Text>
+            <View style={styles.cardActions}>
+              {outcome.undo ? (
+                <Pressable
+                  onPress={() => {
+                    void (async () => {
+                      await outcome.undo?.();
+                      setOutcome(null);
+                    })();
+                  }}
+                  hitSlop={10}
+                >
+                  <Text style={[type.label, styles.undo]}>UNDO</Text>
+                </Pressable>
+              ) : null}
+              <Pressable onPress={() => setOutcome(null)} hitSlop={10}>
+                <Text style={[type.label, styles.cancel]}>DISMISS</Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
+
+        {/* What just went in, read back the way Record reads a saved note —
+            a mishearing is obvious while it is still one press to undo. */}
+        {added && added.length > 0 && !saving ? (
+          <View style={styles.card}>
+            <Text style={[type.label, styles.cardLabel]}>
+              {added.length === 1 ? 'ADDED' : `ADDED ${added.length}`}
+            </Text>
+            {added.map((entry) => (
+              <MemoryRow key={`added-${entry.id}`} memory={entry} gutter="date" showAdded={false} />
+            ))}
+            <View style={styles.cardActions}>
+              <Pressable
+                onPress={() => {
+                  void (async () => {
+                    for (const entry of added) await deleteMemory(entry.id);
+                    logOk('Undone', `${groupName} · ${added.map((e) => e.title).join(', ')}`);
+                    setAdded(null);
+                  })();
+                }}
+                hitSlop={10}
+              >
+                <Text style={[type.label, styles.undo]}>UNDO</Text>
+              </Pressable>
+              {added.length === 1 ? (
+                <Pressable onPress={() => router.push(`/entry/${added[0].id}`)} hitSlop={10}>
+                  <Text style={[type.label, styles.undo]}>EDIT</Text>
+                </Pressable>
+              ) : null}
+              <Pressable onPress={() => setAdded(null)} hitSlop={10}>
+                <Text style={[type.label, styles.cancel]}>DISMISS</Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
+
         {open.length > 0 ? (
           <Section label={`TO DO  ·  ${open.length}`}>
             {open.map((memory) => (
@@ -467,6 +606,16 @@ function makeStyles(colors: Colors) {
     input: { flex: 1, fontFamily: FONTS.sans, fontSize: 15, color: colors.ink, paddingVertical: 8 },
     addActions: { flexDirection: 'row', alignItems: 'center', gap: 14 },
     addOn: { color: colors.moss },
+    card: {
+      gap: 8,
+      borderLeftWidth: 2,
+      borderLeftColor: colors.moss,
+      paddingLeft: 12,
+      paddingVertical: 2,
+    },
+    cardLabel: { color: colors.moss },
+    cardActions: { flexDirection: 'row', gap: 20, paddingTop: 2 },
+    undo: { color: colors.moss },
     cancelRow: { alignSelf: 'flex-start', marginTop: -12 },
     cancel: { color: colors.mist },
     hint: { marginTop: -12 },

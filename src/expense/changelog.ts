@@ -7,6 +7,16 @@ export interface ChangelogEntry {
 /** Newest first. Add a new entry here with every release that changes user-visible behaviour. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.18.0',
+    date: '2026-10-16',
+    highlights: [
+      'A group\'s box now takes instructions as well as tasks: "push buy sunscreen to friday", "make the cab high priority", "gym kazhinju" — shown as before → after and applied only once you confirm',
+      'An instruction typed in a group can only ever reach that group\'s own entries',
+      'What you just added is shown back as a card — like Record does — with UNDO, and EDIT when it is a single entry',
+      'A change made from a group offers Undo too, saying what it touched',
+    ],
+  },
+  {
     version: '1.17.0',
     date: '2026-10-16',
     highlights: [
