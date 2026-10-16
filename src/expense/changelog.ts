@@ -21,6 +21,9 @@ export const CHANGELOG: ChangelogEntry[] = [
       'Record now has a Groups button beside Lists and Timeline',
       'Fixed: a task added during the day no longer reads as overdue the moment you write it — with no time said, it lands later today rather than at nine this morning',
       'Fixed: editing a task title or a group name and then leaving the screen now keeps the change, and a SAVE button shows while one is unsaved',
+      'Popups are the app\'s own now, not Android\'s — holding a task, deleting a group, settling a loan, scanning a bill all ask in the app\'s own type and colours',
+      'A group\'s add box now has CLEAR while typing and CANCEL while listening, the same as Record',
+      'Malayalam typed into a group is read properly rather than stored as typed, so it is written down in whichever language Settings says',
     ],
   },
   {

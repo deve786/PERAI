@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  Alert,
   Pressable,
   ScrollView,
   Share,
@@ -24,6 +23,7 @@ import {
 import { BorrowLendModal } from '@/components/BorrowLendModal';
 import { todayStr, prettyDate } from '@/expense/dates';
 import { fmtMoney } from '@/expense/stats';
+import { showDialog } from '@/dialogStore';
 
 type FilterTab = 'all' | 'lent' | 'request' | 'borrowed' | 'settled';
 
@@ -80,29 +80,31 @@ export default function BorrowLendScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     const verb = item.type === 'lent' ? 'returned to you' : 'paid back';
 
-    Alert.alert(
-      `Mark as Settled?`,
-      `Confirm that ₹${item.amount} was ${verb} by ${item.person_name}?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
+    showDialog({
+      title: 'Mark as settled?',
+      message: `Confirm that ₹${item.amount} was ${verb} by ${item.person_name}?`,
+      actions: [
+        { label: 'Cancel', cancel: true },
         {
-          text: item.type === 'lent' ? 'Yes, record as Income' : 'Yes, mark Paid',
-          onPress: async () => {
-            await settleBorrowLend(item.id, {
-              recordAsIncome: item.type === 'lent',
-            });
-            void loadData();
+          label: 'Just mark settled',
+          onPress: () => {
+            void (async () => {
+              await settleBorrowLend(item.id, { recordAsIncome: false });
+              void loadData();
+            })();
           },
         },
         {
-          text: 'Just mark Settled',
-          onPress: async () => {
-            await settleBorrowLend(item.id, { recordAsIncome: false });
-            void loadData();
+          label: item.type === 'lent' ? 'Yes, record as income' : 'Yes, mark paid',
+          onPress: () => {
+            void (async () => {
+              await settleBorrowLend(item.id, { recordAsIncome: item.type === 'lent' });
+              void loadData();
+            })();
           },
         },
-      ]
-    );
+      ],
+    });
   };
 
   const handleShareReminder = async (item: BorrowLendItem) => {

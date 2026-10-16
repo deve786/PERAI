@@ -1,6 +1,7 @@
 import Constants from 'expo-constants';
 import * as Updates from 'expo-updates';
-import { Alert } from 'react-native';
+import {} from 'react-native';
+import { showDialog } from '../dialogStore';
 
 /**
  * Explicit "Check for updates" tap from Settings. Ambient checking,
@@ -9,19 +10,25 @@ import { Alert } from 'react-native';
  */
 export async function checkForOtaUpdate() {
   if (__DEV__ || !Updates.isEnabled) {
-    Alert.alert('Updates', 'OTA updates only work in a release build (not in Expo Go / dev mode).');
+    showDialog({
+      title: 'Updates',
+      message: 'OTA updates only work in a release build (not in Expo Go / dev mode).',
+    });
     return;
   }
   try {
     const res = await Updates.checkForUpdateAsync();
     if (!res.isAvailable) {
-      Alert.alert('Up to date', 'You are on the latest version.');
+      showDialog({ title: 'Up to date', message: 'You are on the latest version.' });
       return;
     }
     await Updates.fetchUpdateAsync();
     // isUpdatePending flips true here — UpdateBanner picks it up and offers Restart.
   } catch (e) {
-    Alert.alert('Update check failed', String(e instanceof Error ? e.message : e));
+    showDialog({
+      title: 'Update check failed',
+      message: String(e instanceof Error ? e.message : e),
+    });
   }
 }
 

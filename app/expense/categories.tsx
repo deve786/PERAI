@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, View } from 'react-native';
+import { Pressable, ScrollView, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { budgetTotals } from '@/expense/budgets';
@@ -7,6 +7,7 @@ import { CATEGORY_COLORS, addCategory, deleteCategory, listCategories, setCatego
 import { fmtMoney } from '@/expense/stats';
 import { radius, useTheme } from '@/expense/theme';
 import { Button, ConfirmDialog, Divider, Field, Header, IconDot, Row, Screen, Section, T } from '@/expense/ui';
+import { showDialog } from '@/dialogStore';
 
 const ICONS = [
   'cafe-outline', 'fitness-outline', 'airplane-outline', 'school-outline', 'paw-outline',
@@ -44,7 +45,10 @@ export default function Categories() {
     }
     const value = Number(typed);
     if (!Number.isFinite(value) || value < 0) {
-      Alert.alert('That is not a budget', 'Enter an amount of zero or more, or leave it empty for none.');
+      showDialog({
+        title: 'That is not a budget',
+        message: 'Enter an amount of zero or more, or leave it empty for none.',
+      });
       return;
     }
     await setCategoryBudget(k.id, value);
@@ -63,7 +67,7 @@ export default function Categories() {
     const n = name.trim();
     if (!n) return;
     if (cats.some((k) => k.name.toLowerCase() === n.toLowerCase())) {
-      Alert.alert('That name is taken', 'Pick a different one.');
+      showDialog({ title: 'That name is taken', message: 'Pick a different one.' });
       return;
     }
     await addCategory(n, icon, color);
@@ -73,7 +77,10 @@ export default function Categories() {
 
   function remove(k: Category) {
     if (k.name === 'Other') {
-      Alert.alert('Keep this one', '"Other" catches expenses from deleted categories.');
+      showDialog({
+        title: 'Keep this one',
+        message: '"Other" catches expenses from deleted categories.',
+      });
       return;
     }
     setToDelete(k);

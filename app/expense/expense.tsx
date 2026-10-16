@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, TextInput, View } from 'react-native';
+import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, TextInput, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
@@ -17,6 +17,7 @@ import { fromStr, prettyDate, toStr, todayStr } from '@/expense/dates';
 import { noteBudgetCrossing } from '@/expense/budgetAlerts';
 import { numerals, radius, useTheme } from '@/expense/theme';
 import { Button, Chip, ConfirmDialog, Divider, Field, Header, IconDot, Money, Row, Screen, T } from '@/expense/ui';
+import { showDialog } from '@/dialogStore';
 
 type DraftItem = { name: string; qty: string; amount: string };
 type Mode = 'view' | 'edit';
@@ -134,7 +135,10 @@ export default function ExpenseForm() {
     const hasAmount = hasItems ? itemsTotal > 0 : parseAmt(amount) > 0;
 
     if (!hasValidItems && !hasCategory && !hasNotes && !hasAmount && !note.trim()) {
-      Alert.alert('Details needed', 'Add items, notes, or select a category first so AI can generate an expense title.');
+      showDialog({
+        title: 'Details needed',
+        message: 'Add items, notes, or select a category first so AI can generate an expense title.',
+      });
       return;
     }
 
@@ -152,10 +156,13 @@ export default function ExpenseForm() {
         onChangeNote(generatedTitle);
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
       } else {
-        Alert.alert('Could not generate title', 'AI was unable to generate a title from the current details.');
+        showDialog({
+        title: 'Could not generate title',
+        message: 'AI was unable to generate a title from the current details.',
+      });
       }
     } catch (e) {
-      Alert.alert('AI Error', String(e instanceof Error ? e.message : e));
+      showDialog({ title: 'AI Error', message: String(e instanceof Error ? e.message : e) });
     } finally {
       setAiTitleGenerating(false);
     }
@@ -355,7 +362,10 @@ export default function ExpenseForm() {
       }
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
     } catch (err) {
-      Alert.alert('Scan failed', err instanceof Error ? err.message : 'Could not analyze receipt.');
+      showDialog({
+        title: 'Scan failed',
+        message: err instanceof Error ? err.message : 'Could not analyze receipt.',
+      });
     } finally {
       setOcrScanning(false);
     }
@@ -364,7 +374,10 @@ export default function ExpenseForm() {
   const captureFromCamera = async () => {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     if (status !== 'granted') {
-      Alert.alert('Permission needed', 'Camera access is required to take photos of receipts.');
+      showDialog({
+        title: 'Permission needed',
+        message: 'Camera access is required to take photos of receipts.',
+      });
       return;
     }
     const result = await ImagePicker.launchCameraAsync({
@@ -389,11 +402,15 @@ export default function ExpenseForm() {
   };
 
   const handleScanReceipt = () => {
-    Alert.alert('Scan Receipt or Bill', 'Choose how you want to capture the receipt:', [
-      { text: 'Take Photo', onPress: () => void captureFromCamera() },
-      { text: 'Choose from Gallery', onPress: () => void pickFromGallery() },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
+    showDialog({
+      title: 'Scan receipt or bill',
+      message: 'Choose how you want to capture the receipt:',
+      actions: [
+        { label: 'Cancel', cancel: true },
+        { label: 'Choose from gallery', onPress: () => void pickFromGallery() },
+        { label: 'Take photo', onPress: () => void captureFromCamera() },
+      ],
+    });
   };
 
   useEffect(() => {

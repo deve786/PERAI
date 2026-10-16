@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Alert, ScrollView, View } from 'react-native';
+import { ScrollView, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme, type ThemeMode } from '@/expense/theme';
@@ -9,6 +9,7 @@ import { checkForOtaUpdate, updateInfo } from '@/expense/ota';
 import { ASK_MODEL, hasApiKey, testAiConnection } from '@/expense/ai/client';
 import { clearAiLogs, getAiLogs, subscribeAiLogs, type AiLogEntry } from '@/expense/ai/logger';
 import { NavRow } from '@/components/NavRow';
+import { showDialog } from '@/dialogStore';
 import {
   getTitleLanguage,
   getVoiceLanguage,
@@ -86,7 +87,10 @@ export default function Settings() {
               const n = parseFloat(budgetText);
               const clean = isNaN(n) || n < 0 ? 0 : n;
               setBudget(clean);
-              Alert.alert('Saved', clean > 0 ? `Budget set to ${symbol}${clean}.` : 'Budget cleared.');
+              showDialog({
+                title: 'Saved',
+                message: clean > 0 ? `Budget set to ${symbol}${clean}.` : 'Budget cleared.',
+              });
             }}
           />
         </Row>
@@ -157,9 +161,9 @@ export default function Settings() {
           onPress={async () => {
             try {
               const n = await exportCsv();
-              if (n === 0) Alert.alert('Nothing to export', 'Add some expenses first.');
+              if (n === 0) showDialog({ title: 'Nothing to export', message: 'Add some expenses first.' });
             } catch (e) {
-              Alert.alert('Export failed', String(e instanceof Error ? e.message : e));
+              showDialog({ title: 'Export failed', message: String(e instanceof Error ? e.message : e) });
             }
           }}
         />
@@ -217,9 +221,9 @@ export default function Settings() {
               setTestingAi(true);
               try {
                 const res = await testAiConnection();
-                Alert.alert(res.ok ? 'AI Connected' : 'AI Test Failed', res.message);
+                showDialog({ title: res.ok ? 'AI Connected' : 'AI Test Failed', message: res.message });
               } catch (e) {
-                Alert.alert('AI Test Failed', String(e instanceof Error ? e.message : e));
+                showDialog({ title: 'AI Test Failed', message: String(e instanceof Error ? e.message : e) });
               } finally {
                 setTestingAi(false);
               }

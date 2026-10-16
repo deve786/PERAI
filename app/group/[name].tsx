@@ -1,7 +1,6 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
-  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -22,6 +21,8 @@ import { fileNote } from '@/fileNote';
 import { fullDateLabel } from '@/format';
 import { groupSummaries, membersOf, normalizeGroupName, splitTasks } from '@/groups';
 import { logOk } from '@/log';
+import { showDialog } from '@/dialogStore';
+import { normalizeQuery } from '@/manglish';
 import { knownPeople } from '@/speechText';
 import { dueToday, parseWhen } from '@/whenText';
 import { useTheme } from '@/ThemeContext';
@@ -66,6 +67,16 @@ export default function GroupScreen() {
   async function addTyped() {
     const tasks = splitTasks(text);
     if (tasks.length === 0 || saving) return;
+
+    // Malayalam, in either script, goes through the model instead: writing it
+    // in as typed would keep a Malayalam title, and what the record is written
+    // in is the person's own setting, not a side effect of how they typed it.
+    const malayalam = normalizeQuery(text);
+    if (malayalam.hadScript || malayalam.hits > 0) {
+      await addUnderstood(text, false);
+      return;
+    }
+
     setSaving(true);
     setError(null);
     try {
@@ -137,6 +148,9 @@ export default function GroupScreen() {
 
   const voice = useVoiceInput((spoken) => void addUnderstood(spoken, true));
   const listening = voice.stage === 'listening';
+  /** Typed Malayalam takes the understood path, so say so before it is sent. */
+  const typedMalayalam = normalizeQuery(text);
+  const looksMalayalam = text.trim().length > 0 && (typedMalayalam.hadScript || typedMalayalam.hits > 0);
 
   /** Renaming moves every entry with it, so nothing is left behind. */
   async function rename(follow = true) {
@@ -173,13 +187,13 @@ export default function GroupScreen() {
       return;
     }
 
-    Alert.alert(
-      `Delete "${groupName}"?`,
-      `${members.length} ${members.length === 1 ? 'entry is' : 'entries are'} in it. Keep them in your record, or delete them too?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
+    showDialog({
+      title: `Delete "${groupName}"?`,
+      message: `${members.length} ${members.length === 1 ? 'entry is' : 'entries are'} in it. Keep them in your record, or delete them too?`,
+      actions: [
+        { label: 'Cancel', cancel: true },
         {
-          text: 'Keep the entries',
+          label: 'Keep the entries',
           onPress: () => {
             void (async () => {
               for (const memory of members) await updateMemory(memory.id, { groupName: null });
@@ -190,8 +204,8 @@ export default function GroupScreen() {
           },
         },
         {
-          text: 'Delete them',
-          style: 'destructive',
+          label: 'Delete them',
+          destructive: true,
           onPress: () => {
             void (async () => {
               for (const memory of members) await deleteMemory(memory.id);
@@ -201,24 +215,27 @@ export default function GroupScreen() {
             })();
           },
         },
-      ]
-    );
+      ],
+    });
   }
 
   /** Hold a task for the two things a tap cannot do. */
   function taskActions(memory: Memory) {
-    Alert.alert(memory.title, undefined, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Edit', onPress: () => router.push(`/entry/${memory.id}`) },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: () => {
-          void deleteMemory(memory.id);
-          logOk('Deleted an entry', memory.title);
+    showDialog({
+      title: memory.title,
+      actions: [
+        { label: 'Cancel', cancel: true },
+        { label: 'Edit', onPress: () => router.push(`/entry/${memory.id}`) },
+        {
+          label: 'Delete',
+          destructive: true,
+          onPress: () => {
+            void deleteMemory(memory.id);
+            logOk('Deleted an entry', memory.title);
+          },
         },
-      },
-    ]);
+      ],
+    });
   }
 
   function toggle(memory: Memory) {
@@ -315,14 +332,36 @@ export default function GroupScreen() {
         </View>
 
         {listening ? <VoiceWaveform level={voice.level} /> : null}
+
+        {/* A way out of either kind of adding, the same as on Record. */}
+        {listening ? (
+          <Pressable onPress={voice.cancel} hitSlop={10} style={styles.cancelRow}>
+            <Text style={[type.label, styles.cancel]}>CANCEL</Text>
+          </Pressable>
+        ) : text.trim() && !saving ? (
+          <Pressable
+            onPress={() => {
+              setText('');
+              setError(null);
+              voice.clearError();
+            }}
+            hitSlop={10}
+            style={styles.cancelRow}
+          >
+            <Text style={[type.label, styles.cancel]}>CLEAR</Text>
+          </Pressable>
+        ) : null}
+
         <Text style={[type.fine, styles.hint]}>
           {saving
             ? 'Adding…'
             : listening
               ? 'Say everything at once — dates are understood'
-              : text.trim()
-                ? 'ADD puts the lines in as typed, with their dates. ✨ reads the whole thing properly — amounts, people, several events.'
-                : 'Type the date in and it is read: table parcel by tomorrow 9am'}
+              : looksMalayalam
+                ? 'Malayalam is read properly either way, and written down the way Settings says.'
+                : text.trim()
+                  ? 'ADD puts the lines in as typed, with their dates. ✨ reads the whole thing properly — amounts, people, several events.'
+                  : 'Type the date in and it is read: table parcel by tomorrow 9am'}
         </Text>
 
         {error || voice.error ? (
@@ -428,6 +467,8 @@ function makeStyles(colors: Colors) {
     input: { flex: 1, fontFamily: FONTS.sans, fontSize: 15, color: colors.ink, paddingVertical: 8 },
     addActions: { flexDirection: 'row', alignItems: 'center', gap: 14 },
     addOn: { color: colors.moss },
+    cancelRow: { alignSelf: 'flex-start', marginTop: -12 },
+    cancel: { color: colors.mist },
     hint: { marginTop: -12 },
     error: { color: colors.alert },
     empty: { maxWidth: 320 },

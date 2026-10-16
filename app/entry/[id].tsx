@@ -1,7 +1,6 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -17,6 +16,7 @@ import { completeMemory, reopenMemory } from '@/complete';
 import { deleteMemory, getMemory, rememberSpelling, updateMemory } from '@/db/queries';
 import { fullDateLabel, hasStatedTime, timeLabel } from '@/format';
 import { logOk } from '@/log';
+import { showDialog } from '@/dialogStore';
 import { syncReminders } from '@/reminders';
 import { groupNames, normalizeGroupName } from '@/groups';
 import { nextOccurrence } from '@/repeat';
@@ -180,7 +180,10 @@ export default function EntryScreen() {
     const end = new Date(entry.endDate);
     end.setDate(end.getDate() + days);
     if (end.getTime() < new Date(entry.eventDate).getTime()) {
-      Alert.alert('It cannot end before it starts', 'Pick a day on or after the start.');
+      showDialog({
+        title: 'It cannot end before it starts',
+        message: 'Pick a day on or after the start.',
+      });
       return;
     }
     await patch({ endDate: end.toISOString() });
@@ -199,18 +202,22 @@ export default function EntryScreen() {
   };
 
   const confirmDelete = () => {
-    Alert.alert('Delete this entry?', entry.title, [
-      { text: 'Keep', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: () => {
-          void deleteMemory(entry.id);
-          logOk('Deleted an entry', entry.title);
-          router.back();
+    showDialog({
+      title: 'Delete this entry?',
+      message: entry.title,
+      actions: [
+        { label: 'Keep', cancel: true },
+        {
+          label: 'Delete',
+          destructive: true,
+          onPress: () => {
+            void deleteMemory(entry.id);
+            logOk('Deleted an entry', entry.title);
+            router.back();
+          },
         },
-      },
-    ]);
+      ],
+    });
   };
 
   const struck = entry.status !== 'active';

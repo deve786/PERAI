@@ -1,10 +1,11 @@
-import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { MemoryRow } from '@/components/MemoryRow';
 import { Section } from '@/components/Section';
 import { completeMemory, reopenMemory } from '@/complete';
 import { deleteMemory } from '@/db/queries';
 import { listSections } from '@/lists';
 import { logOk } from '@/log';
+import { showDialog } from '@/dialogStore';
 import { useTheme } from '@/ThemeContext';
 import { SPACE, type Colors } from '@/theme';
 import type { Memory } from '@/types';
@@ -32,17 +33,21 @@ export default function ListsScreen() {
   }
 
   function confirmDelete(memory: Memory) {
-    Alert.alert('Delete this entry?', memory.title, [
-      { text: 'Keep', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: () => {
-          void deleteMemory(memory.id);
-          logOk('Deleted an entry', memory.title);
+    showDialog({
+      title: 'Delete this entry?',
+      message: memory.title,
+      actions: [
+        { label: 'Keep', cancel: true },
+        {
+          label: 'Delete',
+          destructive: true,
+          onPress: () => {
+            void deleteMemory(memory.id);
+            logOk('Deleted an entry', memory.title);
+          },
         },
-      },
-    ]);
+      ],
+    });
   }
 
   return (
