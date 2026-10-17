@@ -5,9 +5,10 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import {
-  METHODS, deleteIncome, findOrCreateIncomeCategory, getIncome, listIncomeCategories,
-  saveIncome, type Category,
+  METHODS, deleteIncome, findOrCreateIncomeCategory, findOrCreateTaggedUser, getIncome,
+  listIncomeCategories, listTaggedUsers, saveIncome, type Category, type TaggedUser,
 } from '@/expense/db';
+import { listAccounts, type AccountItem } from '@/expense/accountsDb';
 import { fromStr, prettyDate, toStr, todayStr } from '@/expense/dates';
 import { numerals, radius, useTheme } from '@/expense/theme';
 import { Button, Chip, ConfirmDialog, Divider, Field, Header, IconDot, Row, Screen, T } from '@/expense/ui';
@@ -30,14 +31,22 @@ export default function IncomeForm() {
   const [note, setNote] = useState('');
   const [notes, setNotes] = useState('');
   const [method, setMethod] = useState<string>('Bank');
+  const [bankAccounts, setBankAccounts] = useState<AccountItem[]>([]);
+  const [accountId, setAccountId] = useState<string | null>(null);
+  const [userTag, setUserTag] = useState('');
+  const [savedUsers, setSavedUsers] = useState<TaggedUser[]>([]);
+  const [showNewUserInput, setShowNewUserInput] = useState(false);
+  const [newUserName, setNewUserName] = useState('');
   const [showPicker, setShowPicker] = useState(false);
   const [customCat, setCustomCat] = useState('');
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   useEffect(() => {
     (async () => {
-      const cs = await listIncomeCategories();
+      const [cs, users, accounts] = await Promise.all([listIncomeCategories(), listTaggedUsers(), listAccounts({ type: 'bank' })]);
       setCats(cs);
+      setSavedUsers(users);
+      setBankAccounts(accounts);
       if (editId) {
         const e = await getIncome(editId);
         if (e) {
@@ -47,6 +56,8 @@ export default function IncomeForm() {
           setNote(e.note);
           setNotes(e.notes);
           setMethod(e.method);
+          setAccountId(e.account_id ?? null);
+          if (e.user_tag) setUserTag(e.user_tag);
         }
       } else if (cs.length) {
         setCatId(cs[0].id);
@@ -63,9 +74,17 @@ export default function IncomeForm() {
     if (!valid || catId === null) return;
     const custom = isOther ? customCat.trim() : '';
     const finalCatId = custom ? await findOrCreateIncomeCategory(custom) : catId;
+    const finalUserTag = (userTag || newUserName).trim();
+    if (finalUserTag) {
+      await findOrCreateTaggedUser(finalUserTag);
+    }
     await saveIncome({
       id: editId, amount: round2(value), category_id: finalCatId, date,
       note: note.trim(), notes: notes.trim(), method,
+      user_tag: finalUserTag,
+      // Only UPI income is tied to the bank it landed in — switching away
+      // from UPI drops the link rather than leaving a stale one behind.
+      account_id: method === 'UPI' ? accountId : null,
     });
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
     router.back();
@@ -107,9 +126,23 @@ export default function IncomeForm() {
             <T size={13.5} sub>Date</T>
             <T size={13.5}>{prettyDate(date)}</T>
           </Row>
+          {userTag.trim().length > 0 && (
+            <Row style={{ justifyContent: 'space-between', paddingVertical: 6 }}>
+              <T size={13.5} sub>For user</T>
+              <Row style={{ gap: 6, alignItems: 'center' }}>
+                <Ionicons name="person-circle-outline" size={16} color={c.sub} />
+                <T size={13.5} weight="600">{userTag}</T>
+              </Row>
+            </Row>
+          )}
           <Row style={{ justifyContent: 'space-between', paddingVertical: 6 }}>
             <T size={13.5} sub>Received via</T>
-            <T size={13.5}>{method}</T>
+            <T size={13.5}>
+              {method}
+              {method === 'UPI' && accountId
+                ? ` · ${bankAccounts.find((a) => a.id === accountId)?.name ?? ''}`
+                : ''}
+            </T>
           </Row>
           {notes.trim().length > 0 && (
             <View style={{ marginTop: 14 }}>
@@ -182,6 +215,61 @@ export default function IncomeForm() {
             />
           )}
 
+          <T size={13} sub style={{ marginTop: 16, marginBottom: 9 }}>For user / Tag person (optional)</T>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center' }}>
+            {savedUsers.map((u) => (
+              <Chip
+                key={u.id}
+                label={u.name}
+                icon="person-outline"
+                active={userTag.toLowerCase() === u.name.toLowerCase()}
+                onPress={() => setUserTag(userTag.toLowerCase() === u.name.toLowerCase() ? '' : u.name)}
+              />
+            ))}
+            {!showNewUserInput && (
+              <Chip
+                label="+ Add person"
+                active={false}
+                onPress={() => setShowNewUserInput(true)}
+              />
+            )}
+          </View>
+
+          {showNewUserInput && (
+            <Row style={{ gap: 8, marginTop: 4, marginBottom: 8, alignItems: 'center' }}>
+              <Field
+                value={newUserName}
+                onChangeText={setNewUserName}
+                placeholder="Person name (e.g. Rahul, Mom)"
+                containerStyle={{ flex: 1, marginBottom: 0 }}
+                autoFocus
+              />
+              <Button
+                title="Add"
+                kind="ghost"
+                disabled={!newUserName.trim()}
+                onPress={async () => {
+                  const trimmed = newUserName.trim();
+                  if (!trimmed) return;
+                  await findOrCreateTaggedUser(trimmed);
+                  setUserTag(trimmed);
+                  if (!savedUsers.some((u) => u.name.toLowerCase() === trimmed.toLowerCase())) {
+                    setSavedUsers((prev) => [...prev, { id: trimmed, name: trimmed }].sort((a, b) => a.name.localeCompare(b.name)));
+                  }
+                  setNewUserName('');
+                  setShowNewUserInput(false);
+                }}
+              />
+              <Pressable
+                hitSlop={10}
+                onPress={() => { setShowNewUserInput(false); setNewUserName(''); }}
+                accessibilityLabel="Cancel add person"
+              >
+                <Ionicons name="close-circle" size={22} color={c.faint} />
+              </Pressable>
+            </Row>
+          )}
+
           <T size={13} sub style={{ marginTop: 16, marginBottom: 9 }}>Date</T>
           <Pressable
             onPress={() => setShowPicker((s) => !s)}
@@ -213,6 +301,28 @@ export default function IncomeForm() {
               <Chip key={m} label={m} active={method === m} onPress={() => setMethod(m)} />
             ))}
           </View>
+
+          {method === 'UPI' ? (
+            <View style={{ marginTop: 14 }}>
+              <T size={13} sub style={{ marginBottom: 9 }}>Into which bank</T>
+              {bankAccounts.length > 0 ? (
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+                  {bankAccounts.map((a) => (
+                    <Chip
+                      key={a.id}
+                      label={a.institution ? `${a.name} · ${a.institution}` : a.name}
+                      active={accountId === a.id}
+                      onPress={() => setAccountId(accountId === a.id ? null : a.id)}
+                    />
+                  ))}
+                </View>
+              ) : (
+                <Pressable onPress={() => router.push('/expense/net-worth')}>
+                  <T size={13} style={{ color: c.accent }}>Add a bank account to track balance ›</T>
+                </Pressable>
+              )}
+            </View>
+          ) : null}
 
           <Button title={editId ? 'Save changes' : 'Add income'} onPress={onSave} disabled={!valid} style={{ marginTop: 22, backgroundColor: valid ? c.good : undefined }} />
           {editId ? <Button title="Delete income" kind="danger" onPress={() => setConfirmingDelete(true)} style={{ marginTop: 10 }} /> : null}
