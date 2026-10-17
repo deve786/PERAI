@@ -15,6 +15,8 @@ export type Expense = {
   method: string;
   user_tag?: string;
   recurring_id: string | null;
+  /** The bank account a UPI (or other bank-drawn) payment came from — its balance is kept in step. Null/absent when not linked to one. */
+  account_id?: string | null;
 };
 export type ExpenseRow = Expense & { cat_name: string; cat_icon: string; cat_color: string; item_count: number };
 export type ExpenseItem = { id: string; expense_id: string; name: string; quantity: number; amount: number };
@@ -126,6 +128,7 @@ const SCHEMA_SQL = `
     method TEXT NOT NULL DEFAULT 'Cash',
     user_tag TEXT NOT NULL DEFAULT '',
     recurring_id TEXT,
+    account_id TEXT,
     updated_at TEXT NOT NULL,
     dirty INTEGER NOT NULL DEFAULT 1,
     deleted INTEGER NOT NULL DEFAULT 0
@@ -338,6 +341,7 @@ async function init() {
 
   await addColumnIfMissing(db, 'expenses', 'notes', "TEXT NOT NULL DEFAULT ''");
   await addColumnIfMissing(db, 'expenses', 'user_tag', "TEXT NOT NULL DEFAULT ''");
+  await addColumnIfMissing(db, 'expenses', 'account_id', 'TEXT');
   await addColumnIfMissing(db, 'expense_items', 'quantity', "REAL NOT NULL DEFAULT 1");
   // Null means no budget, which is how every existing category starts.
   await addColumnIfMissing(db, 'categories', 'monthly_budget', 'REAL');
@@ -552,6 +556,21 @@ export async function getExpense(id: string) {
   return db.getFirstAsync<Expense>('SELECT * FROM expenses WHERE id = ?', id);
 }
 
+/**
+ * Keeps a linked bank account's balance in step with an expense: reverses
+ * what the old amount/account took out (if any), then takes out the new one
+ * (if any). Covers every case — account added, removed, swapped, or just the
+ * amount changed — with the same two calls.
+ */
+async function reconcileAccountBalance(
+  before: { account_id: string | null; amount: number } | null,
+  after: { account_id: string | null; amount: number }
+): Promise<void> {
+  const { adjustAccountBalance } = await import('./accountsDb');
+  if (before?.account_id) await adjustAccountBalance(before.account_id, before.amount);
+  if (after.account_id) await adjustAccountBalance(after.account_id, -after.amount);
+}
+
 /** Returns the expense id, so the caller can attach line items to a new row. */
 export async function saveExpense(e: Omit<Expense, 'id' | 'recurring_id'> & { id?: string }): Promise<string> {
   const db = await getDb();
@@ -560,18 +579,25 @@ export async function saveExpense(e: Omit<Expense, 'id' | 'recurring_id'> & { id
   if (userTag) {
     await findOrCreateTaggedUser(userTag);
   }
+  const accountId = e.account_id || null;
   if (e.id) {
+    const previous = await getExpense(e.id);
     await db.runAsync(
-      'UPDATE expenses SET amount=?, category_id=?, date=?, note=?, notes=?, method=?, user_tag=?, updated_at=?, dirty=1 WHERE id=?',
-      e.amount, e.category_id, e.date, e.note, e.notes, e.method, userTag, now, e.id
+      'UPDATE expenses SET amount=?, category_id=?, date=?, note=?, notes=?, method=?, user_tag=?, account_id=?, updated_at=?, dirty=1 WHERE id=?',
+      e.amount, e.category_id, e.date, e.note, e.notes, e.method, userTag, accountId, now, e.id
+    );
+    await reconcileAccountBalance(
+      previous ? { account_id: previous.account_id ?? null, amount: previous.amount } : null,
+      { account_id: accountId, amount: e.amount }
     );
     return e.id;
   }
   const id = uuid();
   await db.runAsync(
-    'INSERT INTO expenses (id, amount, category_id, date, note, notes, method, user_tag, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    id, e.amount, e.category_id, e.date, e.note, e.notes, e.method, userTag, now
+    'INSERT INTO expenses (id, amount, category_id, date, note, notes, method, user_tag, account_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    id, e.amount, e.category_id, e.date, e.note, e.notes, e.method, userTag, accountId, now
   );
+  await reconcileAccountBalance(null, { account_id: accountId, amount: e.amount });
   return id;
 }
 
@@ -606,6 +632,8 @@ export async function deleteTaggedUser(id: string): Promise<void> {
 export async function deleteExpense(id: string) {
   const db = await getDb();
   const now = nowIso();
+  const existing = await getExpense(id);
+  if (existing) await reconcileAccountBalance({ account_id: existing.account_id ?? null, amount: existing.amount }, { account_id: null, amount: 0 });
   await db.runAsync('UPDATE expense_items SET deleted = 1, updated_at = ?, dirty = 1 WHERE expense_id = ?', now, id);
   // A link to an expense that no longer exists would keep showing in a trip's
   // total, so it goes the same way — as a tombstone, so the removal travels.

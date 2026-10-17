@@ -101,6 +101,23 @@ export async function updateAccountBalance(id: string, balance: number): Promise
   );
 }
 
+/**
+ * Adds `delta` to an account's balance (negative to deduct) — an in-place
+ * `balance = balance + ?` rather than read-then-write, so two expenses saved
+ * in quick succession can't race and clobber each other's deduction.
+ */
+export async function adjustAccountBalance(id: string, delta: number): Promise<void> {
+  if (!id || !delta) return;
+  const db = await getDb();
+  await initAccountsTable(db);
+  await db.runAsync(
+    'UPDATE accounts SET balance = balance + ?, updated_at = ?, dirty = 1 WHERE id = ? AND deleted = 0',
+    delta,
+    nowIso(),
+    id
+  );
+}
+
 export async function deleteAccount(id: string): Promise<void> {
   const db = await getDb();
   await initAccountsTable(db);

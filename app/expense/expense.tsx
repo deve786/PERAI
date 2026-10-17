@@ -13,6 +13,7 @@ import {
   listCategories, listExpenseItems, listTaggedUsers, saveExpense, saveExpenseItems,
   type Category, type ExpenseItem as ExpenseItemRow, type TaggedUser,
 } from '@/expense/db';
+import { listAccounts, type AccountItem } from '@/expense/accountsDb';
 import { fromStr, prettyDate, toStr, todayStr } from '@/expense/dates';
 import { noteBudgetCrossing } from '@/expense/budgetAlerts';
 import { numerals, radius, useTheme } from '@/expense/theme';
@@ -62,6 +63,8 @@ export default function ExpenseForm() {
   const [note, setNote] = useState('');
   const [notes, setNotes] = useState('');
   const [method, setMethod] = useState<string>('UPI');
+  const [bankAccounts, setBankAccounts] = useState<AccountItem[]>([]);
+  const [accountId, setAccountId] = useState<string | null>(null);
   const [userTag, setUserTag] = useState('');
   const [savedUsers, setSavedUsers] = useState<TaggedUser[]>([]);
   const [showNewUserInput, setShowNewUserInput] = useState(false);
@@ -93,9 +96,10 @@ export default function ExpenseForm() {
 
   useEffect(() => {
     (async () => {
-      const [cs, users] = await Promise.all([listCategories(), listTaggedUsers()]);
+      const [cs, users, accounts] = await Promise.all([listCategories(), listTaggedUsers(), listAccounts({ type: 'bank' })]);
       setCats(cs);
       setSavedUsers(users);
+      setBankAccounts(accounts);
       if (editId) {
         const e = await getExpense(editId);
         if (e) {
@@ -105,6 +109,7 @@ export default function ExpenseForm() {
           setNote(e.note);
           setNotes(e.notes);
           setMethod(e.method);
+          setAccountId(e.account_id ?? null);
           if (e.user_tag) setUserTag(e.user_tag);
         }
         const existing = await listExpenseItems(editId);
@@ -317,6 +322,9 @@ export default function ExpenseForm() {
       id: editId, amount: round2(value), category_id: finalCatId, date,
       note: note.trim(), notes: notes.trim(), method,
       user_tag: finalUserTag,
+      // Only a UPI payment is tied to the bank it drew from — switching away
+      // from UPI drops the link rather than leaving a stale one behind.
+      account_id: method === 'UPI' ? accountId : null,
     });
     const cleanItems = hasItems
       ? items
@@ -768,6 +776,28 @@ export default function ExpenseForm() {
               <Chip key={m} label={m} active={method === m} onPress={() => setMethod(m)} />
             ))}
           </View>
+
+          {method === 'UPI' ? (
+            <View style={{ marginTop: 14 }}>
+              <T size={13} sub style={{ marginBottom: 9 }}>From which bank</T>
+              {bankAccounts.length > 0 ? (
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+                  {bankAccounts.map((a) => (
+                    <Chip
+                      key={a.id}
+                      label={a.institution ? `${a.name} · ${a.institution}` : a.name}
+                      active={accountId === a.id}
+                      onPress={() => setAccountId(accountId === a.id ? null : a.id)}
+                    />
+                  ))}
+                </View>
+              ) : (
+                <Pressable onPress={() => router.push('/expense/net-worth')}>
+                  <T size={13} style={{ color: c.accent }}>Add a bank account to track balance ›</T>
+                </Pressable>
+              )}
+            </View>
+          ) : null}
 
           <Button
             title={saving ? 'Saving…' : editId ? 'Save changes' : 'Add expense'}
