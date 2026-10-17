@@ -17,6 +17,8 @@ export type Expense = {
   recurring_id: string | null;
   /** The bank account a UPI (or other bank-drawn) payment came from — its balance is kept in step. Null/absent when not linked to one. */
   account_id?: string | null;
+  /** 1 once cancelled (e.g. a cancelled ticket) and refunded via cancelExpense. 0/absent otherwise. */
+  cancelled?: number;
 };
 export type ExpenseRow = Expense & { cat_name: string; cat_icon: string; cat_color: string; item_count: number };
 export type ExpenseItem = { id: string; expense_id: string; name: string; quantity: number; amount: number };
@@ -73,6 +75,7 @@ const DEFAULT_CATEGORIES: CategorySeed[] = [
   { name: 'Rent', icon: 'home-outline', color: '#2E9465' },
   { name: 'Health', icon: 'medkit-outline', color: '#B0479B' },
   { name: 'Entertainment', icon: 'film-outline', color: '#7B8B1E' },
+  { name: 'Ticket', icon: 'ticket-outline', color: '#C46210' },
   { name: 'Other', icon: 'ellipsis-horizontal-circle-outline', color: '#0D8FAF' },
 ];
 
@@ -132,6 +135,7 @@ const SCHEMA_SQL = `
     user_tag TEXT NOT NULL DEFAULT '',
     recurring_id TEXT,
     account_id TEXT,
+    cancelled INTEGER NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL,
     dirty INTEGER NOT NULL DEFAULT 1,
     deleted INTEGER NOT NULL DEFAULT 0
@@ -349,6 +353,7 @@ async function init() {
   await addColumnIfMissing(db, 'expenses', 'account_id', 'TEXT');
   await addColumnIfMissing(db, 'income', 'user_tag', "TEXT NOT NULL DEFAULT ''");
   await addColumnIfMissing(db, 'income', 'account_id', 'TEXT');
+  await addColumnIfMissing(db, 'expenses', 'cancelled', 'INTEGER NOT NULL DEFAULT 0');
   await addColumnIfMissing(db, 'expense_items', 'quantity', "REAL NOT NULL DEFAULT 1");
   // Null means no budget, which is how every existing category starts.
   await addColumnIfMissing(db, 'categories', 'monthly_budget', 'REAL');
@@ -655,6 +660,43 @@ export async function deleteExpense(id: string) {
     now, id
   );
   await db.runAsync('UPDATE expenses SET deleted = 1, updated_at = ?, dirty = 1 WHERE id = ?', now, id);
+}
+
+/**
+ * Marks an expense cancelled (e.g. a cancelled ticket) and records the
+ * refund as income — a separate credit, not a reversal of the original
+ * spend, the same way a real bank statement shows both the original debit
+ * and the refund as their own lines. When the refund is tied to a bank
+ * account, that account's balance goes up through the same reconciliation
+ * saveIncome already does.
+ */
+export async function cancelExpense(
+  id: string,
+  options: { refundAmount?: number; accountId?: string | null } = {}
+): Promise<void> {
+  const db = await getDb();
+  const expense = await getExpense(id);
+  if (!expense || expense.cancelled) return;
+
+  const now = nowIso();
+  await db.runAsync('UPDATE expenses SET cancelled = 1, updated_at = ?, dirty = 1 WHERE id = ?', now, id);
+
+  const refundAmount = options.refundAmount ?? expense.amount;
+  if (refundAmount <= 0) return;
+
+  // Defaults to the account the ticket itself was paid from, if any —
+  // a cancelled UPI ticket most often refunds to the same bank.
+  const accountId = options.accountId !== undefined ? options.accountId : (expense.account_id ?? null);
+  const categoryId = await findOrCreateIncomeCategory('Refund');
+  await saveIncome({
+    amount: refundAmount,
+    category_id: categoryId,
+    date: todayStr(),
+    note: expense.note ? `Refund: ${expense.note}` : 'Ticket refund',
+    notes: `Refund for ${expense.amount} spent on ${expense.date}`,
+    method: accountId ? 'UPI' : 'Cash',
+    account_id: accountId,
+  });
 }
 
 // ---------- Links between a PERAI entry and the spending during it ----------

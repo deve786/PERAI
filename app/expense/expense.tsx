@@ -9,7 +9,7 @@ import { guessCategoryWithAI } from '@/expense/ai/categorize';
 import { scanReceiptWithAI } from '@/expense/ai/ocr';
 import { generateExpenseTitleWithAI } from '@/expense/ai/title';
 import {
-  METHODS, deleteExpense, findOrCreateCategory, findOrCreateTaggedUser, getExpense,
+  METHODS, cancelExpense, deleteExpense, findOrCreateCategory, findOrCreateTaggedUser, getExpense,
   listCategories, listExpenseItems, listTaggedUsers, saveExpense, saveExpenseItems,
   type Category, type ExpenseItem as ExpenseItemRow, type TaggedUser,
 } from '@/expense/db';
@@ -65,6 +65,7 @@ export default function ExpenseForm() {
   const [method, setMethod] = useState<string>('UPI');
   const [bankAccounts, setBankAccounts] = useState<AccountItem[]>([]);
   const [accountId, setAccountId] = useState<string | null>(null);
+  const [cancelled, setCancelled] = useState(false);
   const [userTag, setUserTag] = useState('');
   const [savedUsers, setSavedUsers] = useState<TaggedUser[]>([]);
   const [showNewUserInput, setShowNewUserInput] = useState(false);
@@ -110,6 +111,7 @@ export default function ExpenseForm() {
           setNotes(e.notes);
           setMethod(e.method);
           setAccountId(e.account_id ?? null);
+          setCancelled(e.cancelled === 1);
           if (e.user_tag) setUserTag(e.user_tag);
         }
         const existing = await listExpenseItems(editId);
@@ -437,6 +439,43 @@ export default function ExpenseForm() {
     router.back();
   }
 
+  /** Cancels the ticket and refunds its full amount into the chosen bank (or none, for a cash refund). */
+  const refundInto = (targetAccountId: string | null) => {
+    if (!editId) return;
+    void (async () => {
+      await cancelExpense(editId, { accountId: targetAccountId });
+      setCancelled(true);
+    })();
+  };
+
+  /** Asks which bank the refund landed in, defaulting to the one the ticket itself was paid from. */
+  const handleCancelTicket = () => {
+    if (!editId) return;
+    if (bankAccounts.length === 0) {
+      showDialog({
+        title: 'Cancel this ticket?',
+        message: `A ₹${round2(value)} refund will be recorded.`,
+        actions: [
+          { label: 'Cancel', cancel: true },
+          { label: 'Yes, cancel it', onPress: () => refundInto(null) },
+        ],
+      });
+      return;
+    }
+    showDialog({
+      title: 'Cancel this ticket?',
+      message: `A ₹${round2(value)} refund will be recorded. Which bank did it land in?`,
+      actions: [
+        { label: 'Cancel', cancel: true },
+        { label: 'Not through a bank', onPress: () => refundInto(null) },
+        ...bankAccounts.map((a) => ({
+          label: a.institution ? `${a.name} · ${a.institution}` : a.name,
+          onPress: () => refundInto(a.id),
+        })),
+      ],
+    });
+  };
+
   const itemInputStyle = {
     backgroundColor: c.card, borderWidth: 1, borderColor: c.line, borderRadius: radius.md,
     paddingHorizontal: 12, paddingVertical: 11, fontSize: 15, color: c.text,
@@ -459,11 +498,22 @@ export default function ExpenseForm() {
           <Row style={{ alignItems: 'center', gap: 10, marginTop: 10 }}>
             {cat && <IconDot icon={cat.icon} color={cat.color} size={44} />}
             <View style={{ flex: 1 }}>
-              <T size={15} weight="600">{note || cat?.name || ''}</T>
+              <Row style={{ alignItems: 'center', gap: 8 }}>
+                <T size={15} weight="600">{note || cat?.name || ''}</T>
+                {cancelled ? (
+                  <T size={11} weight="700" style={{ color: c.danger }}>CANCELLED · REFUNDED</T>
+                ) : null}
+              </Row>
               {note ? <T size={13} sub style={{ marginTop: 2 }}>{cat?.name}</T> : null}
             </View>
           </Row>
-          <Money value={value} size={40} weight="700" style={{ marginTop: 18, letterSpacing: -1 }} />
+          <Money
+            value={value}
+            size={40}
+            weight="700"
+            tone={cancelled ? c.sub : undefined}
+            style={[{ marginTop: 18, letterSpacing: -1 }, cancelled && { textDecorationLine: 'line-through' as const }]}
+          />
 
           <Divider style={{ marginTop: 20, marginBottom: 14 }} />
 
@@ -506,6 +556,9 @@ export default function ExpenseForm() {
           )}
 
           <Button title="Edit expense" icon="pencil-outline" kind="ghost" onPress={() => setMode('edit')} style={{ marginTop: 24 }} />
+          {cat?.name === 'Ticket' && !cancelled ? (
+            <Button title="Cancel this ticket (refund)" kind="ghost" onPress={handleCancelTicket} style={{ marginTop: 10 }} />
+          ) : null}
           <Button title="Delete expense" kind="danger" onPress={() => setConfirmingDelete(true)} style={{ marginTop: 10 }} />
         </ScrollView>
         <ConfirmDialog
