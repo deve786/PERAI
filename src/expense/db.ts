@@ -17,8 +17,14 @@ export type Expense = {
   recurring_id: string | null;
   /** The bank account a UPI (or other bank-drawn) payment came from — its balance is kept in step. Null/absent when not linked to one. */
   account_id?: string | null;
-  /** 1 once cancelled (e.g. a cancelled ticket) and refunded via cancelExpense. 0/absent otherwise. */
+  /** 1 once a refund has been entered for this expense (e.g. a refunded Ticket). 0/absent otherwise. */
   cancelled?: number;
+  /** How much of this expense was refunded. Null/absent when nothing has been. */
+  refund_amount?: number | null;
+  /** The bank account the refund landed in, if any — set via setExpenseRefund. */
+  refund_account_id?: string | null;
+  /** The Income row (Refund category) recording the refund, so editing or clearing it updates that same row instead of creating another. */
+  refund_income_id?: string | null;
 };
 export type ExpenseRow = Expense & { cat_name: string; cat_icon: string; cat_color: string; item_count: number };
 export type ExpenseItem = { id: string; expense_id: string; name: string; quantity: number; amount: number };
@@ -136,6 +142,9 @@ const SCHEMA_SQL = `
     recurring_id TEXT,
     account_id TEXT,
     cancelled INTEGER NOT NULL DEFAULT 0,
+    refund_amount REAL,
+    refund_account_id TEXT,
+    refund_income_id TEXT,
     updated_at TEXT NOT NULL,
     dirty INTEGER NOT NULL DEFAULT 1,
     deleted INTEGER NOT NULL DEFAULT 0
@@ -354,6 +363,9 @@ async function init() {
   await addColumnIfMissing(db, 'income', 'user_tag', "TEXT NOT NULL DEFAULT ''");
   await addColumnIfMissing(db, 'income', 'account_id', 'TEXT');
   await addColumnIfMissing(db, 'expenses', 'cancelled', 'INTEGER NOT NULL DEFAULT 0');
+  await addColumnIfMissing(db, 'expenses', 'refund_amount', 'REAL');
+  await addColumnIfMissing(db, 'expenses', 'refund_account_id', 'TEXT');
+  await addColumnIfMissing(db, 'expenses', 'refund_income_id', 'TEXT');
   await addColumnIfMissing(db, 'expense_items', 'quantity', "REAL NOT NULL DEFAULT 1");
   // Null means no budget, which is how every existing category starts.
   await addColumnIfMissing(db, 'categories', 'monthly_budget', 'REAL');
@@ -651,7 +663,11 @@ export async function deleteExpense(id: string) {
   const db = await getDb();
   const now = nowIso();
   const existing = await getExpense(id);
-  if (existing) await reconcileAccountBalance({ account_id: existing.account_id ?? null, amount: existing.amount }, { account_id: null, amount: 0 }, -1);
+  if (existing) {
+    await reconcileAccountBalance({ account_id: existing.account_id ?? null, amount: existing.amount }, { account_id: null, amount: 0 }, -1);
+    // The refund it generated has nothing left to be a refund of.
+    if (existing.refund_income_id) await deleteIncome(existing.refund_income_id);
+  }
   await db.runAsync('UPDATE expense_items SET deleted = 1, updated_at = ?, dirty = 1 WHERE expense_id = ?', now, id);
   // A link to an expense that no longer exists would keep showing in a trip's
   // total, so it goes the same way — as a tombstone, so the removal travels.
@@ -663,40 +679,48 @@ export async function deleteExpense(id: string) {
 }
 
 /**
- * Marks an expense cancelled (e.g. a cancelled ticket) and records the
- * refund as income — a separate credit, not a reversal of the original
- * spend, the same way a real bank statement shows both the original debit
- * and the refund as their own lines. When the refund is tied to a bank
- * account, that account's balance goes up through the same reconciliation
- * saveIncome already does.
+ * Sets, changes or clears how much of an expense (e.g. a Ticket) was
+ * refunded, and which bank account it landed in. Keeps a single linked
+ * Income row ("Refund" category) in step with it — the same row is updated
+ * on a later change rather than a new one created each time, so editing the
+ * amount or switching banks reconciles through saveIncome's own logic
+ * exactly like any other income edit, and clearing it deletes that row via
+ * deleteIncome, which reconciles the balance back down on its own.
  */
-export async function cancelExpense(
+export async function setExpenseRefund(
   id: string,
-  options: { refundAmount?: number; accountId?: string | null } = {}
+  refund: { amount: number; accountId: string | null } | null
 ): Promise<void> {
   const db = await getDb();
   const expense = await getExpense(id);
-  if (!expense || expense.cancelled) return;
-
+  if (!expense) return;
   const now = nowIso();
-  await db.runAsync('UPDATE expenses SET cancelled = 1, updated_at = ?, dirty = 1 WHERE id = ?', now, id);
 
-  const refundAmount = options.refundAmount ?? expense.amount;
-  if (refundAmount <= 0) return;
+  if (!refund || refund.amount <= 0) {
+    if (expense.refund_income_id) await deleteIncome(expense.refund_income_id);
+    await db.runAsync(
+      'UPDATE expenses SET cancelled = 0, refund_amount = NULL, refund_account_id = NULL, refund_income_id = NULL, updated_at = ?, dirty = 1 WHERE id = ?',
+      now, id
+    );
+    return;
+  }
 
-  // Defaults to the account the ticket itself was paid from, if any —
-  // a cancelled UPI ticket most often refunds to the same bank.
-  const accountId = options.accountId !== undefined ? options.accountId : (expense.account_id ?? null);
   const categoryId = await findOrCreateIncomeCategory('Refund');
-  await saveIncome({
-    amount: refundAmount,
+  const incomeId = await saveIncome({
+    id: expense.refund_income_id ?? undefined,
+    amount: refund.amount,
     category_id: categoryId,
     date: todayStr(),
     note: expense.note ? `Refund: ${expense.note}` : 'Ticket refund',
     notes: `Refund for ${expense.amount} spent on ${expense.date}`,
-    method: accountId ? 'UPI' : 'Cash',
-    account_id: accountId,
+    method: refund.accountId ? 'UPI' : 'Cash',
+    account_id: refund.accountId,
   });
+
+  await db.runAsync(
+    'UPDATE expenses SET cancelled = 1, refund_amount = ?, refund_account_id = ?, refund_income_id = ?, updated_at = ?, dirty = 1 WHERE id = ?',
+    refund.amount, refund.accountId, incomeId, now, id
+  );
 }
 
 // ---------- Links between a PERAI entry and the spending during it ----------

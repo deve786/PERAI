@@ -9,8 +9,8 @@ import { guessCategoryWithAI } from '@/expense/ai/categorize';
 import { scanReceiptWithAI } from '@/expense/ai/ocr';
 import { generateExpenseTitleWithAI } from '@/expense/ai/title';
 import {
-  METHODS, cancelExpense, deleteExpense, findOrCreateCategory, findOrCreateTaggedUser, getExpense,
-  listCategories, listExpenseItems, listTaggedUsers, saveExpense, saveExpenseItems,
+  METHODS, deleteExpense, findOrCreateCategory, findOrCreateTaggedUser, getExpense,
+  listCategories, listExpenseItems, listTaggedUsers, saveExpense, saveExpenseItems, setExpenseRefund,
   type Category, type ExpenseItem as ExpenseItemRow, type TaggedUser,
 } from '@/expense/db';
 import { listAccounts, type AccountItem } from '@/expense/accountsDb';
@@ -65,7 +65,9 @@ export default function ExpenseForm() {
   const [method, setMethod] = useState<string>('UPI');
   const [bankAccounts, setBankAccounts] = useState<AccountItem[]>([]);
   const [accountId, setAccountId] = useState<string | null>(null);
-  const [cancelled, setCancelled] = useState(false);
+  const [refunded, setRefunded] = useState(false);
+  const [refundAmount, setRefundAmount] = useState('');
+  const [refundAccountId, setRefundAccountId] = useState<string | null>(null);
   const [userTag, setUserTag] = useState('');
   const [savedUsers, setSavedUsers] = useState<TaggedUser[]>([]);
   const [showNewUserInput, setShowNewUserInput] = useState(false);
@@ -111,7 +113,9 @@ export default function ExpenseForm() {
           setNotes(e.notes);
           setMethod(e.method);
           setAccountId(e.account_id ?? null);
-          setCancelled(e.cancelled === 1);
+          setRefunded(e.cancelled === 1);
+          setRefundAmount(e.refund_amount != null ? String(e.refund_amount) : '');
+          setRefundAccountId(e.refund_account_id ?? null);
           if (e.user_tag) setUserTag(e.user_tag);
         }
         const existing = await listExpenseItems(editId);
@@ -334,6 +338,15 @@ export default function ExpenseForm() {
           .filter((it) => it.quantity * it.amount > 0)
       : [];
     await saveExpenseItems(newId, cleanItems);
+    // Only a Ticket carries a refund; the field is hidden for anything else,
+    // so there's nothing to set (or clear) on another category.
+    if (cat?.name === 'Ticket') {
+      const parsedRefund = round2(parseAmt(refundAmount) || 0);
+      await setExpenseRefund(
+        newId,
+        refunded && parsedRefund > 0 ? { amount: parsedRefund, accountId: refundAccountId } : null
+      );
+    }
     // Shown on Home, since this screen closes itself below.
     await noteBudgetCrossing(finalCatId, round2(value), symbol);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
@@ -439,43 +452,6 @@ export default function ExpenseForm() {
     router.back();
   }
 
-  /** Cancels the ticket and refunds its full amount into the chosen bank (or none, for a cash refund). */
-  const refundInto = (targetAccountId: string | null) => {
-    if (!editId) return;
-    void (async () => {
-      await cancelExpense(editId, { accountId: targetAccountId });
-      setCancelled(true);
-    })();
-  };
-
-  /** Asks which bank the refund landed in, defaulting to the one the ticket itself was paid from. */
-  const handleCancelTicket = () => {
-    if (!editId) return;
-    if (bankAccounts.length === 0) {
-      showDialog({
-        title: 'Cancel this ticket?',
-        message: `A ₹${round2(value)} refund will be recorded.`,
-        actions: [
-          { label: 'Cancel', cancel: true },
-          { label: 'Yes, cancel it', onPress: () => refundInto(null) },
-        ],
-      });
-      return;
-    }
-    showDialog({
-      title: 'Cancel this ticket?',
-      message: `A ₹${round2(value)} refund will be recorded. Which bank did it land in?`,
-      actions: [
-        { label: 'Cancel', cancel: true },
-        { label: 'Not through a bank', onPress: () => refundInto(null) },
-        ...bankAccounts.map((a) => ({
-          label: a.institution ? `${a.name} · ${a.institution}` : a.name,
-          onPress: () => refundInto(a.id),
-        })),
-      ],
-    });
-  };
-
   const itemInputStyle = {
     backgroundColor: c.card, borderWidth: 1, borderColor: c.line, borderRadius: radius.md,
     paddingHorizontal: 12, paddingVertical: 11, fontSize: 15, color: c.text,
@@ -498,22 +474,11 @@ export default function ExpenseForm() {
           <Row style={{ alignItems: 'center', gap: 10, marginTop: 10 }}>
             {cat && <IconDot icon={cat.icon} color={cat.color} size={44} />}
             <View style={{ flex: 1 }}>
-              <Row style={{ alignItems: 'center', gap: 8 }}>
-                <T size={15} weight="600">{note || cat?.name || ''}</T>
-                {cancelled ? (
-                  <T size={11} weight="700" style={{ color: c.danger }}>CANCELLED · REFUNDED</T>
-                ) : null}
-              </Row>
+              <T size={15} weight="600">{note || cat?.name || ''}</T>
               {note ? <T size={13} sub style={{ marginTop: 2 }}>{cat?.name}</T> : null}
             </View>
           </Row>
-          <Money
-            value={value}
-            size={40}
-            weight="700"
-            tone={cancelled ? c.sub : undefined}
-            style={[{ marginTop: 18, letterSpacing: -1 }, cancelled && { textDecorationLine: 'line-through' as const }]}
-          />
+          <Money value={value} size={40} weight="700" style={{ marginTop: 18, letterSpacing: -1 }} />
 
           <Divider style={{ marginTop: 20, marginBottom: 14 }} />
 
@@ -548,6 +513,15 @@ export default function ExpenseForm() {
             <T size={13.5} sub>Paid with</T>
             <T size={13.5}>{method}</T>
           </Row>
+          {refunded && refundAmount.trim() && (
+            <Row style={{ justifyContent: 'space-between', paddingVertical: 6 }}>
+              <T size={13.5} sub style={{ color: c.danger }}>Refunded</T>
+              <T size={13.5} weight="600" style={{ color: c.danger }}>
+                ₹{refundAmount}
+                {refundAccountId ? ` · ${bankAccounts.find((a) => a.id === refundAccountId)?.name ?? ''}` : ''}
+              </T>
+            </Row>
+          )}
           {notes.trim().length > 0 && (
             <View style={{ marginTop: 14 }}>
               <T size={13} sub style={{ marginBottom: 4 }}>Notes</T>
@@ -556,9 +530,6 @@ export default function ExpenseForm() {
           )}
 
           <Button title="Edit expense" icon="pencil-outline" kind="ghost" onPress={() => setMode('edit')} style={{ marginTop: 24 }} />
-          {cat?.name === 'Ticket' && !cancelled ? (
-            <Button title="Cancel this ticket (refund)" kind="ghost" onPress={handleCancelTicket} style={{ marginTop: 10 }} />
-          ) : null}
           <Button title="Delete expense" kind="danger" onPress={() => setConfirmingDelete(true)} style={{ marginTop: 10 }} />
         </ScrollView>
         <ConfirmDialog
@@ -849,6 +820,47 @@ export default function ExpenseForm() {
                   <T size={13} style={{ color: c.accent }}>Add a bank account to track balance ›</T>
                 </Pressable>
               )}
+            </View>
+          ) : null}
+
+          {cat?.name === 'Ticket' ? (
+            <View style={{ marginTop: 16 }}>
+              <T size={13} sub style={{ marginBottom: 9 }}>Refunded?</T>
+              <Row style={{ gap: 10 }}>
+                <Chip label="No" active={!refunded} onPress={() => setRefunded(false)} />
+                <Chip label="Yes" active={refunded} onPress={() => setRefunded(true)} />
+              </Row>
+
+              {refunded ? (
+                <>
+                  <Field
+                    label="Refunded amount"
+                    value={refundAmount}
+                    onChangeText={setRefundAmount}
+                    placeholder={String(round2(value) || 0)}
+                    keyboardType="decimal-pad"
+                    containerStyle={{ marginTop: 12 }}
+                  />
+
+                  <T size={13} sub style={{ marginTop: 12, marginBottom: 9 }}>Into which bank (UPI)</T>
+                  {bankAccounts.length > 0 ? (
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+                      {bankAccounts.map((a) => (
+                        <Chip
+                          key={a.id}
+                          label={a.institution ? `${a.name} · ${a.institution}` : a.name}
+                          active={refundAccountId === a.id}
+                          onPress={() => setRefundAccountId(refundAccountId === a.id ? null : a.id)}
+                        />
+                      ))}
+                    </View>
+                  ) : (
+                    <Pressable onPress={() => router.push('/expense/net-worth')}>
+                      <T size={13} style={{ color: c.accent }}>Add a bank account to track balance ›</T>
+                    </Pressable>
+                  )}
+                </>
+              ) : null}
             </View>
           ) : null}
 
