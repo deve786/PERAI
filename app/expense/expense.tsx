@@ -68,6 +68,8 @@ export default function ExpenseForm() {
   const [refunded, setRefunded] = useState(false);
   const [refundAmount, setRefundAmount] = useState('');
   const [refundAccountId, setRefundAccountId] = useState<string | null>(null);
+  const [peopleCount, setPeopleCount] = useState('');
+  const [refundPeopleCount, setRefundPeopleCount] = useState('');
   const [userTag, setUserTag] = useState('');
   const [savedUsers, setSavedUsers] = useState<TaggedUser[]>([]);
   const [showNewUserInput, setShowNewUserInput] = useState(false);
@@ -116,6 +118,8 @@ export default function ExpenseForm() {
           setRefunded(e.cancelled === 1);
           setRefundAmount(e.refund_amount != null ? String(e.refund_amount) : '');
           setRefundAccountId(e.refund_account_id ?? null);
+          setPeopleCount(e.people_count != null ? String(e.people_count) : '');
+          setRefundPeopleCount(e.refund_people_count != null ? String(e.refund_people_count) : '');
           if (e.user_tag) setUserTag(e.user_tag);
         }
         const existing = await listExpenseItems(editId);
@@ -324,6 +328,7 @@ export default function ExpenseForm() {
     if (finalUserTag) {
       await findOrCreateTaggedUser(finalUserTag);
     }
+    const isTicket = cat?.name === 'Ticket';
     const newId = await saveExpense({
       id: editId, amount: round2(value), category_id: finalCatId, date,
       note: note.trim(), notes: notes.trim(), method,
@@ -331,6 +336,7 @@ export default function ExpenseForm() {
       // Only a UPI payment is tied to the bank it drew from — switching away
       // from UPI drops the link rather than leaving a stale one behind.
       account_id: method === 'UPI' ? accountId : null,
+      people_count: isTicket && parseAmt(peopleCount) > 0 ? Math.round(parseAmt(peopleCount)) : null,
     });
     const cleanItems = hasItems
       ? items
@@ -340,11 +346,17 @@ export default function ExpenseForm() {
     await saveExpenseItems(newId, cleanItems);
     // Only a Ticket carries a refund; the field is hidden for anything else,
     // so there's nothing to set (or clear) on another category.
-    if (cat?.name === 'Ticket') {
+    if (isTicket) {
       const parsedRefund = round2(parseAmt(refundAmount) || 0);
       await setExpenseRefund(
         newId,
-        refunded && parsedRefund > 0 ? { amount: parsedRefund, accountId: refundAccountId } : null
+        refunded && parsedRefund > 0
+          ? {
+              amount: parsedRefund,
+              accountId: refundAccountId,
+              peopleCount: parseAmt(refundPeopleCount) > 0 ? Math.round(parseAmt(refundPeopleCount)) : null,
+            }
+          : null
       );
     }
     // Shown on Home, since this screen closes itself below.
@@ -513,11 +525,18 @@ export default function ExpenseForm() {
             <T size={13.5} sub>Paid with</T>
             <T size={13.5}>{method}</T>
           </Row>
+          {peopleCount.trim() && (
+            <Row style={{ justifyContent: 'space-between', paddingVertical: 6 }}>
+              <T size={13.5} sub>People</T>
+              <T size={13.5}>{peopleCount}</T>
+            </Row>
+          )}
           {refunded && refundAmount.trim() && (
             <Row style={{ justifyContent: 'space-between', paddingVertical: 6 }}>
               <T size={13.5} sub style={{ color: c.danger }}>Refunded</T>
               <T size={13.5} weight="600" style={{ color: c.danger }}>
                 ₹{refundAmount}
+                {refundPeopleCount.trim() ? ` (${refundPeopleCount} of ${peopleCount})` : ''}
                 {refundAccountId ? ` · ${bankAccounts.find((a) => a.id === refundAccountId)?.name ?? ''}` : ''}
               </T>
             </Row>
@@ -825,7 +844,15 @@ export default function ExpenseForm() {
 
           {cat?.name === 'Ticket' ? (
             <View style={{ marginTop: 16 }}>
-              <T size={13} sub style={{ marginBottom: 9 }}>Refunded?</T>
+              <Field
+                label="Number of people (optional)"
+                value={peopleCount}
+                onChangeText={setPeopleCount}
+                placeholder="e.g. 5"
+                keyboardType="number-pad"
+              />
+
+              <T size={13} sub style={{ marginTop: 12, marginBottom: 9 }}>Refunded?</T>
               <Row style={{ gap: 10 }}>
                 <Chip label="No" active={!refunded} onPress={() => setRefunded(false)} />
                 <Chip label="Yes" active={refunded} onPress={() => setRefunded(true)} />
@@ -833,6 +860,27 @@ export default function ExpenseForm() {
 
               {refunded ? (
                 <>
+                  {parseAmt(peopleCount) > 1 ? (
+                    <Field
+                      label={`People cancelled (of ${peopleCount})`}
+                      value={refundPeopleCount}
+                      onChangeText={(text) => {
+                        setRefundPeopleCount(text);
+                        const total = parseAmt(peopleCount);
+                        const cancelledN = parseAmt(text);
+                        // A per-person share of the total, for however many of
+                        // them were cancelled — still editable below in case
+                        // a fee wasn't refunded along with it.
+                        if (total > 0 && cancelledN > 0) {
+                          setRefundAmount(String(round2((round2(value) / total) * Math.min(cancelledN, total))));
+                        }
+                      }}
+                      placeholder="e.g. 2"
+                      keyboardType="number-pad"
+                      containerStyle={{ marginTop: 12 }}
+                    />
+                  ) : null}
+
                   <Field
                     label="Refunded amount"
                     value={refundAmount}

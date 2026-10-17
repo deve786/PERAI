@@ -25,6 +25,10 @@ export type Expense = {
   refund_account_id?: string | null;
   /** The Income row (Refund category) recording the refund, so editing or clearing it updates that same row instead of creating another. */
   refund_income_id?: string | null;
+  /** How many people a Ticket expense covers — lets a partial cancellation work out its share of the total. Null/absent otherwise. */
+  people_count?: number | null;
+  /** How many of those people's tickets were cancelled, for the refund just recorded. Null/absent otherwise. */
+  refund_people_count?: number | null;
 };
 export type ExpenseRow = Expense & { cat_name: string; cat_icon: string; cat_color: string; item_count: number };
 export type ExpenseItem = { id: string; expense_id: string; name: string; quantity: number; amount: number };
@@ -145,6 +149,8 @@ const SCHEMA_SQL = `
     refund_amount REAL,
     refund_account_id TEXT,
     refund_income_id TEXT,
+    people_count INTEGER,
+    refund_people_count INTEGER,
     updated_at TEXT NOT NULL,
     dirty INTEGER NOT NULL DEFAULT 1,
     deleted INTEGER NOT NULL DEFAULT 0
@@ -366,6 +372,8 @@ async function init() {
   await addColumnIfMissing(db, 'expenses', 'refund_amount', 'REAL');
   await addColumnIfMissing(db, 'expenses', 'refund_account_id', 'TEXT');
   await addColumnIfMissing(db, 'expenses', 'refund_income_id', 'TEXT');
+  await addColumnIfMissing(db, 'expenses', 'people_count', 'INTEGER');
+  await addColumnIfMissing(db, 'expenses', 'refund_people_count', 'INTEGER');
   await addColumnIfMissing(db, 'expense_items', 'quantity', "REAL NOT NULL DEFAULT 1");
   // Null means no budget, which is how every existing category starts.
   await addColumnIfMissing(db, 'categories', 'monthly_budget', 'REAL');
@@ -609,11 +617,12 @@ export async function saveExpense(e: Omit<Expense, 'id' | 'recurring_id'> & { id
     await findOrCreateTaggedUser(userTag);
   }
   const accountId = e.account_id || null;
+  const peopleCount = e.people_count ?? null;
   if (e.id) {
     const previous = await getExpense(e.id);
     await db.runAsync(
-      'UPDATE expenses SET amount=?, category_id=?, date=?, note=?, notes=?, method=?, user_tag=?, account_id=?, updated_at=?, dirty=1 WHERE id=?',
-      e.amount, e.category_id, e.date, e.note, e.notes, e.method, userTag, accountId, now, e.id
+      'UPDATE expenses SET amount=?, category_id=?, date=?, note=?, notes=?, method=?, user_tag=?, account_id=?, people_count=?, updated_at=?, dirty=1 WHERE id=?',
+      e.amount, e.category_id, e.date, e.note, e.notes, e.method, userTag, accountId, peopleCount, now, e.id
     );
     await reconcileAccountBalance(
       previous ? { account_id: previous.account_id ?? null, amount: previous.amount } : null,
@@ -624,8 +633,8 @@ export async function saveExpense(e: Omit<Expense, 'id' | 'recurring_id'> & { id
   }
   const id = uuid();
   await db.runAsync(
-    'INSERT INTO expenses (id, amount, category_id, date, note, notes, method, user_tag, account_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    id, e.amount, e.category_id, e.date, e.note, e.notes, e.method, userTag, accountId, now
+    'INSERT INTO expenses (id, amount, category_id, date, note, notes, method, user_tag, account_id, people_count, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    id, e.amount, e.category_id, e.date, e.note, e.notes, e.method, userTag, accountId, peopleCount, now
   );
   await reconcileAccountBalance(null, { account_id: accountId, amount: e.amount }, -1);
   return id;
@@ -689,7 +698,7 @@ export async function deleteExpense(id: string) {
  */
 export async function setExpenseRefund(
   id: string,
-  refund: { amount: number; accountId: string | null } | null
+  refund: { amount: number; accountId: string | null; peopleCount?: number | null } | null
 ): Promise<void> {
   const db = await getDb();
   const expense = await getExpense(id);
@@ -699,12 +708,16 @@ export async function setExpenseRefund(
   if (!refund || refund.amount <= 0) {
     if (expense.refund_income_id) await deleteIncome(expense.refund_income_id);
     await db.runAsync(
-      'UPDATE expenses SET cancelled = 0, refund_amount = NULL, refund_account_id = NULL, refund_income_id = NULL, updated_at = ?, dirty = 1 WHERE id = ?',
+      'UPDATE expenses SET cancelled = 0, refund_amount = NULL, refund_account_id = NULL, refund_income_id = NULL, refund_people_count = NULL, updated_at = ?, dirty = 1 WHERE id = ?',
       now, id
     );
     return;
   }
 
+  const peopleNote =
+    refund.peopleCount && expense.people_count
+      ? ` (${refund.peopleCount} of ${expense.people_count} people)`
+      : '';
   const categoryId = await findOrCreateIncomeCategory('Refund');
   const incomeId = await saveIncome({
     id: expense.refund_income_id ?? undefined,
@@ -712,14 +725,14 @@ export async function setExpenseRefund(
     category_id: categoryId,
     date: todayStr(),
     note: expense.note ? `Refund: ${expense.note}` : 'Ticket refund',
-    notes: `Refund for ${expense.amount} spent on ${expense.date}`,
+    notes: `Refund for ${expense.amount} spent on ${expense.date}${peopleNote}`,
     method: refund.accountId ? 'UPI' : 'Cash',
     account_id: refund.accountId,
   });
 
   await db.runAsync(
-    'UPDATE expenses SET cancelled = 1, refund_amount = ?, refund_account_id = ?, refund_income_id = ?, updated_at = ?, dirty = 1 WHERE id = ?',
-    refund.amount, refund.accountId, incomeId, now, id
+    'UPDATE expenses SET cancelled = 1, refund_amount = ?, refund_account_id = ?, refund_income_id = ?, refund_people_count = ?, updated_at = ?, dirty = 1 WHERE id = ?',
+    refund.amount, refund.accountId, incomeId, refund.peopleCount ?? null, now, id
   );
 }
 
