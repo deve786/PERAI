@@ -1,5 +1,8 @@
 import * as SQLite from 'expo-sqlite';
-import { getDb, uuid, findOrCreateTaggedUser, saveIncome, findOrCreateIncomeCategory } from './db';
+import {
+  getDb, uuid, findOrCreateTaggedUser, saveIncome, findOrCreateIncomeCategory,
+  saveExpense, findOrCreateCategory,
+} from './db';
 import { todayStr } from './dates';
 
 export type BorrowLendType = 'lent' | 'borrowed' | 'request';
@@ -153,8 +156,14 @@ export async function settleBorrowLend(
   id: string,
   options: {
     settleAmount?: number;
+    /** 'lent' settling, i.e. you were repaid: record it as income. */
     recordAsIncome?: boolean;
-    incomeMethod?: string;
+    /** 'borrowed' settling, i.e. you paid it back: record it as an expense. */
+    recordAsExpense?: boolean;
+    /** Payment method for the record above. Defaults to UPI. */
+    method?: string;
+    /** The bank account the money landed in (lent) or left from (borrowed), if any. */
+    accountId?: string | null;
   } = {}
 ): Promise<void> {
   const db = await getDb();
@@ -182,7 +191,8 @@ export async function settleBorrowLend(
     id
   );
 
-  // If this was money lent to someone and user opted to record it as income:
+  // If this was money lent to someone and they paid it back: it lands back
+  // in the chosen bank account, so it's recorded as income.
   if (item.type === 'lent' && options.recordAsIncome) {
     const categoryId = await findOrCreateIncomeCategory('Refund');
     await saveIncome({
@@ -191,7 +201,25 @@ export async function settleBorrowLend(
       date: todayStr(),
       note: `Loan repayment: ${item.person_name}`,
       notes: `Repayment for ${item.amount} lent on ${item.date}`,
-      method: options.incomeMethod ?? 'UPI',
+      method: options.method ?? 'UPI',
+      account_id: options.accountId ?? null,
+    });
+  }
+
+  // If this was money you borrowed and you paid it back: it leaves the
+  // chosen bank account, so it's recorded as an expense, the same as any
+  // other spend — it shows up in history and deducts from the account.
+  if (item.type === 'borrowed' && options.recordAsExpense) {
+    const categoryId = await findOrCreateCategory('Debt Repayment');
+    await saveExpense({
+      amount: amountToSettle,
+      category_id: categoryId,
+      date: todayStr(),
+      note: `Loan repayment: ${item.person_name}`,
+      notes: `Repayment for ${item.amount} borrowed on ${item.date}`,
+      method: options.method ?? 'UPI',
+      account_id: options.accountId ?? null,
+      user_tag: '',
     });
   }
 }

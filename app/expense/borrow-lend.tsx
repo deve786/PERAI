@@ -20,6 +20,7 @@ import {
   type BorrowLendSummary,
   type BorrowLendType,
 } from '@/expense/borrowLendDb';
+import { listAccounts, type AccountItem } from '@/expense/accountsDb';
 import { BorrowLendModal } from '@/components/BorrowLendModal';
 import { todayStr, prettyDate } from '@/expense/dates';
 import { fmtMoney } from '@/expense/stats';
@@ -43,17 +44,20 @@ export default function BorrowLendScreen() {
   const [modalVisible, setModalVisible] = useState(false);
   const [selectedItem, setSelectedItem] = useState<BorrowLendItem | null>(null);
   const [newType, setNewType] = useState<BorrowLendType>('lent');
+  const [bankAccounts, setBankAccounts] = useState<AccountItem[]>([]);
 
   const today = todayStr();
 
   const loadData = useCallback(async () => {
     try {
-      const [list, sumData] = await Promise.all([
+      const [list, sumData, accounts] = await Promise.all([
         listBorrowLend(),
         getBorrowLendSummary(),
+        listAccounts({ type: 'bank' }),
       ]);
       setItems(list);
       setSummary(sumData);
+      setBankAccounts(accounts);
     } catch (err) {
       console.warn('Could not load borrow/lend data:', err);
     }
@@ -76,6 +80,38 @@ export default function BorrowLendScreen() {
     setModalVisible(true);
   };
 
+  /** Records the settlement as income (lent) or an expense (borrowed), optionally tied to a bank account. */
+  const settleWithAccount = (item: BorrowLendItem, accountId: string | null) => {
+    void (async () => {
+      await settleBorrowLend(item.id, {
+        recordAsIncome: item.type === 'lent',
+        recordAsExpense: item.type === 'borrowed',
+        method: accountId ? 'UPI' : 'Cash',
+        accountId,
+      });
+      void loadData();
+    })();
+  };
+
+  /** Asks which bank the money landed in (lent) or left from (borrowed) — skipped when there's no bank account to pick. */
+  const pickBankThenSettle = (item: BorrowLendItem) => {
+    if (bankAccounts.length === 0) {
+      settleWithAccount(item, null);
+      return;
+    }
+    showDialog({
+      title: item.type === 'lent' ? 'Which bank did it land in?' : 'Which bank did you pay it from?',
+      actions: [
+        { label: 'Cancel', cancel: true },
+        { label: 'Not through a bank', onPress: () => settleWithAccount(item, null) },
+        ...bankAccounts.map((a) => ({
+          label: a.institution ? `${a.name} · ${a.institution}` : a.name,
+          onPress: () => settleWithAccount(item, a.id),
+        })),
+      ],
+    });
+  };
+
   const handleSettle = (item: BorrowLendItem) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     const verb = item.type === 'lent' ? 'returned to you' : 'paid back';
@@ -89,19 +125,14 @@ export default function BorrowLendScreen() {
           label: 'Just mark settled',
           onPress: () => {
             void (async () => {
-              await settleBorrowLend(item.id, { recordAsIncome: false });
+              await settleBorrowLend(item.id, { recordAsIncome: false, recordAsExpense: false });
               void loadData();
             })();
           },
         },
         {
           label: item.type === 'lent' ? 'Yes, record as income' : 'Yes, mark paid',
-          onPress: () => {
-            void (async () => {
-              await settleBorrowLend(item.id, { recordAsIncome: item.type === 'lent' });
-              void loadData();
-            })();
-          },
+          onPress: () => pickBankThenSettle(item),
         },
       ],
     });
