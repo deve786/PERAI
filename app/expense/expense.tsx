@@ -10,7 +10,8 @@ import { scanReceiptWithAI } from '@/expense/ai/ocr';
 import { generateExpenseTitleWithAI } from '@/expense/ai/title';
 import {
   METHODS, deleteExpense, findOrCreateCategory, findOrCreateTaggedUser, findOrCreateTicketType, getExpense,
-  listCategories, listExpenseItems, listTaggedUsers, listTicketTypes, saveExpense, saveExpenseItems, setExpenseRefund,
+  listCategories, listExpenseItems, listTaggedUsers, listTicketTypes, saveExpense, saveExpenseItems,
+  setExpenseRefund, setExpenseReimbursement,
   type Category, type ExpenseItem as ExpenseItemRow, type TaggedUser, type TicketType,
 } from '@/expense/db';
 import { listAccounts, type AccountItem } from '@/expense/accountsDb';
@@ -74,6 +75,10 @@ export default function ExpenseForm() {
   const [ticketTypes, setTicketTypes] = useState<TicketType[]>([]);
   const [showNewTicketTypeInput, setShowNewTicketTypeInput] = useState(false);
   const [newTicketTypeName, setNewTicketTypeName] = useState('');
+  const [reimbursed, setReimbursed] = useState(false);
+  const [reimburseSame, setReimburseSame] = useState(true);
+  const [reimburseAmount, setReimburseAmount] = useState('');
+  const [reimburseAccountId, setReimburseAccountId] = useState<string | null>(null);
   const [userTag, setUserTag] = useState('');
   const [savedUsers, setSavedUsers] = useState<TaggedUser[]>([]);
   const [showNewUserInput, setShowNewUserInput] = useState(false);
@@ -129,6 +134,10 @@ export default function ExpenseForm() {
           setRefundPeopleCount(e.refund_people_count != null ? String(e.refund_people_count) : '');
           if (e.user_tag) setUserTag(e.user_tag);
           if (e.sub_category) setSubCategory(e.sub_category);
+          setReimbursed(e.reimbursed === 1);
+          setReimburseAmount(e.reimburse_amount != null ? String(e.reimburse_amount) : '');
+          setReimburseAccountId(e.reimburse_account_id ?? null);
+          setReimburseSame(e.reimburse_amount != null ? e.reimburse_amount === e.amount : true);
         }
         const existing = await listExpenseItems(editId);
         setViewItems(existing);
@@ -372,6 +381,15 @@ export default function ExpenseForm() {
           : null
       );
     }
+    // Whoever this was tagged "for user" can pay back what it cost — any
+    // category, not just a Ticket, so it's keyed off the tag, not isTicket.
+    if (finalUserTag) {
+      const parsedReimburse = round2((reimburseSame ? value : parseAmt(reimburseAmount)) || 0);
+      await setExpenseReimbursement(
+        newId,
+        reimbursed && parsedReimburse > 0 ? { amount: parsedReimburse, accountId: reimburseAccountId } : null
+      );
+    }
     // Shown on Home, since this screen closes itself below.
     await noteBudgetCrossing(finalCatId, round2(value), symbol);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
@@ -557,6 +575,15 @@ export default function ExpenseForm() {
                 ₹{refundAmount}
                 {refundPeopleCount.trim() ? ` (${refundPeopleCount} of ${peopleCount})` : ''}
                 {refundAccountId ? ` · ${bankAccounts.find((a) => a.id === refundAccountId)?.name ?? ''}` : ''}
+              </T>
+            </Row>
+          )}
+          {reimbursed && reimburseAmount.trim() && (
+            <Row style={{ justifyContent: 'space-between', paddingVertical: 6 }}>
+              <T size={13.5} sub style={{ color: c.good }}>Paid back by {userTag || 'them'}</T>
+              <T size={13.5} weight="600" style={{ color: c.good }}>
+                ₹{reimburseAmount}
+                {reimburseAccountId ? ` · ${bankAccounts.find((a) => a.id === reimburseAccountId)?.name ?? ''}` : ''}
               </T>
             </Row>
           )}
@@ -805,6 +832,54 @@ export default function ExpenseForm() {
                 <Ionicons name="close-circle" size={22} color={c.faint} />
               </Pressable>
             </Row>
+          )}
+
+          {userTag.trim().length > 0 && (
+            <View style={{ marginTop: 16 }}>
+              <T size={13} sub style={{ marginBottom: 9 }}>Did {userTag.trim()} pay you back?</T>
+              <Row style={{ gap: 10 }}>
+                <Chip label="No" active={!reimbursed} onPress={() => setReimbursed(false)} />
+                <Chip label="Yes" active={reimbursed} onPress={() => setReimbursed(true)} />
+              </Row>
+
+              {reimbursed ? (
+                <>
+                  <Row style={{ gap: 10, marginTop: 12 }}>
+                    <Chip label="Same amount" active={reimburseSame} onPress={() => setReimburseSame(true)} />
+                    <Chip label="Different amount" active={!reimburseSame} onPress={() => setReimburseSame(false)} />
+                  </Row>
+
+                  {!reimburseSame && (
+                    <Field
+                      label="Amount they sent"
+                      value={reimburseAmount}
+                      onChangeText={setReimburseAmount}
+                      placeholder={String(round2(value) || 0)}
+                      keyboardType="decimal-pad"
+                      containerStyle={{ marginTop: 12 }}
+                    />
+                  )}
+
+                  <T size={13} sub style={{ marginTop: 12, marginBottom: 9 }}>Into which bank (UPI)</T>
+                  {bankAccounts.length > 0 ? (
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+                      {bankAccounts.map((a) => (
+                        <Chip
+                          key={a.id}
+                          label={a.institution ? `${a.name} · ${a.institution}` : a.name}
+                          active={reimburseAccountId === a.id}
+                          onPress={() => setReimburseAccountId(reimburseAccountId === a.id ? null : a.id)}
+                        />
+                      ))}
+                    </View>
+                  ) : (
+                    <Pressable onPress={() => router.push('/expense/net-worth')}>
+                      <T size={13} style={{ color: c.accent }}>Add a bank account to track balance ›</T>
+                    </Pressable>
+                  )}
+                </>
+              ) : null}
+            </View>
           )}
 
           <T size={13} sub style={{ marginTop: 16, marginBottom: 9 }}>Date</T>

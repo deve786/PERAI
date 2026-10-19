@@ -32,6 +32,14 @@ export type Expense = {
   refund_people_count?: number | null;
   /** A Ticket expense's kind — e.g. Flight, Cinema — picked from ticket_types or typed fresh. Empty/absent for any other category. */
   sub_category?: string;
+  /** 1 once the person this was paid for (user_tag) has sent the money back. 0/absent otherwise. */
+  reimbursed?: number;
+  /** How much they sent back. Null/absent when nothing has been. */
+  reimburse_amount?: number | null;
+  /** The bank account their reimbursement landed in, if any — set via setExpenseReimbursement. */
+  reimburse_account_id?: string | null;
+  /** The Income row (Reimbursement category) recording it, so editing or clearing it updates that same row instead of creating another. */
+  reimburse_income_id?: string | null;
 };
 export type ExpenseRow = Expense & { cat_name: string; cat_icon: string; cat_color: string; item_count: number };
 export type ExpenseItem = { id: string; expense_id: string; name: string; quantity: number; amount: number };
@@ -158,6 +166,10 @@ const SCHEMA_SQL = `
     people_count INTEGER,
     refund_people_count INTEGER,
     sub_category TEXT NOT NULL DEFAULT '',
+    reimbursed INTEGER NOT NULL DEFAULT 0,
+    reimburse_amount REAL,
+    reimburse_account_id TEXT,
+    reimburse_income_id TEXT,
     updated_at TEXT NOT NULL,
     dirty INTEGER NOT NULL DEFAULT 1,
     deleted INTEGER NOT NULL DEFAULT 0
@@ -390,6 +402,10 @@ async function init() {
   await addColumnIfMissing(db, 'expenses', 'people_count', 'INTEGER');
   await addColumnIfMissing(db, 'expenses', 'refund_people_count', 'INTEGER');
   await addColumnIfMissing(db, 'expenses', 'sub_category', "TEXT NOT NULL DEFAULT ''");
+  await addColumnIfMissing(db, 'expenses', 'reimbursed', 'INTEGER NOT NULL DEFAULT 0');
+  await addColumnIfMissing(db, 'expenses', 'reimburse_amount', 'REAL');
+  await addColumnIfMissing(db, 'expenses', 'reimburse_account_id', 'TEXT');
+  await addColumnIfMissing(db, 'expenses', 'reimburse_income_id', 'TEXT');
   await addColumnIfMissing(db, 'expense_items', 'quantity', "REAL NOT NULL DEFAULT 1");
   // Null means no budget, which is how every existing category starts.
   await addColumnIfMissing(db, 'categories', 'monthly_budget', 'REAL');
@@ -736,8 +752,9 @@ export async function deleteExpense(id: string) {
   const existing = await getExpense(id);
   if (existing) {
     await reconcileAccountBalance({ account_id: existing.account_id ?? null, amount: existing.amount }, { account_id: null, amount: 0 }, -1);
-    // The refund it generated has nothing left to be a refund of.
+    // The refund/reimbursement it generated has nothing left to be a refund/reimbursement of.
     if (existing.refund_income_id) await deleteIncome(existing.refund_income_id);
+    if (existing.reimburse_income_id) await deleteIncome(existing.reimburse_income_id);
   }
   await db.runAsync('UPDATE expense_items SET deleted = 1, updated_at = ?, dirty = 1 WHERE expense_id = ?', now, id);
   // A link to an expense that no longer exists would keep showing in a trip's
@@ -795,6 +812,50 @@ export async function setExpenseRefund(
   await db.runAsync(
     'UPDATE expenses SET cancelled = 1, refund_amount = ?, refund_account_id = ?, refund_income_id = ?, refund_people_count = ?, updated_at = ?, dirty = 1 WHERE id = ?',
     refund.amount, refund.accountId, incomeId, refund.peopleCount ?? null, now, id
+  );
+}
+
+/**
+ * Sets, changes or clears how much the person this was paid for (user_tag)
+ * has sent back, and which bank account it landed in — e.g. they paid you
+ * back for a ticket bought in their name. Same single-linked-Income-row
+ * pattern as setExpenseRefund, just under its own "Reimbursement" category
+ * so it's never confused with a vendor's refund of a cancelled Ticket.
+ */
+export async function setExpenseReimbursement(
+  id: string,
+  reimbursement: { amount: number; accountId: string | null } | null
+): Promise<void> {
+  const db = await getDb();
+  const expense = await getExpense(id);
+  if (!expense) return;
+  const now = nowIso();
+
+  if (!reimbursement || reimbursement.amount <= 0) {
+    if (expense.reimburse_income_id) await deleteIncome(expense.reimburse_income_id);
+    await db.runAsync(
+      'UPDATE expenses SET reimbursed = 0, reimburse_amount = NULL, reimburse_account_id = NULL, reimburse_income_id = NULL, updated_at = ?, dirty = 1 WHERE id = ?',
+      now, id
+    );
+    return;
+  }
+
+  const categoryId = await findOrCreateIncomeCategory('Reimbursement');
+  const who = expense.user_tag ? ` from ${expense.user_tag}` : '';
+  const incomeId = await saveIncome({
+    id: expense.reimburse_income_id ?? undefined,
+    amount: reimbursement.amount,
+    category_id: categoryId,
+    date: todayStr(),
+    note: expense.note ? `Paid back${who}: ${expense.note}` : `Paid back${who}`,
+    notes: `Sent back for ${expense.amount} spent on ${expense.date}`,
+    method: reimbursement.accountId ? 'UPI' : 'Cash',
+    account_id: reimbursement.accountId,
+  });
+
+  await db.runAsync(
+    'UPDATE expenses SET reimbursed = 1, reimburse_amount = ?, reimburse_account_id = ?, reimburse_income_id = ?, updated_at = ?, dirty = 1 WHERE id = ?',
+    reimbursement.amount, reimbursement.accountId, incomeId, now, id
   );
 }
 
