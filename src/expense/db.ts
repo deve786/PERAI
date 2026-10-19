@@ -5,6 +5,7 @@ import { todayStr, ymKey } from './dates';
 
 export type Category = { id: string; name: string; icon: string; color: string; monthly_budget: number | null };
 export type TaggedUser = { id: string; name: string };
+export type TicketType = { id: string; name: string };
 export type Expense = {
   id: string;
   amount: number;
@@ -29,6 +30,8 @@ export type Expense = {
   people_count?: number | null;
   /** How many of those people's tickets were cancelled, for the refund just recorded. Null/absent otherwise. */
   refund_people_count?: number | null;
+  /** A Ticket expense's kind — e.g. Flight, Cinema — picked from ticket_types or typed fresh. Empty/absent for any other category. */
+  sub_category?: string;
 };
 export type ExpenseRow = Expense & { cat_name: string; cat_icon: string; cat_color: string; item_count: number };
 export type ExpenseItem = { id: string; expense_id: string; name: string; quantity: number; amount: number };
@@ -88,6 +91,9 @@ const DEFAULT_CATEGORIES: CategorySeed[] = [
   { name: 'Ticket', icon: 'ticket-outline', color: '#C46210' },
   { name: 'Other', icon: 'ellipsis-horizontal-circle-outline', color: '#0D8FAF' },
 ];
+
+/** Starting options for a Ticket's sub-category — the user can add their own alongside these. */
+const DEFAULT_TICKET_TYPES = ['Flight', 'Ship', 'Train', 'Bus', 'Cinema', 'Event'];
 
 /** Colours shipped before the muted palette, keyed by category name. */
 const LEGACY_COLORS: Record<string, string> = {
@@ -151,6 +157,7 @@ const SCHEMA_SQL = `
     refund_income_id TEXT,
     people_count INTEGER,
     refund_people_count INTEGER,
+    sub_category TEXT NOT NULL DEFAULT '',
     updated_at TEXT NOT NULL,
     dirty INTEGER NOT NULL DEFAULT 1,
     deleted INTEGER NOT NULL DEFAULT 0
@@ -164,6 +171,14 @@ const SCHEMA_SQL = `
     deleted INTEGER NOT NULL DEFAULT 0
   );
   CREATE UNIQUE INDEX IF NOT EXISTS idx_tagged_users_name ON tagged_users(name) WHERE deleted = 0;
+  CREATE TABLE IF NOT EXISTS ticket_types (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    dirty INTEGER NOT NULL DEFAULT 1,
+    deleted INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_ticket_types_name ON ticket_types(name) WHERE deleted = 0;
   CREATE TABLE IF NOT EXISTS expense_items (
     id TEXT PRIMARY KEY,
     expense_id TEXT NOT NULL,
@@ -374,6 +389,7 @@ async function init() {
   await addColumnIfMissing(db, 'expenses', 'refund_income_id', 'TEXT');
   await addColumnIfMissing(db, 'expenses', 'people_count', 'INTEGER');
   await addColumnIfMissing(db, 'expenses', 'refund_people_count', 'INTEGER');
+  await addColumnIfMissing(db, 'expenses', 'sub_category', "TEXT NOT NULL DEFAULT ''");
   await addColumnIfMissing(db, 'expense_items', 'quantity', "REAL NOT NULL DEFAULT 1");
   // Null means no budget, which is how every existing category starts.
   await addColumnIfMissing(db, 'categories', 'monthly_budget', 'REAL');
@@ -404,6 +420,14 @@ async function init() {
       deleted INTEGER NOT NULL DEFAULT 0
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_tagged_users_name ON tagged_users(name) WHERE deleted = 0;
+    CREATE TABLE IF NOT EXISTS ticket_types (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      dirty INTEGER NOT NULL DEFAULT 1,
+      deleted INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_ticket_types_name ON ticket_types(name) WHERE deleted = 0;
     CREATE TABLE IF NOT EXISTS borrow_lend (
       id TEXT PRIMARY KEY,
       person_name TEXT NOT NULL,
@@ -463,6 +487,12 @@ async function init() {
         'INSERT INTO income_categories (id, name, icon, color, updated_at) VALUES (?, ?, ?, ?, ?)',
         uuid(), c.name, c.icon, c.color, nowIso()
       );
+    }
+  }
+  const ticketTypeRow = await db.getFirstAsync<{ c: number }>('SELECT COUNT(*) as c FROM ticket_types');
+  if (!ticketTypeRow || ticketTypeRow.c === 0) {
+    for (const name of DEFAULT_TICKET_TYPES) {
+      await db.runAsync('INSERT INTO ticket_types (id, name, updated_at) VALUES (?, ?, ?)', uuid(), name, nowIso());
     }
   }
   await generateRecurring(db);
@@ -618,11 +648,15 @@ export async function saveExpense(e: Omit<Expense, 'id' | 'recurring_id'> & { id
   }
   const accountId = e.account_id || null;
   const peopleCount = e.people_count ?? null;
+  const subCategory = (e.sub_category ?? '').trim();
+  if (subCategory) {
+    await findOrCreateTicketType(subCategory);
+  }
   if (e.id) {
     const previous = await getExpense(e.id);
     await db.runAsync(
-      'UPDATE expenses SET amount=?, category_id=?, date=?, note=?, notes=?, method=?, user_tag=?, account_id=?, people_count=?, updated_at=?, dirty=1 WHERE id=?',
-      e.amount, e.category_id, e.date, e.note, e.notes, e.method, userTag, accountId, peopleCount, now, e.id
+      'UPDATE expenses SET amount=?, category_id=?, date=?, note=?, notes=?, method=?, user_tag=?, account_id=?, people_count=?, sub_category=?, updated_at=?, dirty=1 WHERE id=?',
+      e.amount, e.category_id, e.date, e.note, e.notes, e.method, userTag, accountId, peopleCount, subCategory, now, e.id
     );
     await reconcileAccountBalance(
       previous ? { account_id: previous.account_id ?? null, amount: previous.amount } : null,
@@ -633,8 +667,8 @@ export async function saveExpense(e: Omit<Expense, 'id' | 'recurring_id'> & { id
   }
   const id = uuid();
   await db.runAsync(
-    'INSERT INTO expenses (id, amount, category_id, date, note, notes, method, user_tag, account_id, people_count, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    id, e.amount, e.category_id, e.date, e.note, e.notes, e.method, userTag, accountId, peopleCount, now
+    'INSERT INTO expenses (id, amount, category_id, date, note, notes, method, user_tag, account_id, people_count, sub_category, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    id, e.amount, e.category_id, e.date, e.note, e.notes, e.method, userTag, accountId, peopleCount, subCategory, now
   );
   await reconcileAccountBalance(null, { account_id: accountId, amount: e.amount }, -1);
   return id;
@@ -666,6 +700,34 @@ export async function findOrCreateTaggedUser(name: string): Promise<string> {
 export async function deleteTaggedUser(id: string): Promise<void> {
   const db = await getDb();
   await db.runAsync('UPDATE tagged_users SET deleted = 1, updated_at = ?, dirty = 1 WHERE id = ?', nowIso(), id);
+}
+
+export async function listTicketTypes(): Promise<TicketType[]> {
+  const db = await getDb();
+  return db.getAllAsync<TicketType>(
+    'SELECT id, name FROM ticket_types WHERE deleted = 0 ORDER BY LOWER(name) ASC'
+  );
+}
+
+export async function findOrCreateTicketType(name: string): Promise<string> {
+  const db = await getDb();
+  const n = name.trim();
+  if (!n) return '';
+  const existing = await db.getFirstAsync<{ id: string }>(
+    'SELECT id FROM ticket_types WHERE LOWER(name) = LOWER(?) AND deleted = 0', n
+  );
+  if (existing) return existing.id;
+  const id = uuid();
+  await db.runAsync(
+    'INSERT INTO ticket_types (id, name, updated_at) VALUES (?, ?, ?)',
+    id, n, nowIso()
+  );
+  return id;
+}
+
+export async function deleteTicketType(id: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync('UPDATE ticket_types SET deleted = 1, updated_at = ?, dirty = 1 WHERE id = ?', nowIso(), id);
 }
 
 export async function deleteExpense(id: string) {

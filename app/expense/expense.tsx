@@ -9,9 +9,9 @@ import { guessCategoryWithAI } from '@/expense/ai/categorize';
 import { scanReceiptWithAI } from '@/expense/ai/ocr';
 import { generateExpenseTitleWithAI } from '@/expense/ai/title';
 import {
-  METHODS, deleteExpense, findOrCreateCategory, findOrCreateTaggedUser, getExpense,
-  listCategories, listExpenseItems, listTaggedUsers, saveExpense, saveExpenseItems, setExpenseRefund,
-  type Category, type ExpenseItem as ExpenseItemRow, type TaggedUser,
+  METHODS, deleteExpense, findOrCreateCategory, findOrCreateTaggedUser, findOrCreateTicketType, getExpense,
+  listCategories, listExpenseItems, listTaggedUsers, listTicketTypes, saveExpense, saveExpenseItems, setExpenseRefund,
+  type Category, type ExpenseItem as ExpenseItemRow, type TaggedUser, type TicketType,
 } from '@/expense/db';
 import { listAccounts, type AccountItem } from '@/expense/accountsDb';
 import { fromStr, prettyDate, toStr, todayStr } from '@/expense/dates';
@@ -70,6 +70,10 @@ export default function ExpenseForm() {
   const [refundAccountId, setRefundAccountId] = useState<string | null>(null);
   const [peopleCount, setPeopleCount] = useState('');
   const [refundPeopleCount, setRefundPeopleCount] = useState('');
+  const [subCategory, setSubCategory] = useState('');
+  const [ticketTypes, setTicketTypes] = useState<TicketType[]>([]);
+  const [showNewTicketTypeInput, setShowNewTicketTypeInput] = useState(false);
+  const [newTicketTypeName, setNewTicketTypeName] = useState('');
   const [userTag, setUserTag] = useState('');
   const [savedUsers, setSavedUsers] = useState<TaggedUser[]>([]);
   const [showNewUserInput, setShowNewUserInput] = useState(false);
@@ -101,10 +105,13 @@ export default function ExpenseForm() {
 
   useEffect(() => {
     (async () => {
-      const [cs, users, accounts] = await Promise.all([listCategories(), listTaggedUsers(), listAccounts({ type: 'bank' })]);
+      const [cs, users, accounts, types] = await Promise.all([
+        listCategories(), listTaggedUsers(), listAccounts({ type: 'bank' }), listTicketTypes(),
+      ]);
       setCats(cs);
       setSavedUsers(users);
       setBankAccounts(accounts);
+      setTicketTypes(types);
       if (editId) {
         const e = await getExpense(editId);
         if (e) {
@@ -121,6 +128,7 @@ export default function ExpenseForm() {
           setPeopleCount(e.people_count != null ? String(e.people_count) : '');
           setRefundPeopleCount(e.refund_people_count != null ? String(e.refund_people_count) : '');
           if (e.user_tag) setUserTag(e.user_tag);
+          if (e.sub_category) setSubCategory(e.sub_category);
         }
         const existing = await listExpenseItems(editId);
         setViewItems(existing);
@@ -329,6 +337,10 @@ export default function ExpenseForm() {
       await findOrCreateTaggedUser(finalUserTag);
     }
     const isTicket = cat?.name === 'Ticket';
+    const finalSubCategory = (isTicket ? (subCategory || newTicketTypeName) : '').trim();
+    if (isTicket && finalSubCategory) {
+      await findOrCreateTicketType(finalSubCategory);
+    }
     const newId = await saveExpense({
       id: editId, amount: round2(value), category_id: finalCatId, date,
       note: note.trim(), notes: notes.trim(), method,
@@ -337,6 +349,7 @@ export default function ExpenseForm() {
       // from UPI drops the link rather than leaving a stale one behind.
       account_id: method === 'UPI' ? accountId : null,
       people_count: isTicket && parseAmt(peopleCount) > 0 ? Math.round(parseAmt(peopleCount)) : null,
+      sub_category: finalSubCategory,
     });
     const cleanItems = hasItems
       ? items
@@ -519,6 +532,12 @@ export default function ExpenseForm() {
                 <Ionicons name="person-circle-outline" size={16} color={c.sub} />
                 <T size={13.5} weight="600">{userTag}</T>
               </Row>
+            </Row>
+          )}
+          {subCategory.trim().length > 0 && (
+            <Row style={{ justifyContent: 'space-between', paddingVertical: 6 }}>
+              <T size={13.5} sub>Ticket type</T>
+              <T size={13.5} weight="600">{subCategory}</T>
             </Row>
           )}
           <Row style={{ justifyContent: 'space-between', paddingVertical: 6 }}>
@@ -844,12 +863,63 @@ export default function ExpenseForm() {
 
           {cat?.name === 'Ticket' ? (
             <View style={{ marginTop: 16 }}>
+              <T size={13} sub style={{ marginBottom: 9 }}>Ticket type (optional)</T>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center' }}>
+                {ticketTypes.map((t) => (
+                  <Chip
+                    key={t.id}
+                    label={t.name}
+                    active={subCategory.toLowerCase() === t.name.toLowerCase()}
+                    onPress={() => setSubCategory(subCategory.toLowerCase() === t.name.toLowerCase() ? '' : t.name)}
+                  />
+                ))}
+                {!showNewTicketTypeInput && (
+                  <Chip label="+ Add type" active={false} onPress={() => setShowNewTicketTypeInput(true)} />
+                )}
+              </View>
+
+              {showNewTicketTypeInput && (
+                <Row style={{ gap: 8, marginTop: 8, alignItems: 'center' }}>
+                  <Field
+                    value={newTicketTypeName}
+                    onChangeText={setNewTicketTypeName}
+                    placeholder="e.g. Bus, Concert"
+                    containerStyle={{ flex: 1, marginBottom: 0 }}
+                    autoFocus
+                  />
+                  <Button
+                    title="Add"
+                    kind="ghost"
+                    disabled={!newTicketTypeName.trim()}
+                    onPress={async () => {
+                      const trimmed = newTicketTypeName.trim();
+                      if (!trimmed) return;
+                      await findOrCreateTicketType(trimmed);
+                      setSubCategory(trimmed);
+                      if (!ticketTypes.some((t) => t.name.toLowerCase() === trimmed.toLowerCase())) {
+                        setTicketTypes((prev) => [...prev, { id: trimmed, name: trimmed }].sort((a, b) => a.name.localeCompare(b.name)));
+                      }
+                      setNewTicketTypeName('');
+                      setShowNewTicketTypeInput(false);
+                    }}
+                  />
+                  <Pressable
+                    hitSlop={10}
+                    onPress={() => { setShowNewTicketTypeInput(false); setNewTicketTypeName(''); }}
+                    accessibilityLabel="Cancel add ticket type"
+                  >
+                    <Ionicons name="close-circle" size={22} color={c.faint} />
+                  </Pressable>
+                </Row>
+              )}
+
               <Field
                 label="Number of people (optional)"
                 value={peopleCount}
                 onChangeText={setPeopleCount}
                 placeholder="e.g. 5"
                 keyboardType="number-pad"
+                containerStyle={{ marginTop: 14 }}
               />
 
               <T size={13} sub style={{ marginTop: 12, marginBottom: 9 }}>Refunded?</T>

@@ -1,3 +1,4 @@
+import { listAccounts } from './accountsDb';
 import { listExpenses, type ExpenseRow } from './db';
 import { addDays, monthRange, todayStr } from './dates';
 import { byCategory, sum } from './stats';
@@ -9,7 +10,8 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
  * All sums are calculated here so the model never has to do arithmetic.
  */
 export async function buildChatContext(currency: string, budget: number) {
-  const all = await listExpenses();
+  const [all, accounts] = await Promise.all([listExpenses(), listAccounts()]);
+  const bankName = new Map(accounts.map((a) => [a.id, a.name]));
   const today = todayStr();
   const now = new Date();
 
@@ -37,12 +39,26 @@ export async function buildChatContext(currency: string, budget: number) {
     return all.filter((r) => r.date >= from && r.date <= today);
   };
 
+  // Every field worth asking about — not just the handful the model used to
+  // see — so "any refunded?" or "for whom" or "which bank" can be answered
+  // straight from this snapshot instead of coming back empty.
   const line = (r: ExpenseRow) => ({
     date: r.date,
     amount: r.amount,
     category: r.cat_name,
-    note: r.note,
+    subCategory: r.sub_category || null,
+    note: r.note || null,
+    details: r.notes || null,
     method: r.method,
+    bank: r.account_id ? bankName.get(r.account_id) ?? null : null,
+    forUser: r.user_tag || null,
+    peopleCount: r.people_count ?? null,
+    itemCount: r.item_count > 1 ? r.item_count : null,
+    refunded: r.cancelled === 1,
+    refundAmount: r.refund_amount ?? null,
+    refundPeopleCount: r.refund_people_count ?? null,
+    refundBank: r.refund_account_id ? bankName.get(r.refund_account_id) ?? null : null,
+    netAmount: r2(r.amount - (r.refund_amount ?? 0)),
   });
 
   return {

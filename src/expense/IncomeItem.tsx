@@ -13,7 +13,9 @@ export function IncomeItem({ e, showDate = true, onDeleted }: { e: IncomeRow; sh
   const router = useRouter();
   const [confirming, setConfirming] = useState(false);
   const meta = [
-    e.cat_name.toUpperCase(),
+    // Already the title when there's no note to show instead — repeating it
+    // here just duplicated the category name on screen.
+    e.note ? e.cat_name.toUpperCase() : null,
     e.method.toUpperCase(),
     showDate ? prettyDate(e.date).toUpperCase() : null,
   ].filter(Boolean).join('  ·  ');

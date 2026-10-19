@@ -372,7 +372,7 @@ export default function Insights() {
                         {row.note || row.cat_name}
                       </Text>
                       <Text style={[type.stamp, styles.quiet]}>
-                        {row.cat_name.toUpperCase()} · {row.date}
+                        {row.note ? `${row.cat_name.toUpperCase()} · ${row.date}` : row.date}
                       </Text>
                     </View>
                     <Text style={[type.figure, styles.lineFigure]}>

@@ -194,7 +194,7 @@ export default function Analytics() {
               <Row key={e.id} style={{ paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: c.line }}>
                 <View style={{ flex: 1 }}>
                   <T size={15} weight="600" numberOfLines={1}>{e.note || e.cat_name}</T>
-                  <T size={12.5} sub style={{ marginTop: 2 }}>{e.cat_name} · {e.date}</T>
+                  <T size={12.5} sub style={{ marginTop: 2 }}>{e.note ? `${e.cat_name} · ${e.date}` : e.date}</T>
                 </View>
                 <Money value={e.amount} size={15} weight="600" />
               </Row>

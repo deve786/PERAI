@@ -12,7 +12,10 @@ export function ExpenseItem({ e, showDate = true, onDeleted, trip }: { e: Expens
   const router = useRouter();
   const [confirming, setConfirming] = useState(false);
   const meta = [
-    e.cat_name.toUpperCase(),
+    // Already the title when there's no note to show instead — repeating it
+    // here just duplicated the category name on screen.
+    e.note ? e.cat_name.toUpperCase() : null,
+    e.sub_category ? e.sub_category.toUpperCase() : null,
     e.user_tag ? `@${e.user_tag.toUpperCase()}` : null,
     e.method.toUpperCase(),
     showDate ? prettyDate(e.date).toUpperCase() : null,
