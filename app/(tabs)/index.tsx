@@ -27,7 +27,7 @@ import { usePendingNotes } from '@/usePendingNotes';
 import { useTitleChecks } from '@/useTitleChecks';
 import { notificationsAllowed, syncReminders } from '@/reminders';
 import { reminderTime } from '@/reminderTime';
-import { isStruck } from '@/strike';
+import { isStruck, sinkStruck } from '@/strike';
 import { useTheme } from '@/ThemeContext';
 import { FONTS, SPACE, type Colors } from '@/theme';
 import type { Memory, MemoryDraft, MemoryType } from '@/types';
@@ -173,10 +173,13 @@ export default function CaptureScreen() {
 
   const recent = useMemo(() => {
     const ahead = new Set(upcoming.map((m) => m.id));
-    return [...memories]
+    const latest = [...memories]
       .filter((m) => !justSaved.has(m.id) && !ahead.has(m.id))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .slice(0, 4);
+    // Still-open entries lead; anything struck or completed sinks below them,
+    // newest first within each group.
+    return sinkStruck(latest);
   }, [memories, justSaved, upcoming]);
 
   async function undo() {
