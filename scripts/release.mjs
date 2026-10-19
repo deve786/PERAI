@@ -1,15 +1,17 @@
 /**
  * Ship a release, numbering it as part of the release.
  *
- *   npm run update -- "fixed x"                 1.2.0 (6)  ->  1.2.0 (7)   OTA fix
- *   npm run update -- --feature "added y"       1.2.0 (7)  ->  1.3.0 (8)   OTA feature
+ *   npm run update -- "fixed x"                 1.2.0 (6)  ->  1.2.1 (7)   OTA fix
+ *   npm run update -- --feature "added y"       1.2.1 (7)  ->  1.3.0 (8)   OTA feature
  *   npm run build:android -- "what changed"     1.3.0 (8)  ->  1.4.0 (9)   new APK
  *
- * The build number goes up on every release and never resets. The version
- * goes up only for a new build or a feature.
+ * The build number goes up on every release and never resets. The version now
+ * goes up on every release too, not just a feature or a new build: the last
+ * number for a plain fix, the middle number (resetting the last back to 0)
+ * for a feature or a new build.
  *
  * Numbers live in src/release.json, which is not part of the runtime
- * fingerprint, so a feature update can raise the version and still reach
+ * fingerprint, so an OTA update can raise the version and still reach
  * installed phones. A new build also writes the version into app.json, where
  * Android shows it under App info (that changes the fingerprint, which is fine
  * for a build — it is a new runtime anyway).
@@ -43,6 +45,10 @@ const nextMinor = (v) => {
   const [major, minor] = parse(v);
   return `${major}.${minor + 1}.0`;
 };
+const nextPatch = (v) => {
+  const [major, minor, patch] = parse(v);
+  return `${major}.${minor}.${patch + 1}`;
+};
 
 let args;
 
@@ -54,7 +60,7 @@ if (kind === 'build') {
   app.expo.version = release.version;
   args = ['eas-cli', 'build', '--platform', 'android', '--profile', 'preview'];
 } else if (kind === 'update') {
-  if (feature) release.version = nextMinor(release.version);
+  release.version = feature ? nextMinor(release.version) : nextPatch(release.version);
   release.build += 1;
   args = ['eas-cli', 'update', '--channel', 'preview', '--environment', 'preview', '--platform', 'android'];
 } else {
