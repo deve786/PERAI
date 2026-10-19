@@ -8,8 +8,15 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     version: '1.18.0',
-    date: '2026-10-16',
+    date: '2026-10-19',
     highlights: [
+      'Fixed: a finished or struck-through entry showing in Recently Added or Coming Up on Home now shows struck through there too, instead of looking like it\'s still open',
+      'If the person an expense was tagged "for" pays you back, say so — same amount or a different one — and pick which bank it landed in; it\'s recorded and that bank\'s balance goes up to match',
+      'Ask can now answer anything about an expense, not just the basics — who it was for, which bank, and whether (and how much) was refunded or paid back',
+      'Fixed: History, Analytics and Insights no longer show the category name twice on an entry with no title',
+      'Added a Ticket type field too — Flight, Ship, Cinema, Train, Bus, Event, or one you add yourself',
+      'Added a Ticket category: track cancellations and refunds, splitting the refund by however many of the people on it got their money back',
+      'Paying by UPI now asks which bank it came from, and that bank\'s balance drops to match — the same for income (credits the bank) and for paying back or being repaid on a borrow/loan',
       'A group\'s box now takes instructions as well as tasks: "push buy sunscreen to friday", "make the cab high priority", "gym kazhinju" — shown as before → after and applied only once you confirm',
       'An instruction typed in a group can only ever reach that group\'s own entries',
       'What you just added is shown back as a card — like Record does — with UNDO, and EDIT when it is a single entry',

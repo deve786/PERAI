@@ -27,6 +27,7 @@ import { usePendingNotes } from '@/usePendingNotes';
 import { useTitleChecks } from '@/useTitleChecks';
 import { notificationsAllowed, syncReminders } from '@/reminders';
 import { reminderTime } from '@/reminderTime';
+import { isStruck } from '@/strike';
 import { useTheme } from '@/ThemeContext';
 import { FONTS, SPACE, type Colors } from '@/theme';
 import type { Memory, MemoryDraft, MemoryType } from '@/types';
@@ -481,7 +482,7 @@ export default function CaptureScreen() {
         {upcoming.length > 0 ? (
           <Section label="COMING UP" tone="ahead">
             {upcoming.map((memory) => (
-              <MemoryRow key={memory.id} memory={memory} gutter="date" showAdded={false} />
+              <MemoryRow key={memory.id} memory={memory} gutter="date" showAdded={false} struck={isStruck(memory)} />
             ))}
           </Section>
         ) : null}
@@ -492,7 +493,7 @@ export default function CaptureScreen() {
             action={{ label: 'ALL', onPress: () => router.push('/timeline') }}
           >
             {recent.map((memory) => (
-              <MemoryRow key={memory.id} memory={memory} gutter="date" />
+              <MemoryRow key={memory.id} memory={memory} gutter="date" struck={isStruck(memory)} />
             ))}
           </Section>
         ) : null}
