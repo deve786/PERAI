@@ -15,6 +15,8 @@ export interface LinkableExpense {
   cat_color?: string;
   /** Absent means the app's own currency, which is the usual case. */
   currency?: string;
+  /** Whatever's been refunded from this expense (e.g. a cancelled Ticket) — counted out of the total, not still spent. */
+  refund_amount?: number | null;
 }
 
 export interface DateSpan {
@@ -77,6 +79,9 @@ export interface CurrencyTotal {
  *
  * @param defaultCurrency what a row with no currency of its own is in
  */
+/** An expense's amount after subtracting whatever's been refunded from it. */
+const net = (expense: LinkableExpense) => expense.amount - (expense.refund_amount ?? 0);
+
 export function totalsByCurrency(
   expenses: LinkableExpense[],
   defaultCurrency: string
@@ -85,7 +90,7 @@ export function totalsByCurrency(
   for (const expense of expenses) {
     const currency = expense.currency || defaultCurrency;
     const entry = totals.get(currency) ?? { currency, total: 0, count: 0 };
-    entry.total += expense.amount;
+    entry.total += net(expense);
     entry.count += 1;
     totals.set(currency, entry);
   }
@@ -109,7 +114,7 @@ export function categoryBreakdown(expenses: LinkableExpense[]): CategorySlice[] 
       total: 0,
       count: 0,
     };
-    slice.total += expense.amount;
+    slice.total += net(expense);
     slice.count += 1;
     slices.set(expense.cat_name, slice);
   }

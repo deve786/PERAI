@@ -27,6 +27,7 @@ export async function answerTripSpend(memory: Memory): Promise<AskResult | null>
       amount: row.amount,
       cat_name: row.cat_name,
       cat_color: row.cat_color,
+      refund_amount: row.refund_amount,
     }));
 
     const totals = totalsByCurrency(linkable, symbol || '₹');

@@ -27,6 +27,7 @@ const asLinkable = (row: ExpenseRow): LinkableExpense => ({
   amount: row.amount,
   cat_name: row.cat_name,
   cat_color: row.cat_color,
+  refund_amount: row.refund_amount,
 });
 
 /**

@@ -42,6 +42,7 @@ import {
   crossedThreshold,
 } from '../src/expense/budgets';
 import { monthRange } from '../src/expense/dates';
+import { sum } from '../src/expense/stats';
 import {
   categoryBreakdown,
   isValidSpan,
@@ -1106,6 +1107,28 @@ section('a trip and the spending during it');
   const breakdown = categoryBreakdown(suggested);
   check('categories are totalled, biggest first', breakdown[0].name === 'Travel' && breakdown[0].total === 1500, breakdown);
   check('and counted', breakdown[0].count === 2);
+
+  const refundedRows: LinkableExpense[] = [
+    { id: 'f', date: '2026-10-03', amount: 1000, cat_name: 'Ticket', refund_amount: 400 },
+    { id: 'g', date: '2026-10-04', amount: 500, cat_name: 'Ticket' },
+  ];
+  const refundedTotals = totalsByCurrency(refundedRows, '₹');
+  check(
+    'a refund is counted out of the total, not still spent',
+    refundedTotals[0].total === 1100,
+    refundedTotals
+  );
+  const refundedBreakdown = categoryBreakdown(refundedRows);
+  check('and out of its category too', refundedBreakdown[0].total === 1100, refundedBreakdown);
+
+  check(
+    'sum() nets a refund out of the total too',
+    sum([{ amount: 1000, refund_amount: 400 }, { amount: 500 }]) === 1100
+  );
+  check(
+    'a row with no refund_amount at all (e.g. income) is untouched',
+    sum([{ amount: 500 }, { amount: 300 }]) === 800
+  );
 
   check('a link id is derived from the pair', linkId('mem1', 'exp1') === 'mem1:exp1');
   check('so the same pair is always the same row', linkId('mem1', 'exp1') === linkId('mem1', 'exp1'));
