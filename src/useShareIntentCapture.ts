@@ -50,10 +50,10 @@ export function useShareIntentCapture() {
     // ("Shared via Google Pay") alongside the payment card itself, which
     // would be the wrong thing to read literally.
     const work = image ? handleImage(image) : handleText(text as string);
-    work
-      .then((scanned) => finish(scanned, router))
-      .catch(fail)
-      .finally(() => setShareProcessing(false));
+    work.then(
+      (scanned) => finish(scanned, router),
+      (err) => fail(err)
+    );
   }, [hasShareIntent, shareIntent.text, shareIntent.files, resetShareIntent, router]);
 }
 
@@ -93,8 +93,15 @@ async function handleText(text: string): Promise<ScannedPayment> {
   );
 }
 
+// A Modal's dismissal is a native animation, not an instant state flip —
+// this gives Android a beat to actually close the loading card's window
+// before the next screen (or dialog) tries to open on top of it.
+const settle = () => new Promise((resolve) => setTimeout(resolve, 80));
+
 async function finish(scanned: ScannedPayment, router: ReturnType<typeof useRouter>) {
   if (!(scanned.amount > 0)) {
+    setShareProcessing(false);
+    await settle();
     showDialog({
       title: 'Could not read that payment',
       message: "The share didn't have a clear amount in it — add it by hand instead.",
@@ -108,10 +115,18 @@ async function finish(scanned: ScannedPayment, router: ReturnType<typeof useRout
     logFail('Added the expense, but could not also file it to Record', describeError(err));
   });
   logOk('Added an expense from a share', `${scanned.payee ?? 'Payment'} · ${scanned.amount}`);
+  // Closed before navigating, with a beat to actually finish closing: the
+  // loading card is still up through the (fast) writes above it, so there's
+  // nothing blank in between, only a clean handoff right at the transition.
+  setShareProcessing(false);
+  await settle();
   router.push({ pathname: '/expense/expense', params: { id: String(id) } });
 }
 
 function fail(err: unknown) {
-  showDialog({ title: 'Could not read that payment', message: describeError(err) });
+  setShareProcessing(false);
+  void settle().then(() => {
+    showDialog({ title: 'Could not read that payment', message: describeError(err) });
+  });
   logFail('Could not file a shared payment', describeError(err));
 }
