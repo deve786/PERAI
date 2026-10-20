@@ -8,6 +8,7 @@ import {
   IBMPlexSans_600SemiBold,
   useFonts,
 } from '@expo-google-fonts/ibm-plex-sans';
+import { ShareIntentProvider } from 'expo-share-intent';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
@@ -24,6 +25,7 @@ import { ThemeProvider as ExpenseThemeProvider } from '@/expense/theme';
 import { COLORS, SPACE, TYPE } from '@/theme';
 import { useAutoUpdate } from '@/useAutoUpdate';
 import { useNotificationActions } from '@/useNotificationActions';
+import { useShareIntentCapture } from '@/useShareIntentCapture';
 import { startWidgetSync } from '@/widget/widgetSync';
 import { useSync as useExpenseSync } from '@/expense/sync/useSync';
 
@@ -68,8 +70,9 @@ export default function RootLayout() {
   // The gate screens below run before the database (and so the saved theme
   // preference) can be trusted, and only for well under a second — they use
   // the static light tokens rather than waiting on ThemeProvider.
+  let content;
   if (dbError) {
-    return (
+    content = (
       <View style={styles.gate}>
         <Text style={[TYPE.label, { color: COLORS.alert }]}>NO RECORD</Text>
         <Text style={[TYPE.body, styles.gateText]}>
@@ -77,25 +80,32 @@ export default function RootLayout() {
         </Text>
       </View>
     );
+  } else if (!dbReady || !fontsReady) {
+    // Hold the blank ground rather than flashing a spinner: both the fonts
+    // and the database resolve in well under a second.
+    content = <View style={styles.gate} />;
+  } else {
+    content = (
+      <ThemeProvider>
+        <ExpenseThemeProvider>
+          <ThemedApp />
+        </ExpenseThemeProvider>
+      </ThemeProvider>
+    );
   }
 
-  // Hold the blank ground rather than flashing a spinner: both the fonts and
-  // the database resolve in well under a second.
-  if (!dbReady || !fontsReady) return <View style={styles.gate} />;
-
-  return (
-    <ThemeProvider>
-      <ExpenseThemeProvider>
-        <ThemedApp />
-      </ExpenseThemeProvider>
-    </ThemeProvider>
-  );
+  // Mounted this high, and above every gate, so a share that arrives before
+  // the database opens is still held by the native side and not missed —
+  // see useShareIntentCapture, which does the actual filing once ThemedApp
+  // (and so the database) is up.
+  return <ShareIntentProvider>{content}</ShareIntentProvider>;
 }
 
 /** Split out so it can call `useTheme()` — only valid inside ThemeProvider. */
 function ThemedApp() {
   const { colors, scheme } = useTheme();
   useExpenseSync();
+  useShareIntentCapture();
 
   return (
     <>
