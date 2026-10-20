@@ -17,6 +17,14 @@ export interface ScannedReceipt {
   items: ScannedItem[];
 }
 
+export interface ScannedPayment {
+  amount: number;
+  /** Who it was paid to, exactly as shown. Null when no name is visible. */
+  payee: string | null;
+  /** YYYY-MM-DD, or null when no date is visible. */
+  date: string | null;
+}
+
 const OCR_MODEL = process.env.EXPO_PUBLIC_GEMINI_OCR_MODEL || 'gemini-3.5-flash-lite';
 
 const OCR_SYSTEM_PROMPT = `You are an expert receipt and invoice analyzer.
@@ -47,6 +55,22 @@ Return ONLY a raw JSON object with this exact structure:
 }
 No markdown backticks, no prose.`;
 
+const PAYMENT_OCR_SYSTEM_PROMPT = `You read screenshots of a UPI payment confirmation, shared from an app like Google Pay, PhonePe or Paytm.
+Extract only what is visible on the screen. Never invent an amount or a name that isn't shown.`;
+
+const PAYMENT_OCR_USER_PROMPT = `Extract the following from this payment screenshot:
+1. amount: the amount paid or sent, as a number (no currency symbol).
+2. payee: who the money was paid to, exactly as shown (a person or business name), or null if no name is visible.
+3. date: the transaction date in YYYY-MM-DD format, or null if not visible.
+
+Return ONLY a raw JSON object with this exact structure:
+{
+  "amount": 500,
+  "payee": "Ramesh Kumar",
+  "date": "2026-10-20"
+}
+No markdown backticks, no prose. If this does not look like a payment confirmation at all, return {"amount": 0, "payee": null, "date": null}.`;
+
 function extractJson(raw: string): unknown {
   const text = raw.trim();
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
@@ -63,18 +87,22 @@ function extractJson(raw: string): unknown {
 const VALID_CATEGORIES = ['Food', 'Transport', 'Shopping', 'Bills', 'Rent', 'Health', 'Entertainment', 'Other'];
 
 /**
- * Sends a base64 encoded image of a receipt or invoice to Gemini to perform OCR.
- * Returns structured merchant, amount, category, date, and line items.
+ * Sends one image to Gemini with a system/user prompt pair and returns its raw
+ * text reply. Shared by every OCR-style call here — only the prompt and the
+ * shape expected back differ between a receipt and a payment screenshot.
  */
-export async function scanReceiptWithAI(imageBase64: string, mimeType = 'image/jpeg'): Promise<ScannedReceipt> {
+async function callVisionModel(
+  systemPrompt: string,
+  userPrompt: string,
+  imageBase64: string,
+  mimeType: string
+): Promise<string> {
   if (!hasApiKey()) {
     throw new MissingApiKeyError();
   }
 
   const client = new GoogleGenAI({ apiKey: getApiKey() });
   const cleanBase64 = imageBase64.replace(/^data:image\/[a-z]+;base64,/, '');
-
-  let rawOutput = '';
 
   try {
     // Try models.generateContent with inlineData first
@@ -84,7 +112,7 @@ export async function scanReceiptWithAI(imageBase64: string, mimeType = 'image/j
         {
           role: 'user',
           parts: [
-            { text: `${OCR_SYSTEM_PROMPT}\n\n${OCR_USER_PROMPT}` },
+            { text: `${systemPrompt}\n\n${userPrompt}` },
             {
               inlineData: {
                 mimeType,
@@ -96,24 +124,32 @@ export async function scanReceiptWithAI(imageBase64: string, mimeType = 'image/j
       ],
     });
 
-    rawOutput = response.text || '';
+    return response.text || '';
   } catch (primaryErr) {
     // Fallback to interactions.create with image input
     try {
       const interaction = await client.interactions.create({
         model: OCR_MODEL,
-        system_instruction: OCR_SYSTEM_PROMPT,
+        system_instruction: systemPrompt,
         input: [
-          { type: 'text', text: OCR_USER_PROMPT },
+          { type: 'text', text: userPrompt },
           { type: 'image', data: cleanBase64, mime_type: mimeType },
         ],
       } as Parameters<GoogleGenAI['interactions']['create']>[0]);
 
-      rawOutput = (interaction as { output_text?: string })?.output_text || '';
+      return (interaction as { output_text?: string })?.output_text || '';
     } catch {
       throw primaryErr;
     }
   }
+}
+
+/**
+ * Sends a base64 encoded image of a receipt or invoice to Gemini to perform OCR.
+ * Returns structured merchant, amount, category, date, and line items.
+ */
+export async function scanReceiptWithAI(imageBase64: string, mimeType = 'image/jpeg'): Promise<ScannedReceipt> {
+  const rawOutput = await callVisionModel(OCR_SYSTEM_PROMPT, OCR_USER_PROMPT, imageBase64, mimeType);
 
   if (!rawOutput) {
     throw new Error('Gemini returned an empty response for this receipt image.');
@@ -172,4 +208,40 @@ export async function scanReceiptWithAI(imageBase64: string, mimeType = 'image/j
     category,
     items,
   };
+}
+
+/**
+ * Sends a base64 encoded screenshot of a UPI payment confirmation to Gemini.
+ * Unlike a shop receipt this has no line items — just an amount, who it went
+ * to, and when — which is what GPay's own "Share" button sends instead of
+ * plain text, so this is the path a shared payment image goes through.
+ */
+export async function scanPaymentWithAI(imageBase64: string, mimeType = 'image/jpeg'): Promise<ScannedPayment> {
+  const rawOutput = await callVisionModel(PAYMENT_OCR_SYSTEM_PROMPT, PAYMENT_OCR_USER_PROMPT, imageBase64, mimeType);
+
+  if (!rawOutput) {
+    throw new Error('Gemini returned an empty response for this payment image.');
+  }
+
+  const parsed = extractJson(rawOutput) as Record<string, unknown>;
+
+  const amount = typeof parsed.amount === 'number' && Number.isFinite(parsed.amount)
+    ? parsed.amount
+    : parseFloat(String(parsed.amount ?? '0')) || 0;
+
+  const payee = typeof parsed.payee === 'string' && parsed.payee.trim() ? parsed.payee.trim() : null;
+
+  const date = typeof parsed.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(parsed.date)
+    ? parsed.date
+    : null;
+
+  addAiLog({
+    type: 'categorize',
+    title: `Payment OCR: ${payee ?? 'unknown payee'} (${amount})`,
+    status: amount > 0 ? 'success' : 'error',
+    result: amount > 0 ? 'parsed' : 'no payment detected in image',
+    model: OCR_MODEL,
+  });
+
+  return { amount: Math.round(amount * 100) / 100, payee, date };
 }
