@@ -108,18 +108,8 @@
         }
       ],
       "@react-native-community/datetimepicker",
-      [
-        "expo-sharing",
-        {
-          "android": {
-            "enabled": true,
-            "singleShareMimeTypes": [
-              "text/*",
-              "image/*"
-            ]
-          }
-        }
-      ],
+      "expo-sharing",
+      "./plugins/withShareTargets.js",
       [
         "expo-image-picker",
         {
