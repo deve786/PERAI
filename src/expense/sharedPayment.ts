@@ -18,8 +18,20 @@ const PERAI_CATEGORY: Record<string, Category> = {
   Other: 'Other',
 };
 
+/** What was just added, for showing it back. */
+export interface SharedExpense {
+  id: string;
+  title: string;
+  amount: number;
+  date: string; // YYYY-MM-DD
+  category: string;
+  /** The saved bank account it was linked to, if one matched. */
+  bank: string | null;
+  notes: string;
+}
+
 /** The bank account a scanned "paid using X Bank" line most likely refers to — a loose, forgiving match either way, since OCR wording rarely matches an account's saved name exactly. */
-async function matchBankAccount(bankLine: string | null): Promise<string | null> {
+async function matchBankAccount(bankLine: string | null): Promise<{ id: string; name: string } | null> {
   if (!bankLine) return null;
   const needle = bankLine.trim().toLowerCase();
   if (!needle) return null;
@@ -31,7 +43,7 @@ async function matchBankAccount(bankLine: string | null): Promise<string | null>
     return (name && (needle.includes(name) || name.includes(needle)))
       || (institution && (needle.includes(institution) || institution.includes(needle)));
   });
-  return match?.id ?? null;
+  return match ? { id: match.id, name: match.name } : null;
 }
 
 /** The ISO timestamp a scanned payment's own date becomes — noon on that day when a date was read, right now otherwise. */
@@ -46,21 +58,24 @@ function eventDateOf(payment: ScannedPayment): string {
  * Turns a payment read off a shared GPay screenshot (or text) into an
  * Expense.
  */
-export async function recordSharedPayment(payment: ScannedPayment): Promise<string> {
+export async function recordSharedPayment(payment: ScannedPayment): Promise<SharedExpense> {
   const title = payment.payee ?? 'Payment';
-  const categoryId = await findOrCreateCategory(mapToExpenseCategory(title));
-  const accountId = await matchBankAccount(payment.bank);
+  const category = mapToExpenseCategory(title);
+  const categoryId = await findOrCreateCategory(category);
+  const account = await matchBankAccount(payment.bank);
   const date = payment.date && /^\d{4}-\d{2}-\d{2}$/.test(payment.date) ? payment.date : todayStr();
+  const notes = `Shared from GPay: ${title}`;
 
-  return saveExpense({
+  const id = await saveExpense({
     amount: payment.amount,
     category_id: categoryId,
     date,
     note: title,
-    notes: `Shared from GPay: ${title}`,
+    notes,
     method: 'UPI',
-    account_id: accountId,
+    account_id: account?.id ?? null,
   });
+  return { id, title, amount: payment.amount, date, category, bank: account?.name ?? null, notes };
 }
 
 /**

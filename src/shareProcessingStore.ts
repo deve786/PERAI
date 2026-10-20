@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { ShareIntentModule } from 'expo-share-intent';
+import type { SharedExpense } from './expense/sharedPayment';
 
 /**
  * Whether a share (GPay's payment image, or shared text) is currently being
@@ -17,6 +18,12 @@ import { ShareIntentModule } from 'expo-share-intent';
 interface ShareProcessingState {
   active: boolean;
   label: string;
+  /**
+   * Set once the share has been saved: the same card then shows what was
+   * added, rather than switching screens mid hand-off — opening the expense
+   * screen right as a share lands left the app on a blank window.
+   */
+  added?: SharedExpense;
 }
 
 /** How long after a share arrives nothing else (an update reload) may restart the app under it. */
@@ -40,6 +47,11 @@ function emit() {
 export function setShareProcessing(active: boolean, label = ''): void {
   if (active) lastShareAt = Date.now();
   state = { active, label };
+  emit();
+}
+
+export function showSharedExpense(added: SharedExpense): void {
+  state = { active: true, label: '', added };
   emit();
 }
 

@@ -1,13 +1,12 @@
 import { useEffect } from 'react';
 import { File } from 'expo-file-system';
-import { useRouter } from 'expo-router';
 import { useShareIntentContext, type ShareIntentFile } from 'expo-share-intent';
 import { describeError } from './ai/client';
 import { showDialog } from './dialogStore';
 import { extractPaymentFromText, scanPaymentWithAI, type ScannedPayment } from './expense/ai/ocr';
 import { recordSharedPayment, recordSharedPaymentMemory } from './expense/sharedPayment';
 import { logFail, logOk } from './log';
-import { setShareProcessing } from './shareProcessingStore';
+import { setShareProcessing, showSharedExpense } from './shareProcessingStore';
 
 /** However long reading a payment screenshot genuinely takes, it should never look stuck past this. */
 const READ_TIMEOUT_MS = 25000;
@@ -34,7 +33,6 @@ const READ_TIMEOUT_MS = 25000;
  */
 export function useShareIntentCapture() {
   const { hasShareIntent, shareIntent, resetShareIntent } = useShareIntentContext();
-  const router = useRouter();
 
   useEffect(() => {
     if (!hasShareIntent) return;
@@ -50,11 +48,8 @@ export function useShareIntentCapture() {
     // ("Shared via Google Pay") alongside the payment card itself, which
     // would be the wrong thing to read literally.
     const work = image ? handleImage(image) : handleText(text as string);
-    work.then(
-      (scanned) => finish(scanned, router),
-      (err) => fail(err)
-    );
-  }, [hasShareIntent, shareIntent.text, shareIntent.files, resetShareIntent, router]);
+    work.then(finish).catch(fail);
+  }, [hasShareIntent, shareIntent.text, shareIntent.files, resetShareIntent]);
 }
 
 /** Rejects with `message` if `promise` hasn't settled within `ms` — a hung network call should never look like a frozen app. */
@@ -98,7 +93,7 @@ async function handleText(text: string): Promise<ScannedPayment> {
 // before the next screen (or dialog) tries to open on top of it.
 const settle = () => new Promise((resolve) => setTimeout(resolve, 80));
 
-async function finish(scanned: ScannedPayment, router: ReturnType<typeof useRouter>) {
+async function finish(scanned: ScannedPayment) {
   if (!(scanned.amount > 0)) {
     setShareProcessing(false);
     await settle();
@@ -108,19 +103,16 @@ async function finish(scanned: ScannedPayment, router: ReturnType<typeof useRout
     });
     return;
   }
-  const id = await recordSharedPayment(scanned);
+  const added = await recordSharedPayment(scanned);
   await recordSharedPaymentMemory(scanned).catch((err) => {
     // The expense already landed — a failed Record entry is worth knowing
-    // about but shouldn't undo it or stop the view from opening.
+    // about but shouldn't undo it or stop the card from showing it.
     logFail('Added the expense, but could not also file it to Record', describeError(err));
   });
-  logOk('Added an expense from a share', `${scanned.payee ?? 'Payment'} · ${scanned.amount}`);
-  // Closed before navigating, with a beat to actually finish closing: the
-  // loading card is still up through the (fast) writes above it, so there's
-  // nothing blank in between, only a clean handoff right at the transition.
-  setShareProcessing(false);
-  await settle();
-  router.push({ pathname: '/expense/expense', params: { id: String(id) } });
+  logOk('Added an expense from a share', `${added.title} · ${added.amount}`);
+  // The loading card turns into the added expense in place — no screen
+  // switch while the share hand-off is still settling.
+  showSharedExpense(added);
 }
 
 function fail(err: unknown) {
