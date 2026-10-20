@@ -8,6 +8,7 @@ import {
   IBMPlexSans_600SemiBold,
   useFonts,
 } from '@expo-google-fonts/ibm-plex-sans';
+import { ShareIntentProvider } from 'expo-share-intent';
 import { Stack, type ErrorBoundaryProps } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
@@ -19,11 +20,13 @@ import { startOverdueSweep } from '@/overdue';
 import { startReminderSync } from '@/reminders';
 import { applySavedVoiceLanguage } from '@/settings';
 import { DialogHost } from '@/components/DialogHost';
+import { ShareProcessingOverlay } from '@/components/ShareProcessingOverlay';
 import { ThemeProvider, useTheme } from '@/ThemeContext';
 import { ThemeProvider as ExpenseThemeProvider } from '@/expense/theme';
 import { COLORS, SPACE, TYPE } from '@/theme';
 import { useAutoUpdate } from '@/useAutoUpdate';
 import { useNotificationActions } from '@/useNotificationActions';
+import { useShareIntentCapture } from '@/useShareIntentCapture';
 import { startWidgetSync } from '@/widget/widgetSync';
 import { useSync as useExpenseSync } from '@/expense/sync/useSync';
 
@@ -32,13 +35,6 @@ import { useSync as useExpenseSync } from '@/expense/sync/useSync';
  * and leaves nothing but Android's bare window behind — a blank screen with
  * no clue why. Uses the static tokens, since the theme may be what failed.
  */
-/**
- * A share from another app arrives as a link straight to the shared-payment
- * screen; this keeps Home underneath it even when the share is what started
- * the app, so going back from the expense lands on Home, not out of the app.
- */
-export const unstable_settings = { initialRouteName: '(tabs)' };
-
 export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
   return (
     <View style={styles.gate}>
@@ -116,13 +112,18 @@ export default function RootLayout() {
     );
   }
 
-  return content;
+  // Mounted this high, and above every gate, so a share that arrives before
+  // the database opens is still held by the native side and not missed —
+  // see useShareIntentCapture, which does the actual filing once ThemedApp
+  // (and so the database) is up.
+  return <ShareIntentProvider>{content}</ShareIntentProvider>;
 }
 
 /** Split out so it can call `useTheme()` — only valid inside ThemeProvider. */
 function ThemedApp() {
   const { colors, scheme } = useTheme();
   useExpenseSync();
+  useShareIntentCapture();
 
   return (
     <>
@@ -151,12 +152,12 @@ function ThemedApp() {
         <Stack.Screen name="expense/categories" options={{ presentation: 'modal' }} />
         <Stack.Screen name="expense/account" options={{ presentation: 'modal' }} />
         <Stack.Screen name="expense/whats-new" options={{ presentation: 'modal' }} />
-        <Stack.Screen name="expo-sharing" />
       </Stack>
       <UpdateBanner />
       {/* The app's own popups, so a question about your record looks like the
           record rather than like Android. */}
       <DialogHost />
+      <ShareProcessingOverlay />
     </>
   );
 }

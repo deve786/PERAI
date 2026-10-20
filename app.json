@@ -2,7 +2,7 @@
   "expo": {
     "name": "PERAI",
     "slug": "PERAI",
-    "version": "1.22.0",
+    "version": "1.20.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "perai",
@@ -109,12 +109,21 @@
       ],
       "@react-native-community/datetimepicker",
       "expo-sharing",
-      "./plugins/withShareTargets.js",
       [
         "expo-image-picker",
         {
           "photosPermission": "Allow PERAI to access your photos to scan receipts and bills.",
           "cameraPermission": "Allow PERAI to use your camera to scan receipts and bills."
+        }
+      ],
+      [
+        "expo-share-intent",
+        {
+          "androidIntentFilters": [
+            "text/*",
+            "image/*"
+          ],
+          "disableIOS": true
         }
       ]
     ],
