@@ -9,10 +9,10 @@ import {
   useFonts,
 } from '@expo-google-fonts/ibm-plex-sans';
 import { ShareIntentProvider } from 'expo-share-intent';
-import { Stack } from 'expo-router';
+import { Stack, type ErrorBoundaryProps } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { UpdateBanner } from '@/components/UpdateBanner';
 import { initDatabase } from '@/db/client';
 import { getSetting } from '@/db/queries';
@@ -29,6 +29,23 @@ import { useNotificationActions } from '@/useNotificationActions';
 import { useShareIntentCapture } from '@/useShareIntentCapture';
 import { startWidgetSync } from '@/widget/widgetSync';
 import { useSync as useExpenseSync } from '@/expense/sync/useSync';
+
+/**
+ * Without this, an error while rendering any screen unmounts the whole app
+ * and leaves nothing but Android's bare window behind — a blank screen with
+ * no clue why. Uses the static tokens, since the theme may be what failed.
+ */
+export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
+  return (
+    <View style={styles.gate}>
+      <Text style={[TYPE.label, { color: COLORS.alert }]}>SOMETHING BROKE</Text>
+      <Text style={[TYPE.body, styles.gateText]}>{error.message}</Text>
+      <Pressable onPress={() => void retry()} hitSlop={12}>
+        <Text style={TYPE.label}>TRY AGAIN</Text>
+      </Pressable>
+    </View>
+  );
+}
 
 export default function RootLayout() {
   const [dbReady, setDbReady] = useState(false);

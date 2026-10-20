@@ -1,6 +1,7 @@
 import * as Updates from 'expo-updates';
 import { useEffect, useRef } from 'react';
 import { AppState } from 'react-native';
+import { isShareBusy } from './shareProcessingStore';
 
 /** Away at least this long before a pending update may reload the app. */
 const SAFE_TO_RELOAD_AFTER_MS = 30_000;
@@ -43,8 +44,16 @@ export function useAutoUpdate() {
       void (async () => {
         try {
           if (pending.current && away >= SAFE_TO_RELOAD_AFTER_MS) {
-            await Updates.reloadAsync();
-            return;
+            // Arriving via Share (GPay handing over a payment) is also a
+            // return after time away, but with work in flight: reloading
+            // then restarted the app under it and left a blank screen. Give
+            // a share a beat to announce itself and never reload under one —
+            // the update just waits for the next ordinary return.
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+            if (!isShareBusy()) {
+              await Updates.reloadAsync();
+              return;
+            }
           }
           const check = await Updates.checkForUpdateAsync();
           if (check.isAvailable) await Updates.fetchUpdateAsync();

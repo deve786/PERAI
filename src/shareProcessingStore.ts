@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react';
+import { ShareIntentModule } from 'expo-share-intent';
 
 /**
  * Whether a share (GPay's payment image, or shared text) is currently being
@@ -18,16 +19,33 @@ interface ShareProcessingState {
   label: string;
 }
 
+/** How long after a share arrives nothing else (an update reload) may restart the app under it. */
+const SHARE_QUIET_MS = 60_000;
+
 let state: ShareProcessingState = { active: false, label: '' };
+let lastShareAt = 0;
 const listeners = new Set<() => void>();
+
+// Stamped straight off the native event: Android delivers the share before
+// the app's own "back in the foreground" signal reaches JS, so useAutoUpdate
+// can tell a share hand-off apart from an ordinary return in time.
+ShareIntentModule?.addListener('onChange', () => {
+  lastShareAt = Date.now();
+});
 
 function emit() {
   for (const listener of listeners) listener();
 }
 
 export function setShareProcessing(active: boolean, label = ''): void {
+  if (active) lastShareAt = Date.now();
   state = { active, label };
   emit();
+}
+
+/** True while a share is being read, and for a minute after one arrives. */
+export function isShareBusy(): boolean {
+  return state.active || Date.now() - lastShareAt < SHARE_QUIET_MS;
 }
 
 export function useShareProcessing() {
