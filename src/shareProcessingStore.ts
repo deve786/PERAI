@@ -1,72 +1,31 @@
-import { useSyncExternalStore } from 'react';
-import { ShareIntentModule } from 'expo-share-intent';
-import type { SharedExpense } from './expense/sharedPayment';
+import { getSharedPayloads } from 'expo-sharing';
 
 /**
- * Whether a share (GPay's payment image, or shared text) is currently being
- * read — and what to say while it is. Imperative, same shape as
- * dialogStore.ts, so useShareIntentCapture (which isn't a screen) can flip it
- * on and off without owning any UI itself. Drawn by ShareProcessingOverlay,
- * mounted once at the root.
- *
- * Exists because the whole read-the-share step used to be invisible: tapping
- * Share would open the app to whatever screen it last had, with nothing on
- * screen to say work was happening, for however long the AI call took — easy
- * to mistake for the app being stuck.
+ * Whether a share from another app (GPay's payment image, chiefly) is being
+ * handled — so useAutoUpdate never restarts the app for a pending update
+ * underneath one.
  */
 
-interface ShareProcessingState {
-  active: boolean;
-  label: string;
-  /**
-   * Set once the share has been saved: the same card then shows what was
-   * added, rather than switching screens mid hand-off — opening the expense
-   * screen right as a share lands left the app on a blank window.
-   */
-  added?: SharedExpense;
-}
-
-/** How long after a share arrives nothing else (an update reload) may restart the app under it. */
+/** How long after a share starts nothing else may restart the app under it. */
 const SHARE_QUIET_MS = 60_000;
 
-let state: ShareProcessingState = { active: false, label: '' };
 let lastShareAt = 0;
-const listeners = new Set<() => void>();
 
-// Stamped straight off the native event: Android delivers the share before
-// the app's own "back in the foreground" signal reaches JS, so useAutoUpdate
-// can tell a share hand-off apart from an ordinary return in time.
-ShareIntentModule?.addListener('onChange', () => {
+/** Called when the shared-payment screen starts reading a share. */
+export function markShareBusy(): void {
   lastShareAt = Date.now();
-});
-
-function emit() {
-  for (const listener of listeners) listener();
 }
 
-export function setShareProcessing(active: boolean, label = ''): void {
-  if (active) lastShareAt = Date.now();
-  state = { active, label };
-  emit();
-}
-
-export function showSharedExpense(added: SharedExpense): void {
-  state = { active: true, label: '', added };
-  emit();
-}
-
-/** True while a share is being read, and for a minute after one arrives. */
+/**
+ * True for a minute after a share starts, and whenever Android has already
+ * handed one over but nothing has read it yet — that payload is set before
+ * the app's own "back in the foreground" signal reaches JS.
+ */
 export function isShareBusy(): boolean {
-  return state.active || Date.now() - lastShareAt < SHARE_QUIET_MS;
-}
-
-export function useShareProcessing() {
-  return useSyncExternalStore(
-    (listener) => {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    () => state,
-    () => state
-  );
+  if (Date.now() - lastShareAt < SHARE_QUIET_MS) return true;
+  try {
+    return getSharedPayloads().length > 0;
+  } catch {
+    return false;
+  }
 }

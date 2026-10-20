@@ -108,22 +108,23 @@
         }
       ],
       "@react-native-community/datetimepicker",
-      "expo-sharing",
+      [
+        "expo-sharing",
+        {
+          "android": {
+            "enabled": true,
+            "singleShareMimeTypes": [
+              "text/*",
+              "image/*"
+            ]
+          }
+        }
+      ],
       [
         "expo-image-picker",
         {
           "photosPermission": "Allow PERAI to access your photos to scan receipts and bills.",
           "cameraPermission": "Allow PERAI to use your camera to scan receipts and bills."
-        }
-      ],
-      [
-        "expo-share-intent",
-        {
-          "androidIntentFilters": [
-            "text/*",
-            "image/*"
-          ],
-          "disableIOS": true
         }
       ]
     ],
