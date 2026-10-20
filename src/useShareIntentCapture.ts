@@ -4,6 +4,7 @@ import { useShareIntentContext, type ShareIntentFile } from 'expo-share-intent';
 import { describeError } from './ai/client';
 import { showDialog } from './dialogStore';
 import { extractPaymentFromText, scanPaymentWithAI, type ScannedPayment } from './expense/ai/ocr';
+import { listCategories } from './expense/db';
 import { recordSharedPayment, recordSharedPaymentMemory } from './expense/sharedPayment';
 import { logFail, logOk } from './log';
 import { setShareProcessing, showSharedExpense } from './shareProcessingStore';
@@ -69,11 +70,16 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promi
   });
 }
 
+/** The person's own expense categories, offered to the AI to choose from. */
+async function categoryNames(): Promise<string[]> {
+  return (await listCategories()).map((c) => c.name);
+}
+
 async function handleImage(file: ShareIntentFile): Promise<ScannedPayment> {
   return withTimeout(
     (async () => {
-      const base64 = await new File(file.path).base64();
-      return scanPaymentWithAI(base64, file.mimeType);
+      const [base64, names] = await Promise.all([new File(file.path).base64(), categoryNames()]);
+      return scanPaymentWithAI(base64, file.mimeType, names);
     })(),
     READ_TIMEOUT_MS,
     'Reading the payment image took too long. Check your connection and try sharing it again.'
@@ -82,7 +88,7 @@ async function handleImage(file: ShareIntentFile): Promise<ScannedPayment> {
 
 async function handleText(text: string): Promise<ScannedPayment> {
   return withTimeout(
-    extractPaymentFromText(text),
+    categoryNames().then((names) => extractPaymentFromText(text, names)),
     READ_TIMEOUT_MS,
     'Reading the shared text took too long. Check your connection and try sharing it again.'
   );
@@ -104,7 +110,7 @@ async function finish(scanned: ScannedPayment) {
     return;
   }
   const added = await recordSharedPayment(scanned);
-  await recordSharedPaymentMemory(scanned).catch((err) => {
+  await recordSharedPaymentMemory(scanned, added.category).catch((err) => {
     // The expense already landed — a failed Record entry is worth knowing
     // about but shouldn't undo it or stop the card from showing it.
     logFail('Added the expense, but could not also file it to Record', describeError(err));

@@ -25,6 +25,8 @@ export interface ScannedPayment {
   date: string | null;
   /** The bank/account line shown (e.g. "HDFC Bank ••1234"), or null when none is visible. */
   bank: string | null;
+  /** One of the person's own category names, when asked for and something shown gives a clue. */
+  category: string | null;
 }
 
 const OCR_MODEL = process.env.EXPO_PUBLIC_GEMINI_OCR_MODEL || 'gemini-3.5-flash-lite';
@@ -214,6 +216,12 @@ export async function scanReceiptWithAI(imageBase64: string, mimeType = 'image/j
   };
 }
 
+/** Asks for a category too, from the person's own list — so a custom one like "Ticket" can be picked. */
+function categoryAsk(names: string[]): string {
+  if (names.length === 0) return '';
+  return `\n\nAlso include "category": what this payment was most likely for, as exactly one of: ${names.join(', ')}. Go by the payee's name, the UPI ID and any note shown. Use null if nothing shown gives a reasonable clue.`;
+}
+
 function parsePayment(rawOutput: string, logLabel: string): ScannedPayment {
   const parsed = extractJson(rawOutput) as Record<string, unknown>;
 
@@ -228,6 +236,8 @@ function parsePayment(rawOutput: string, logLabel: string): ScannedPayment {
     : null;
 
   const bank = typeof parsed.bank === 'string' && parsed.bank.trim() ? parsed.bank.trim() : null;
+  const category =
+    typeof parsed.category === 'string' && parsed.category.trim() ? parsed.category.trim() : null;
 
   addAiLog({
     type: 'categorize',
@@ -237,7 +247,7 @@ function parsePayment(rawOutput: string, logLabel: string): ScannedPayment {
     model: OCR_MODEL,
   });
 
-  return { amount: Math.round(amount * 100) / 100, payee, date, bank };
+  return { amount: Math.round(amount * 100) / 100, payee, date, bank, category };
 }
 
 /**
@@ -246,8 +256,17 @@ function parsePayment(rawOutput: string, logLabel: string): ScannedPayment {
  * to, and when — which is what GPay's own "Share" button sends instead of
  * plain text, so this is the path a shared payment image goes through.
  */
-export async function scanPaymentWithAI(imageBase64: string, mimeType = 'image/jpeg'): Promise<ScannedPayment> {
-  const rawOutput = await callVisionModel(PAYMENT_OCR_SYSTEM_PROMPT, PAYMENT_OCR_USER_PROMPT, imageBase64, mimeType);
+export async function scanPaymentWithAI(
+  imageBase64: string,
+  mimeType = 'image/jpeg',
+  categoryNames: string[] = []
+): Promise<ScannedPayment> {
+  const rawOutput = await callVisionModel(
+    PAYMENT_OCR_SYSTEM_PROMPT,
+    PAYMENT_OCR_USER_PROMPT + categoryAsk(categoryNames),
+    imageBase64,
+    mimeType
+  );
   if (!rawOutput) {
     throw new Error('Gemini returned an empty response for this payment image.');
   }
@@ -273,7 +292,7 @@ Return ONLY a raw JSON object with this exact structure:
 No markdown backticks, no prose. If this doesn't describe a payment at all, return {"amount": 0, "payee": null, "date": null, "bank": null}.`;
 
 /** Text-only counterpart to scanPaymentWithAI, for a share that sends words instead of an image. */
-export async function extractPaymentFromText(text: string): Promise<ScannedPayment> {
+export async function extractPaymentFromText(text: string, categoryNames: string[] = []): Promise<ScannedPayment> {
   if (!hasApiKey()) {
     throw new MissingApiKeyError();
   }
@@ -281,7 +300,7 @@ export async function extractPaymentFromText(text: string): Promise<ScannedPayme
   const response = await client.models.generateContent({
     model: OCR_MODEL,
     contents: [
-      { role: 'user', parts: [{ text: `${PAYMENT_TEXT_SYSTEM_PROMPT}\n\n${PAYMENT_TEXT_USER_PROMPT}\n\nShared text:\n${text}` }] },
+      { role: 'user', parts: [{ text: `${PAYMENT_TEXT_SYSTEM_PROMPT}\n\n${PAYMENT_TEXT_USER_PROMPT}${categoryAsk(categoryNames)}\n\nShared text:\n${text}` }] },
     ],
   });
   const rawOutput = response.text || '';

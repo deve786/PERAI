@@ -44,6 +44,13 @@ import {
 import { monthRange } from '../src/expense/dates';
 import { sum } from '../src/expense/stats';
 import {
+  categoryFromHistory,
+  knownCategoryName,
+  lastFour,
+  matchBankLine,
+  pickBankAccount,
+} from '../src/expense/sharedPaymentMatch';
+import {
   categoryBreakdown,
   isValidSpan,
   linkId,
@@ -1695,6 +1702,53 @@ section('typed tasks: today without a time is not already late');
 
   const timed = parseWhen('dinner at 8pm', afternoon);
   check('a stated time is left exactly as stated', new Date(timed.eventDate!).getHours() === 20);
+}
+
+
+section('shared payment: which bank');
+{
+  const acct = (id: string, name: string, institution = '', notes = '') => ({ id, name, institution, notes });
+  const hdfc = acct('h', 'HDFC');
+  const sbi = acct('s', 'Salary', 'State Bank of India');
+  const boi = acct('b', 'Bank of India');
+  const kotak = acct('k', 'Kotak Mahindra Bank', '', 'ends 1234');
+  const all = [hdfc, sbi, boi, kotak];
+
+  check('"HDFC Bank ••1234"-style line matches an account just named HDFC', matchBankLine('HDFC Bank', all) === 'h');
+  check('SBI matches the account at State Bank of India', matchBankLine('SBI ••9876', all) === 's');
+  check('and the full name matches too', matchBankLine('State Bank of India', all) === 's');
+  check('Bank of India is not mistaken for State Bank of India', matchBankLine('Bank of India', all) === 'b');
+  check('last 4 digits win when an account mentions them', matchBankLine('Kotak ••1234', all) === 'k');
+  check('the digits alone are enough', matchBankLine('XXXXXX1234', all) === 'k');
+  check('an unknown bank matches nothing', matchBankLine('Axis Bank', all) === null);
+  check('no line, no match', matchBankLine(null, all) === null);
+  check('last four reads the final group of digits', lastFour('A/c XX12 3456') === '3456');
+
+  const history = [
+    { note: 'Swiggy', method: 'Cash', category_id: 'food', account_id: null },
+    { note: 'Uber', method: 'UPI', category_id: 'transport', account_id: 'b' },
+  ];
+  check('a matched line beats history', pickBankAccount('HDFC Bank', all, history) === 'h');
+  check('one bank account is simply used', pickBankAccount(null, [hdfc], history) === 'h');
+  check('otherwise the bank last used for UPI', pickBankAccount(null, all, history) === 'b');
+  check('a deleted account from history is not picked', pickBankAccount(null, [hdfc, sbi], history) === null);
+  check('no bank accounts, no bank', pickBankAccount('HDFC', [], history) === null);
+}
+
+section('shared payment: which category');
+{
+  const history = [
+    { note: 'Ramesh Kumar', method: 'UPI', category_id: 'ticket' },
+    { note: 'ramesh kumar', method: 'UPI', category_id: 'food' },
+    { note: 'Old Shop', method: 'UPI', category_id: 'gone' },
+  ];
+  const live = new Set(['ticket', 'food']);
+  check('the same payee gets the category used last time', categoryFromHistory('Ramesh Kumar', history, live) === 'ticket');
+  check('matched regardless of case and spaces', categoryFromHistory('  RAMESH KUMAR ', history, live) === 'ticket');
+  check('a category since deleted is not reused', categoryFromHistory('Old Shop', history, live) === null);
+  check('a new payee has no history', categoryFromHistory('Someone New', history, live) === null);
+  check('the AI pick is used when it names a real category', knownCategoryName('ticket', ['Food', 'Ticket']) === 'Ticket');
+  check('but not when it invents one', knownCategoryName('Snacks', ['Food', 'Ticket']) === null);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
