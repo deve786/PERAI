@@ -5,14 +5,14 @@ import { useShareIntentContext, type ShareIntentFile } from 'expo-share-intent';
 import { describeError } from './ai/client';
 import { showDialog } from './dialogStore';
 import { extractPaymentFromText, scanPaymentWithAI, type ScannedPayment } from './expense/ai/ocr';
-import { recordSharedPayment } from './expense/sharedPayment';
+import { recordSharedPayment, recordSharedPaymentMemory } from './expense/sharedPayment';
 import { logFail, logOk } from './log';
 
 /**
  * Turns a payment shared into PERAI from another app — GPay's "Share" on a
- * payment, chiefly — straight into an Expense, the same way the Scan Receipt
- * button on the Expense form does for a photographed bill. No PERAI Record
- * entry is made alongside it: a shared payment is spending, not a note.
+ * payment, chiefly — into both an Expense and a PERAI Record entry (already
+ * marked done, since the money's already spent), the same way a typed or
+ * spoken purchase note lands in both places too.
  *
  * GPay's own Share button sends an image of the payment card, not text, so
  * that's read with the same OCR the receipt scanner uses — just a prompt
@@ -70,6 +70,11 @@ async function finish(scanned: ScannedPayment, router: ReturnType<typeof useRout
     return;
   }
   const id = await recordSharedPayment(scanned);
+  await recordSharedPaymentMemory(scanned).catch((err) => {
+    // The expense already landed — a failed Record entry is worth knowing
+    // about but shouldn't undo it or stop the view from opening.
+    logFail('Added the expense, but could not also file it to Record', describeError(err));
+  });
   logOk('Added an expense from a share', `${scanned.payee ?? 'Payment'} · ${scanned.amount}`);
   router.push({ pathname: '/expense/expense', params: { id: String(id) } });
 }
