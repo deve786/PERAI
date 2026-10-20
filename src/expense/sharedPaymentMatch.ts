@@ -131,3 +131,24 @@ export function knownCategoryName(picked: string | null, names: string[]): strin
   const wanted = picked.trim().toLowerCase();
   return names.find((n) => n.toLowerCase() === wanted) ?? null;
 }
+
+/**
+ * The date to file a shared payment under.
+ *
+ * GPay's card often shows "20 Oct, 1:36 pm" with no year, and the model
+ * reading it may fill in a year of its own — landing the expense in a past
+ * year, outside this month's total. So: the day and month read are kept, but
+ * the year is always the most recent one that puts that day on or before
+ * today. No date read at all means today.
+ *
+ * @param read YYYY-MM-DD as read off the payment, or null
+ * @param today YYYY-MM-DD
+ */
+export function settleDate(read: string | null, today: string): string {
+  const match = read?.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return today;
+  const [, , month, day] = match;
+  const year = Number(today.slice(0, 4));
+  const thisYear = `${year}-${month}-${day}`;
+  return thisYear <= today ? thisYear : `${year - 1}-${month}-${day}`;
+}

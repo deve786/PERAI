@@ -216,10 +216,13 @@ export async function scanReceiptWithAI(imageBase64: string, mimeType = 'image/j
   };
 }
 
-/** Asks for a category too, from the person's own list — so a custom one like "Ticket" can be picked. */
-function categoryAsk(names: string[]): string {
-  if (names.length === 0) return '';
-  return `\n\nAlso include "category": what this payment was most likely for, as exactly one of: ${names.join(', ')}. Go by the payee's name, the UPI ID and any note shown. Use null if nothing shown gives a reasonable clue.`;
+/** Today's date (so a yearless date isn't guessed into the past), and a category from the person's own list — so a custom one like "Ticket" can be picked. */
+function promptExtras(names: string[]): string {
+  // The card often shows a date with no year; without today's date the
+  // model fills one in from its own training and files the payment years back.
+  const when = `\n\nToday is ${todayStr()}. If the date shown has no year, use the most recent such date on or before today.`;
+  if (names.length === 0) return when;
+  return `${when}\n\nAlso include "category": what this payment was most likely for, as exactly one of: ${names.join(', ')}. Go by the payee's name, the UPI ID and any note shown. Use null if nothing shown gives a reasonable clue.`;
 }
 
 function parsePayment(rawOutput: string, logLabel: string): ScannedPayment {
@@ -263,7 +266,7 @@ export async function scanPaymentWithAI(
 ): Promise<ScannedPayment> {
   const rawOutput = await callVisionModel(
     PAYMENT_OCR_SYSTEM_PROMPT,
-    PAYMENT_OCR_USER_PROMPT + categoryAsk(categoryNames),
+    PAYMENT_OCR_USER_PROMPT + promptExtras(categoryNames),
     imageBase64,
     mimeType
   );
@@ -300,7 +303,7 @@ export async function extractPaymentFromText(text: string, categoryNames: string
   const response = await client.models.generateContent({
     model: OCR_MODEL,
     contents: [
-      { role: 'user', parts: [{ text: `${PAYMENT_TEXT_SYSTEM_PROMPT}\n\n${PAYMENT_TEXT_USER_PROMPT}${categoryAsk(categoryNames)}\n\nShared text:\n${text}` }] },
+      { role: 'user', parts: [{ text: `${PAYMENT_TEXT_SYSTEM_PROMPT}\n\n${PAYMENT_TEXT_USER_PROMPT}${promptExtras(categoryNames)}\n\nShared text:\n${text}` }] },
     ],
   });
   const rawOutput = response.text || '';

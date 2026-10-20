@@ -49,6 +49,7 @@ import {
   lastFour,
   matchBankLine,
   pickBankAccount,
+  settleDate,
 } from '../src/expense/sharedPaymentMatch';
 import {
   categoryBreakdown,
@@ -1733,6 +1734,18 @@ section('shared payment: which bank');
   check('otherwise the bank last used for UPI', pickBankAccount(null, all, history) === 'b');
   check('a deleted account from history is not picked', pickBankAccount(null, [hdfc, sbi], history) === null);
   check('no bank accounts, no bank', pickBankAccount('HDFC', [], history) === null);
+}
+
+section('shared payment: which date');
+{
+  const today = '2026-10-20';
+  check('a payment from today stays today', settleDate('2026-10-20', today) === '2026-10-20');
+  check('earlier this month stays as read', settleDate('2026-10-03', today) === '2026-10-03');
+  check('a year the model made up is corrected to this year', settleDate('2024-10-18', today) === '2026-10-18');
+  check('a day later in the year means last year', settleDate('2026-12-30', today) === '2025-12-30');
+  check('even when the model got that year wrong too', settleDate('2023-12-30', today) === '2025-12-30');
+  check('no date read means today', settleDate(null, today) === today);
+  check('an unreadable date means today', settleDate('20 Oct', today) === today);
 }
 
 section('shared payment: which category');

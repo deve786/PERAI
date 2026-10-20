@@ -5,7 +5,7 @@ import { describeError } from './ai/client';
 import { showDialog } from './dialogStore';
 import { extractPaymentFromText, scanPaymentWithAI, type ScannedPayment } from './expense/ai/ocr';
 import { listCategories } from './expense/db';
-import { recordSharedPayment, recordSharedPaymentMemory } from './expense/sharedPayment';
+import { recordSharedPayment } from './expense/sharedPayment';
 import { logFail, logOk } from './log';
 import { setShareProcessing, showSharedExpense } from './shareProcessingStore';
 
@@ -14,9 +14,8 @@ const READ_TIMEOUT_MS = 25000;
 
 /**
  * Turns a payment shared into PERAI from another app — GPay's "Share" on a
- * payment, chiefly — into both an Expense and a PERAI Record entry (already
- * marked done, since the money's already spent), the same way a typed or
- * spoken purchase note lands in both places too.
+ * payment, chiefly — into an Expense. Expense only: a shared payment is
+ * spending to track, not a note for the Record.
  *
  * GPay's own Share button sends an image of the payment card, not text, so
  * that's read with the same OCR the receipt scanner uses — just a prompt
@@ -110,11 +109,6 @@ async function finish(scanned: ScannedPayment) {
     return;
   }
   const added = await recordSharedPayment(scanned);
-  await recordSharedPaymentMemory(scanned, added.category).catch((err) => {
-    // The expense already landed — a failed Record entry is worth knowing
-    // about but shouldn't undo it or stop the card from showing it.
-    logFail('Added the expense, but could not also file it to Record', describeError(err));
-  });
   logOk('Added an expense from a share', `${added.title} · ${added.amount}`);
   // The loading card turns into the added expense in place — no screen
   // switch while the share hand-off is still settling.
