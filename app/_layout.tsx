@@ -20,6 +20,7 @@ import { startOverdueSweep } from '@/overdue';
 import { startReminderSync } from '@/reminders';
 import { applySavedVoiceLanguage } from '@/settings';
 import { DialogHost } from '@/components/DialogHost';
+import { ShareProcessingOverlay } from '@/components/ShareProcessingOverlay';
 import { ThemeProvider, useTheme } from '@/ThemeContext';
 import { ThemeProvider as ExpenseThemeProvider } from '@/expense/theme';
 import { COLORS, SPACE, TYPE } from '@/theme';
@@ -139,6 +140,7 @@ function ThemedApp() {
       {/* The app's own popups, so a question about your record looks like the
           record rather than like Android. */}
       <DialogHost />
+      <ShareProcessingOverlay />
     </>
   );
 }

@@ -7,6 +7,10 @@ import { showDialog } from './dialogStore';
 import { extractPaymentFromText, scanPaymentWithAI, type ScannedPayment } from './expense/ai/ocr';
 import { recordSharedPayment, recordSharedPaymentMemory } from './expense/sharedPayment';
 import { logFail, logOk } from './log';
+import { setShareProcessing } from './shareProcessingStore';
+
+/** However long reading a payment screenshot genuinely takes, it should never look stuck past this. */
+const READ_TIMEOUT_MS = 25000;
 
 /**
  * Turns a payment shared into PERAI from another app — GPay's "Share" on a
@@ -19,6 +23,11 @@ import { logFail, logOk } from './log';
  * tuned for a payment screenshot's amount/payee/bank instead of a shop
  * receipt's line items. Shared text (from some other app) goes through the
  * same extraction, run on words instead of a picture.
+ *
+ * The read itself (an AI call) has no UI of its own otherwise — nothing but
+ * whatever screen the app happened to open to would show while it ran, easy
+ * to mistake for the app being stuck. setShareProcessing() puts up a small
+ * "reading it" card for exactly that stretch, via ShareProcessingOverlay.
  *
  * Lives at the root rather than on one screen, since a share can arrive
  * while you're anywhere in the app.
@@ -34,31 +43,54 @@ export function useShareIntentCapture() {
     // Claimed immediately so a re-render (or the next share) never files the
     // same share twice.
     resetShareIntent();
+    if (!image && !text) return;
+
+    setShareProcessing(true, 'Reading the shared payment…');
     // An image takes priority: GPay's share sometimes tags on caption text
     // ("Shared via Google Pay") alongside the payment card itself, which
     // would be the wrong thing to read literally.
-    if (image) void handleImage(image, router);
-    else if (text) void handleText(text, router);
+    const work = image ? handleImage(image) : handleText(text as string);
+    work
+      .then((scanned) => finish(scanned, router))
+      .catch(fail)
+      .finally(() => setShareProcessing(false));
   }, [hasShareIntent, shareIntent.text, shareIntent.files, resetShareIntent, router]);
 }
 
-async function handleImage(file: ShareIntentFile, router: ReturnType<typeof useRouter>) {
-  try {
-    const base64 = await new File(file.path).base64();
-    const scanned = await scanPaymentWithAI(base64, file.mimeType);
-    await finish(scanned, router);
-  } catch (err) {
-    fail(err);
-  }
+/** Rejects with `message` if `promise` hasn't settled within `ms` — a hung network call should never look like a frozen app. */
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
 }
 
-async function handleText(text: string, router: ReturnType<typeof useRouter>) {
-  try {
-    const scanned = await extractPaymentFromText(text);
-    await finish(scanned, router);
-  } catch (err) {
-    fail(err);
-  }
+async function handleImage(file: ShareIntentFile): Promise<ScannedPayment> {
+  return withTimeout(
+    (async () => {
+      const base64 = await new File(file.path).base64();
+      return scanPaymentWithAI(base64, file.mimeType);
+    })(),
+    READ_TIMEOUT_MS,
+    'Reading the payment image took too long. Check your connection and try sharing it again.'
+  );
+}
+
+async function handleText(text: string): Promise<ScannedPayment> {
+  return withTimeout(
+    extractPaymentFromText(text),
+    READ_TIMEOUT_MS,
+    'Reading the shared text took too long. Check your connection and try sharing it again.'
+  );
 }
 
 async function finish(scanned: ScannedPayment, router: ReturnType<typeof useRouter>) {
