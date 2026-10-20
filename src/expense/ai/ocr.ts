@@ -23,6 +23,8 @@ export interface ScannedPayment {
   payee: string | null;
   /** YYYY-MM-DD, or null when no date is visible. */
   date: string | null;
+  /** The bank/account line shown (e.g. "HDFC Bank ••1234"), or null when none is visible. */
+  bank: string | null;
 }
 
 const OCR_MODEL = process.env.EXPO_PUBLIC_GEMINI_OCR_MODEL || 'gemini-3.5-flash-lite';
@@ -62,14 +64,16 @@ const PAYMENT_OCR_USER_PROMPT = `Extract the following from this payment screens
 1. amount: the amount paid or sent, as a number (no currency symbol).
 2. payee: who the money was paid to, exactly as shown (a person or business name), or null if no name is visible.
 3. date: the transaction date in YYYY-MM-DD format, or null if not visible.
+4. bank: the bank or account line shown for how it was paid (e.g. "HDFC Bank", "Kotak Mahindra Bank ••1234"), or null if none is visible.
 
 Return ONLY a raw JSON object with this exact structure:
 {
   "amount": 500,
   "payee": "Ramesh Kumar",
-  "date": "2026-10-20"
+  "date": "2026-10-20",
+  "bank": "HDFC Bank"
 }
-No markdown backticks, no prose. If this does not look like a payment confirmation at all, return {"amount": 0, "payee": null, "date": null}.`;
+No markdown backticks, no prose. If this does not look like a payment confirmation at all, return {"amount": 0, "payee": null, "date": null, "bank": null}.`;
 
 function extractJson(raw: string): unknown {
   const text = raw.trim();
@@ -210,19 +214,7 @@ export async function scanReceiptWithAI(imageBase64: string, mimeType = 'image/j
   };
 }
 
-/**
- * Sends a base64 encoded screenshot of a UPI payment confirmation to Gemini.
- * Unlike a shop receipt this has no line items — just an amount, who it went
- * to, and when — which is what GPay's own "Share" button sends instead of
- * plain text, so this is the path a shared payment image goes through.
- */
-export async function scanPaymentWithAI(imageBase64: string, mimeType = 'image/jpeg'): Promise<ScannedPayment> {
-  const rawOutput = await callVisionModel(PAYMENT_OCR_SYSTEM_PROMPT, PAYMENT_OCR_USER_PROMPT, imageBase64, mimeType);
-
-  if (!rawOutput) {
-    throw new Error('Gemini returned an empty response for this payment image.');
-  }
-
+function parsePayment(rawOutput: string, logLabel: string): ScannedPayment {
   const parsed = extractJson(rawOutput) as Record<string, unknown>;
 
   const amount = typeof parsed.amount === 'number' && Number.isFinite(parsed.amount)
@@ -235,13 +227,66 @@ export async function scanPaymentWithAI(imageBase64: string, mimeType = 'image/j
     ? parsed.date
     : null;
 
+  const bank = typeof parsed.bank === 'string' && parsed.bank.trim() ? parsed.bank.trim() : null;
+
   addAiLog({
     type: 'categorize',
-    title: `Payment OCR: ${payee ?? 'unknown payee'} (${amount})`,
+    title: `Payment ${logLabel}: ${payee ?? 'unknown payee'} (${amount})`,
     status: amount > 0 ? 'success' : 'error',
-    result: amount > 0 ? 'parsed' : 'no payment detected in image',
+    result: amount > 0 ? 'parsed' : 'no payment detected',
     model: OCR_MODEL,
   });
 
-  return { amount: Math.round(amount * 100) / 100, payee, date };
+  return { amount: Math.round(amount * 100) / 100, payee, date, bank };
+}
+
+/**
+ * Sends a base64 encoded screenshot of a UPI payment confirmation to Gemini.
+ * Unlike a shop receipt this has no line items — just an amount, who it went
+ * to, and when — which is what GPay's own "Share" button sends instead of
+ * plain text, so this is the path a shared payment image goes through.
+ */
+export async function scanPaymentWithAI(imageBase64: string, mimeType = 'image/jpeg'): Promise<ScannedPayment> {
+  const rawOutput = await callVisionModel(PAYMENT_OCR_SYSTEM_PROMPT, PAYMENT_OCR_USER_PROMPT, imageBase64, mimeType);
+  if (!rawOutput) {
+    throw new Error('Gemini returned an empty response for this payment image.');
+  }
+  return parsePayment(rawOutput, 'OCR');
+}
+
+const PAYMENT_TEXT_SYSTEM_PROMPT = `You read shared text describing a UPI payment, from an app like Google Pay, PhonePe or Paytm.
+Extract only what the text actually says. Never invent an amount or a name that isn't there.`;
+
+const PAYMENT_TEXT_USER_PROMPT = `Extract the following from this shared text:
+1. amount: the amount paid or sent, as a number (no currency symbol).
+2. payee: who the money was paid to, exactly as shown (a person or business name), or null if no name is given.
+3. date: the transaction date in YYYY-MM-DD format, or null if not stated.
+4. bank: the bank or account mentioned for how it was paid, or null if none is mentioned.
+
+Return ONLY a raw JSON object with this exact structure:
+{
+  "amount": 500,
+  "payee": "Ramesh Kumar",
+  "date": "2026-10-20",
+  "bank": "HDFC Bank"
+}
+No markdown backticks, no prose. If this doesn't describe a payment at all, return {"amount": 0, "payee": null, "date": null, "bank": null}.`;
+
+/** Text-only counterpart to scanPaymentWithAI, for a share that sends words instead of an image. */
+export async function extractPaymentFromText(text: string): Promise<ScannedPayment> {
+  if (!hasApiKey()) {
+    throw new MissingApiKeyError();
+  }
+  const client = new GoogleGenAI({ apiKey: getApiKey() });
+  const response = await client.models.generateContent({
+    model: OCR_MODEL,
+    contents: [
+      { role: 'user', parts: [{ text: `${PAYMENT_TEXT_SYSTEM_PROMPT}\n\n${PAYMENT_TEXT_USER_PROMPT}\n\nShared text:\n${text}` }] },
+    ],
+  });
+  const rawOutput = response.text || '';
+  if (!rawOutput) {
+    throw new Error('Gemini returned an empty response for this shared text.');
+  }
+  return parsePayment(rawOutput, 'text');
 }
