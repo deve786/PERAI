@@ -1,23 +1,16 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import {
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
-import { DailyBriefing } from '@/components/DailyBriefing';
+import { DailyBriefing, StatBox } from '@/components/DailyBriefing';
 import { DateScrubber } from '@/components/DateScrubber';
 import { MemoryRow } from '@/components/MemoryRow';
-import { Section } from '@/components/Section';
 import { SnoozeModal } from '@/components/SnoozeModal';
 import { completeMemory } from '@/complete';
 import { planDay } from '@/today';
 import { useTheme } from '@/ThemeContext';
-import { FONTS, SPACE, type Colors } from '@/theme';
+import { FONTS, RADIUS, SPACE, type Colors } from '@/theme';
 import type { Memory } from '@/types';
 import { useMemories } from '@/useMemories';
 import {
@@ -31,10 +24,20 @@ import {
   listBorrowLend,
   type BorrowLendItem,
 } from '@/expense/borrowLendDb';
-import { prettyDate, todayStr as getTodayStr } from '@/expense/dates';
+import { fromStr, monthName, todayStr as getTodayStr } from '@/expense/dates';
 import { fmtMoney, sum } from '@/expense/stats';
 import { ExpenseItem } from '@/expense/ExpenseItem';
 import { IncomeItem } from '@/expense/IncomeItem';
+import { PillButton, Screen, TopBar } from '@/expense/ui';
+
+const WEEKDAYS_LONG = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+/** "Thursday, 22 Oct" — with the year only when it is not this one. */
+function dayHeading(date: string): string {
+  const d = fromStr(date);
+  const year = d.getFullYear() !== new Date().getFullYear() ? ` ${d.getFullYear()}` : '';
+  return `${WEEKDAYS_LONG[d.getDay()]}, ${d.getDate()} ${monthName(d.getMonth())}${year}`;
+}
 
 export default function CalendarScreen() {
   const { colors, type } = useTheme();
@@ -109,6 +112,21 @@ export default function CalendarScreen() {
     );
   }, [memories, selectedDate, todayStr]);
 
+  // Opened from Record and More; when there is nothing to go back to
+  // (e.g. a deep link), go to Record instead of doing nothing.
+  const goBack = () => {
+    if (router.canGoBack()) router.back();
+    else router.replace('/');
+  };
+
+  const jumpToToday = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    setSelectedDate(todayStr);
+  };
+
+  // New plans are made by saying or typing them on Record.
+  const addPlan = () => router.navigate('/');
+
   const openMemory = (memory: Memory) => router.push(`/entry/${memory.id}`);
   const tickMemory = (memory: Memory) => void completeMemory(memory);
 
@@ -126,345 +144,291 @@ export default function CalendarScreen() {
         </View>
         <Pressable
           onPress={() => setSnoozingMemory(memory)}
-          hitSlop={10}
-          style={({ pressed }) => [styles.snoozeButton, pressed && styles.snoozeButtonPressed]}
+          hitSlop={6}
+          style={({ pressed }) => [styles.snoozeButton, pressed && styles.pressed]}
           accessibilityRole="button"
           accessibilityLabel={`Snooze ${memory.title}`}
         >
-          <Ionicons name="alarm-outline" size={17} color={colors.mist} />
+          <Ionicons name="alarm-outline" size={19} color={colors.graphite} />
         </Pressable>
       </View>
     ));
 
+  /** A small grey heading with an optional figure or control on the right. */
+  const heading = (label: string, right?: React.ReactNode, tone?: 'alert' | 'moss') => (
+    <View style={styles.subHead}>
+      <Text
+        style={[type.label, tone === 'alert' && styles.alertText, tone === 'moss' && styles.mossText]}
+      >
+        {label}
+      </Text>
+      {right}
+    </View>
+  );
+
+  /** Rows in a white card; the rows' own bottom hairline is hidden on the last one. */
+  const rowCard = (rows: React.ReactNode) => (
+    <View style={styles.card}>
+      <View style={styles.cardInner}>{rows}</View>
+    </View>
+  );
+
   const isViewingToday = selectedDate === todayStr;
   const totalDaySpent = sum(dayExpenses);
   const totalDayIncome = sum(dayIncome);
+  const dayPlans = isViewingToday ? plan.today : selectedDateMemories;
+  const hasMoney = dayExpenses.length > 0 || dayIncome.length > 0;
+
+  const moneyTotal = [
+    totalDaySpent > 0 ? `${fmtMoney(totalDaySpent, currencySymbol)} spent` : null,
+    totalDayIncome > 0 ? `+${fmtMoney(totalDayIncome, currencySymbol)} in` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
 
   return (
-    <ScrollView style={styles.flex} contentContainerStyle={styles.content}>
-      {/* Header */}
-      <View style={styles.headerRow}>
-        <View>
-          <Text style={type.display}>Calendar</Text>
-          <Text style={[type.label, styles.subtitle]}>
-            {prettyDate(selectedDate).toUpperCase()}
-          </Text>
-        </View>
-
-        {!isViewingToday ? (
-          <Pressable
-            onPress={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-              setSelectedDate(todayStr);
-            }}
-            hitSlop={8}
-            style={styles.todayBadge}
-          >
-            <Ionicons name="return-up-back" size={13} color={colors.moss} />
-            <Text style={[type.label, styles.todayBadgeText]}>JUMP TO TODAY</Text>
-          </Pressable>
-        ) : null}
-      </View>
-
-      {/* Feature 4: Proactive AI Daily Morning Briefing (when on Today) */}
-      {isViewingToday ? (
-        <DailyBriefing memories={memories} onOpenEntry={openMemory} />
-      ) : null}
-
-      {/* Feature 12: Calendar Strip with Activity Dots */}
-      <DateScrubber
-        selectedDate={selectedDate}
-        onSelectDate={setSelectedDate}
-        activityDates={activityDates}
-        daysRange={14}
+    <Screen edges={['top']}>
+      <TopBar
+        title="Calendar"
+        onBack={goBack}
+        right={<PillButton label="Today" onPress={jumpToToday} disabled={isViewingToday} />}
       />
 
-      {/* Day Overview — only when scrubbed away from today, since the Daily
-          Briefing above already summarizes today's tasks and spending. */}
-      {!isViewingToday ? (
-        <View style={styles.summaryBar}>
-          <View style={styles.summaryItem}>
-            <Text style={[type.stamp, styles.summaryLabel]}>TASKS</Text>
-            <Text style={[type.label, styles.summaryValue]}>
-              {selectedDateMemories.length} items
-            </Text>
-          </View>
+      <ScrollView style={styles.flex} contentContainerStyle={styles.content}>
+        <DateScrubber
+          selectedDate={selectedDate}
+          onSelectDate={setSelectedDate}
+          activityDates={activityDates}
+        />
 
-          <View style={styles.summaryDivider} />
-
-          <View style={styles.summaryItem}>
-            <Text style={[type.stamp, styles.summaryLabel]}>SPENT</Text>
-            <Text
-              style={[
-                type.label,
-                totalDaySpent > 0 ? styles.summarySpentActive : styles.summaryValue,
-              ]}
-            >
-              {totalDaySpent > 0 ? `${currencySymbol}${totalDaySpent}` : '₹0'}
-            </Text>
-          </View>
-
-          {totalDayIncome > 0 ? (
-            <>
-              <View style={styles.summaryDivider} />
-              <View style={styles.summaryItem}>
-                <Text style={[type.stamp, styles.summaryLabel]}>INCOME</Text>
-                <Text style={[type.label, styles.summaryIncomeActive]}>
-                  +{currencySymbol}{totalDayIncome}
-                </Text>
-              </View>
-            </>
-          ) : null}
-        </View>
-      ) : null}
-
-      {/* ======================================================== */}
-      {/* PERAI SECTION: Tasks, Reminders & Memories */}
-      {/* ======================================================== */}
-      {isViewingToday ? (
-        <>
-          {plan.overdue.length > 0 ? (
-            <Section label={`OVERDUE · ${plan.overdue.length}`}>
-              {memoryRows(plan.overdue)}
-            </Section>
-          ) : null}
-
-          {plan.today.length > 0 ? (
-            <Section label="TODAY" tone="ahead">
-              {memoryRows(plan.today)}
-            </Section>
-          ) : null}
-
-          {plan.tomorrow.length > 0 ? (
-            <Section label="TOMORROW">{memoryRows(plan.tomorrow)}</Section>
-          ) : null}
-        </>
-      ) : selectedDateMemories.length > 0 ? (
-        <Section label={`TASKS & REMINDERS · ${selectedDate}`}>
-          {memoryRows(selectedDateMemories)}
-        </Section>
-      ) : null}
-
-      {/* ======================================================== */}
-      {/* EXPENSE SECTION: Financial entries for this day */}
-      {/* ======================================================== */}
-      <View style={styles.section}>
-        <View style={styles.sectionHead}>
-          <Text style={type.label}>EXPENSES</Text>
-          <View style={styles.sectionActions}>
-            <Pressable
-              onPress={() =>
-                router.push({
-                  pathname: '/expense/expense',
-                  params: { date: selectedDate },
-                })
-              }
-              hitSlop={10}
-            >
-              <Text style={[type.label, styles.actionLink]}>ADD</Text>
-            </Pressable>
-            <Pressable
-              onPress={() =>
-                router.push({
-                  pathname: '/expense/expense',
-                  params: { scan: '1', date: selectedDate },
-                })
-              }
-              hitSlop={10}
-            >
-              <Text style={[type.label, styles.actionLink]}>SCAN</Text>
-            </Pressable>
-          </View>
-        </View>
-        <View style={styles.sectionRule} />
-
-        {dayExpenses.map((exp) => (
-          <ExpenseItem
-            key={exp.id}
-            e={exp}
-            showDate={false}
-            onDeleted={loadFinancialData}
-          />
-        ))}
-      </View>
-
-      {/* ======================================================== */}
-      {/* INCOME SECTION: If any income on this date */}
-      {/* ======================================================== */}
-      {dayIncome.length > 0 ? (
-        <Section label={`INCOME · +${currencySymbol}${totalDayIncome}`}>
-          {dayIncome.map((inc) => (
-            <IncomeItem
-              key={inc.id}
-              e={inc}
-              showDate={false}
-              onDeleted={loadFinancialData}
+        {/* Today gets the briefing; any other day a summary of that day. */}
+        {isViewingToday ? (
+          <DailyBriefing memories={memories} onOpenEntry={openMemory} />
+        ) : (
+          <View style={styles.stats}>
+            <StatBox label="Plans" value={String(selectedDateMemories.length)} />
+            <StatBox
+              label="Spent"
+              value={fmtMoney(totalDaySpent, currencySymbol)}
+              mono
             />
-          ))}
-        </Section>
-      ) : null}
+            <StatBox
+              label="Income"
+              value={totalDayIncome > 0 ? `+${fmtMoney(totalDayIncome, currencySymbol)}` : fmtMoney(0, currencySymbol)}
+              tone={totalDayIncome > 0 ? 'moss' : undefined}
+              mono
+            />
+          </View>
+        )}
 
-      {/* ======================================================== */}
-      {/* LOANS / BORROW & LEND: If any active loans on this date */}
-      {/* ======================================================== */}
-      {dayLoans.length > 0 ? (
-        <Section label="LOANS & BORROWED">
-          {dayLoans.map((l) => (
-            <Pressable
-              key={l.id}
-              onPress={() => router.push('/expense/borrow-lend')}
-              style={({ pressed }) => [styles.loanRow, pressed && styles.loanRowPressed]}
-            >
-              <View style={{ flex: 1 }}>
-                <Text style={[type.body, { color: colors.ink }]} numberOfLines={1}>
-                  {l.person_name} ({l.type === 'lent' ? 'Lent to them' : 'Borrowed'})
-                </Text>
-                <Text style={[type.label, { color: colors.graphite, marginTop: 2 }]}>
-                  {l.due_date === selectedDate ? 'Due on this date' : 'Recorded on this date'}
-                </Text>
+        <Text style={styles.dayHeading}>{dayHeading(selectedDate)}</Text>
+
+        {isViewingToday && plan.overdue.length > 0 ? (
+          <View style={styles.group}>
+            {heading(`Overdue · ${plan.overdue.length}`, undefined, 'alert')}
+            {rowCard(memoryRows(plan.overdue))}
+          </View>
+        ) : null}
+
+        <View style={styles.group}>
+          {heading(
+            'Plans',
+            dayPlans.length > 0 ? (
+              <Pressable onPress={addPlan} hitSlop={10} accessibilityRole="button" accessibilityLabel="Add a plan">
+                <Text style={[type.label, styles.mossText]}>+ Add</Text>
+              </Pressable>
+            ) : undefined
+          )}
+          {dayPlans.length > 0 ? (
+            rowCard(memoryRows(dayPlans))
+          ) : (
+            <View style={[styles.card, styles.emptyRow]}>
+              <Text style={[type.body, styles.flexText]}>Nothing planned for this day.</Text>
+              <PillButton label="+ Add" tone={colors.moss} onPress={addPlan} />
+            </View>
+          )}
+        </View>
+
+        {isViewingToday && plan.tomorrow.length > 0 ? (
+          <View style={styles.group}>
+            {heading('Tomorrow')}
+            {rowCard(memoryRows(plan.tomorrow))}
+          </View>
+        ) : null}
+
+        <View style={styles.group}>
+          {heading(
+            'Money',
+            moneyTotal ? <Text style={styles.total}>{moneyTotal}</Text> : undefined
+          )}
+          <View style={styles.card}>
+            {hasMoney ? (
+              <View style={styles.cardInner}>
+                {dayExpenses.map((exp) => (
+                  <ExpenseItem
+                    key={exp.id}
+                    e={exp}
+                    showDate={false}
+                    onDeleted={loadFinancialData}
+                  />
+                ))}
+                {dayIncome.map((inc) => (
+                  <IncomeItem
+                    key={inc.id}
+                    e={inc}
+                    showDate={false}
+                    onDeleted={loadFinancialData}
+                  />
+                ))}
               </View>
-              <Text style={[type.figure, { color: colors.alert }]}>
-                {currencySymbol}{l.amount}
-              </Text>
-            </Pressable>
-          ))}
-        </Section>
-      ) : null}
+            ) : (
+              <Text style={[type.body, styles.moneyEmpty]}>Nothing spent or earned on this day.</Text>
+            )}
+            <View style={[styles.moneyFooter, hasMoney && styles.moneyFooterRule]}>
+              <PillButton
+                label="+ Expense"
+                tone={colors.moss}
+                onPress={() =>
+                  router.push({
+                    pathname: '/expense/expense',
+                    params: { date: selectedDate },
+                  })
+                }
+              />
+              <PillButton
+                label="Scan"
+                icon="scan-outline"
+                onPress={() =>
+                  router.push({
+                    pathname: '/expense/expense',
+                    params: { scan: '1', date: selectedDate },
+                  })
+                }
+              />
+            </View>
+          </View>
+        </View>
 
-      {/* Feature 5: One-Tap Quick Snooze Modal */}
-      <SnoozeModal
-        visible={Boolean(snoozingMemory)}
-        memory={snoozingMemory}
-        onClose={() => setSnoozingMemory(null)}
-      />
-    </ScrollView>
+        {dayLoans.length > 0 ? (
+          <View style={styles.group}>
+            {heading('Lent and borrowed')}
+            {rowCard(
+              dayLoans.map((l) => (
+                <Pressable
+                  key={l.id}
+                  onPress={() => router.push('/expense/borrow-lend')}
+                  accessibilityRole="button"
+                  style={({ pressed }) => [styles.loanRow, pressed && styles.pressed]}
+                >
+                  <View style={styles.flexText}>
+                    <Text style={type.entry} numberOfLines={1}>
+                      {l.person_name}
+                    </Text>
+                    <Text style={type.stamp}>
+                      {l.type === 'lent' ? 'Lent to them' : 'Borrowed'} ·{' '}
+                      {l.due_date === selectedDate ? 'Due on this day' : 'Recorded on this day'}
+                    </Text>
+                  </View>
+                  <Text style={[type.figure, styles.alertText]}>
+                    {fmtMoney(l.amount, currencySymbol)}
+                  </Text>
+                  <Ionicons name="chevron-forward" size={16} color={colors.mist} />
+                </Pressable>
+              ))
+            )}
+          </View>
+        ) : null}
+
+        <SnoozeModal
+          visible={Boolean(snoozingMemory)}
+          memory={snoozingMemory}
+          onClose={() => setSnoozingMemory(null)}
+        />
+      </ScrollView>
+    </Screen>
   );
 }
 
 function makeStyles(colors: Colors) {
   return StyleSheet.create({
-    flex: { flex: 1, backgroundColor: colors.paper },
+    flex: { flex: 1 },
     content: {
-      padding: SPACE.page,
-      paddingTop: 52,
+      paddingHorizontal: SPACE.page,
+      paddingTop: 12,
       paddingBottom: 48,
-      gap: 20,
+      gap: 16,
     },
-    headerRow: {
-      flexDirection: 'row',
-      alignItems: 'flex-start',
-      justifyContent: 'space-between',
-    },
-    subtitle: {
-      color: colors.graphite,
-      marginTop: 2,
-      fontSize: 11,
-    },
-    todayBadge: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 4,
-      paddingVertical: 5,
-      paddingHorizontal: 10,
-      borderRadius: 12,
-      backgroundColor: colors.surface,
-      borderWidth: 1,
-      borderColor: colors.rule,
+    stats: { flexDirection: 'row', gap: 8 },
+    dayHeading: {
+      fontFamily: FONTS.sansSemi,
+      fontSize: 17,
+      lineHeight: 23,
+      color: colors.ink,
       marginTop: 4,
     },
-    todayBadgeText: {
-      color: colors.moss,
-      fontSize: 10,
-      fontWeight: '600',
-    },
-    summaryBar: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-around',
-      backgroundColor: colors.surface,
-      borderRadius: 8,
-      borderWidth: 1,
-      borderColor: colors.rule,
-      paddingVertical: 10,
-      paddingHorizontal: 12,
-    },
-    summaryItem: {
-      alignItems: 'center',
-      gap: 2,
-    },
-    summaryLabel: {
-      color: colors.mist,
-      fontSize: 9,
-    },
-    summaryValue: {
-      color: colors.ink,
-      fontSize: 12,
-    },
-    summarySpentActive: {
-      color: colors.ink,
-      fontSize: 12,
-      fontWeight: '700',
-    },
-    summaryIncomeActive: {
-      color: colors.moss,
-      fontSize: 12,
-      fontWeight: '700',
-    },
-    summaryDivider: {
-      width: 1,
-      height: 20,
-      backgroundColor: colors.rule,
-    },
-    section: {
-      gap: 4,
-    },
-    sectionHead: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      marginBottom: 4,
-    },
-    sectionActions: {
-      flexDirection: 'row',
-      gap: 14,
-    },
-    actionLink: {
-      color: colors.mist,
-    },
-    sectionRule: {
-      height: StyleSheet.hairlineWidth,
-      backgroundColor: colors.rule,
-      marginBottom: 2,
-    },
-    loanRow: {
+    group: { gap: 8 },
+    subHead: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
       gap: 12,
-      paddingVertical: 11,
+    },
+    card: {
+      backgroundColor: colors.surface,
+      borderRadius: RADIUS.card,
+      borderWidth: 1,
+      borderColor: colors.rule,
+      paddingHorizontal: 14,
+      overflow: 'hidden',
+    },
+    cardInner: { marginBottom: -1 },
+    emptyRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      paddingVertical: 12,
+    },
+    flexText: { flex: 1 },
+    total: { fontFamily: FONTS.mono, fontSize: 14, color: colors.graphite },
+    moneyEmpty: { paddingTop: 14 },
+    moneyFooter: {
+      flexDirection: 'row',
+      justifyContent: 'flex-end',
+      alignItems: 'center',
+      gap: 8,
+      paddingVertical: 12,
+    },
+    moneyFooterRule: {
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: colors.rule,
+    },
+    alertText: { color: colors.alert },
+    mossText: { color: colors.moss },
+    loanRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      minHeight: 60,
+      paddingVertical: 10,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: colors.rule,
     },
-    loanRowPressed: {
-      opacity: 0.55,
-    },
+    pressed: { opacity: 0.6 },
     rowContainer: {
       flexDirection: 'row',
-      alignItems: 'center',
+      alignItems: 'stretch',
     },
     rowMain: {
       flex: 1,
     },
+    // Carries the same hairline as the row beside it, so the rule runs edge to edge.
     snoozeButton: {
-      padding: 8,
-      marginLeft: 4,
-      borderRadius: 6,
+      width: 44,
+      marginRight: -8,
       alignItems: 'center',
       justifyContent: 'center',
-    },
-    snoozeButtonPressed: {
-      opacity: 0.6,
-      backgroundColor: colors.surface,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.rule,
     },
   });
 }

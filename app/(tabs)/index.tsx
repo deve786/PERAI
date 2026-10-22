@@ -586,7 +586,6 @@ function makeStyles(colors: Colors) {
     titleBlock: { flex: 1, gap: 2 },
     title: {
       fontFamily: FONTS.sansSemi,
-      fontWeight: '700',
       fontSize: 28,
       lineHeight: 34,
       letterSpacing: -0.4,
