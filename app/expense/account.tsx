@@ -7,7 +7,7 @@ import { useSync } from '@/expense/sync/useSync';
 import { exportCsv } from '@/expense/csv';
 import { showDialog } from '@/dialogStore';
 import { useTheme } from '@/expense/theme';
-import { Button, Card, Field, ListCard, ListRow, Row, Screen, T, TopBar } from '@/expense/ui';
+import { Button, Card, Field, ListCard, ListRow, Screen, T, TopBar } from '@/expense/ui';
 
 function formatLastSynced(iso: string): string {
   const d = new Date(iso);

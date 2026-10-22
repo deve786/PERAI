@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, TextInput, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
@@ -10,13 +10,29 @@ import {
 } from '@/expense/db';
 import { listAccounts, type AccountItem } from '@/expense/accountsDb';
 import { PlacePicker } from '@/expense/PlacePicker';
-import { fromStr, prettyDate, toStr, todayStr } from '@/expense/dates';
-import { numerals, radius, useTheme } from '@/expense/theme';
-import { Button, Chip, ConfirmDialog, Divider, Field, ActionBar, IconDot, Row, Screen, T } from '@/expense/ui';
+import { fromStr, monthName, prettyDate, toStr, todayStr } from '@/expense/dates';
+import { fmtMoney } from '@/expense/stats';
+import { FONTS, numerals, radius, useTheme } from '@/expense/theme';
+import {
+  ActionBar, Button, Card, Chip, ConfirmDialog, Field, IconDot, Label, ListCard, ListRow, Row, Screen, Segmented, T,
+} from '@/expense/ui';
 
 type Mode = 'view' | 'edit';
 const parseAmt = (s: string) => parseFloat(s.replace(/,/g, ''));
 const round2 = (n: number) => Math.round(n * 100) / 100;
+
+const METHOD_OPTIONS = METHODS.map((m): { key: string; label: string } => ({ key: m, label: m }));
+const METHOD_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
+  Cash: 'cash-outline', UPI: 'phone-portrait-outline', Card: 'card-outline', Bank: 'business-outline',
+};
+
+/** "Today, 22 Oct" / "Yesterday, 21 Oct" / "20 Oct". */
+function longDate(s: string) {
+  const p = prettyDate(s);
+  if (p !== 'Today' && p !== 'Yesterday') return p;
+  const d = fromStr(s);
+  return `${p}, ${d.getDate()} ${monthName(d.getMonth())}`;
+}
 
 export default function IncomeForm() {
   const { id, mode: modeParam } = useLocalSearchParams<{ id?: string; mode?: string }>();
@@ -43,6 +59,8 @@ export default function IncomeForm() {
   const [showPicker, setShowPicker] = useState(false);
   const [customCat, setCustomCat] = useState('');
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  // Optional fields fold away; opened by default when editing an entry that already uses them.
+  const [moreOpen, setMoreOpen] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -62,6 +80,7 @@ export default function IncomeForm() {
           setAccountId(e.account_id ?? null);
           if (e.user_tag) setUserTag(e.user_tag);
           if (e.place) setPlace(e.place);
+          if (e.place || e.user_tag || e.notes) setMoreOpen(true);
         }
       } else if (cs.length) {
         setCatId(cs[0].id);
@@ -73,6 +92,8 @@ export default function IncomeForm() {
   const isOther = cats.find((k) => k.id === catId)?.name === 'Other';
   const valid = !isNaN(value) && value > 0 && catId !== null;
   const cat = cats.find((k) => k.id === catId);
+  const otherCat = cats.find((k) => k.name === 'Other');
+  const bankName = (bankId: string | null) => (bankId ? bankAccounts.find((a) => a.id === bankId)?.name ?? '' : '');
 
   async function onSave() {
     if (!valid || catId === null) return;
@@ -103,6 +124,18 @@ export default function IncomeForm() {
   }
 
   if (mode === 'view') {
+    const details: Detail[] = [
+      { icon: 'calendar-outline', label: 'Date', value: longDate(date) },
+      {
+        icon: METHOD_ICONS[method] ?? 'wallet-outline',
+        label: 'Received in',
+        value: method === 'UPI' && bankName(accountId) ? `${method} · ${bankName(accountId)}` : method,
+      },
+    ];
+    if (place.trim()) details.push({ icon: 'location-outline', label: 'Place', value: place });
+    if (userTag.trim()) details.push({ icon: 'person-outline', label: 'Person', value: userTag });
+    if (notes.trim()) details.push({ icon: 'document-text-outline', label: 'Notes', value: notes, block: true });
+
     return (
       <Screen edges={['top', 'bottom']}>
         <ActionBar
@@ -110,58 +143,26 @@ export default function IncomeForm() {
           onClose={() => router.back()}
           actions={[{ label: 'Edit', onPress: () => setMode('edit') }]}
         />
-        <ScrollView contentContainerStyle={{ padding: 20, paddingTop: 12, paddingBottom: 32 }}>
-          <Row style={{ alignItems: 'center', gap: 10, marginTop: 10 }}>
-            {cat && <IconDot icon={cat.icon} color={cat.color} size={44} />}
-            <View style={{ flex: 1 }}>
-              <T size={15} weight="600">{note || cat?.name || ''}</T>
-              {note ? <T size={13} sub style={{ marginTop: 2 }}>{cat?.name}</T> : null}
-            </View>
-          </Row>
-          <T size={40} weight="700" tabular style={{ marginTop: 18, letterSpacing: -1, color: c.good }}>+{symbol}{value}</T>
-
-          <Divider style={{ marginTop: 20, marginBottom: 14 }} />
-
-          <Row style={{ justifyContent: 'space-between', paddingVertical: 6 }}>
-            <T size={13.5} sub>Date</T>
-            <T size={13.5}>{prettyDate(date)}</T>
-          </Row>
-          {place.trim().length > 0 && (
-            <Row style={{ justifyContent: 'space-between', paddingVertical: 6 }}>
-              <T size={13.5} sub>Place</T>
-              <Row style={{ gap: 6, alignItems: 'center' }}>
-                <Ionicons name="location-outline" size={16} color={c.sub} />
-                <T size={13.5} weight="600">{place}</T>
-              </Row>
-            </Row>
-          )}
-          {userTag.trim().length > 0 && (
-            <Row style={{ justifyContent: 'space-between', paddingVertical: 6 }}>
-              <T size={13.5} sub>For user</T>
-              <Row style={{ gap: 6, alignItems: 'center' }}>
-                <Ionicons name="person-circle-outline" size={16} color={c.sub} />
-                <T size={13.5} weight="600">{userTag}</T>
-              </Row>
-            </Row>
-          )}
-          <Row style={{ justifyContent: 'space-between', paddingVertical: 6 }}>
-            <T size={13.5} sub>Received via</T>
-            <T size={13.5}>
-              {method}
-              {method === 'UPI' && accountId
-                ? ` · ${bankAccounts.find((a) => a.id === accountId)?.name ?? ''}`
-                : ''}
+        <ScrollView contentContainerStyle={{ flexGrow: 1, padding: 20, paddingTop: 16, paddingBottom: 24 }}>
+          <Card style={{ alignItems: 'center', paddingVertical: 24, gap: 8 }}>
+            {cat ? <IconDot icon={cat.icon} color={cat.color} size={56} /> : null}
+            <T size={18} weight="600" style={{ textAlign: 'center' }}>{note || cat?.name || ''}</T>
+            {note && cat ? (
+              <View style={{ backgroundColor: c.well, borderRadius: radius.pill, paddingHorizontal: 12, paddingVertical: 4 }}>
+                <T size={13} sub>{cat.name}</T>
+              </View>
+            ) : null}
+            <T size={44} weight="600" tabular style={{ marginTop: 6, letterSpacing: -1, color: c.good }}>
+              +{fmtMoney(isNaN(value) ? 0 : value, symbol)}
             </T>
-          </Row>
-          {notes.trim().length > 0 && (
-            <View style={{ marginTop: 14 }}>
-              <T size={13} sub style={{ marginBottom: 4 }}>Notes</T>
-              <T size={14.5} style={{ lineHeight: 20 }}>{notes}</T>
-            </View>
-          )}
+          </Card>
 
-          <Button title="Edit income" icon="pencil-outline" kind="ghost" onPress={() => setMode('edit')} style={{ marginTop: 24 }} />
-          <Button title="Delete income" kind="danger" onPress={() => setConfirmingDelete(true)} style={{ marginTop: 10 }} />
+          <ListCard style={{ marginTop: 16 }}>
+            {details.map((d, i) => <DetailRow key={d.label} {...d} last={i === details.length - 1} />)}
+          </ListCard>
+
+          <View style={{ flex: 1, minHeight: 24 }} />
+          <Button title="Delete income" icon="trash-outline" kind="danger" onPress={() => setConfirmingDelete(true)} />
         </ScrollView>
         <ConfirmDialog
           visible={confirmingDelete}
@@ -178,41 +179,58 @@ export default function IncomeForm() {
     <Screen edges={['top', 'bottom']}>
       <ActionBar
         title={editId ? 'Edit income' : 'New income'}
-        actions={[
-          { label: 'Cancel', onPress: editId ? () => setMode('view') : () => router.back() },
-          { label: 'Save', onPress: onSave, primary: true, disabled: !valid },
-        ]}
+        onCancel={editId ? () => setMode('view') : () => router.back()}
+        actions={[{ label: 'Save', onPress: onSave, primary: true, disabled: !valid }]}
       />
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <ScrollView contentContainerStyle={{ padding: 20, paddingTop: 12, paddingBottom: 32 }} keyboardShouldPersistTaps="handled">
-          <Row style={{ alignItems: 'center', gap: 6, marginTop: 6, marginBottom: 22 }}>
-            <T size={34} weight="600" style={{ color: c.good }}>{symbol}</T>
-            <TextInput
-              value={amount}
-              onChangeText={setAmount}
-              placeholder="0"
-              placeholderTextColor={c.faint}
-              keyboardType="decimal-pad"
-              autoFocus={!editId}
-              style={[{
-                flex: 1, fontSize: 44, fontWeight: '700', color: c.text,
-                padding: 0, letterSpacing: -1.2,
-              }, numerals]}
-            />
-          </Row>
+        <ScrollView contentContainerStyle={{ padding: 20, paddingTop: 16, paddingBottom: 32 }} keyboardShouldPersistTaps="handled">
+          <Card style={{ alignItems: 'center', paddingVertical: 20 }}>
+            <T size={14} sub>Amount received</T>
+            <Row style={{ justifyContent: 'center', gap: 10, marginTop: 4, maxWidth: '100%' }}>
+              <T size={28} tabular style={{ color: c.good }}>+{symbol}</T>
+              <TextInput
+                value={amount}
+                onChangeText={setAmount}
+                placeholder="0"
+                placeholderTextColor={c.faint}
+                keyboardType="decimal-pad"
+                autoFocus={!editId}
+                accessibilityLabel="Amount received"
+                style={[{
+                  fontFamily: FONTS.monoMedium, fontSize: 48, color: c.good,
+                  padding: 0, minWidth: 64, maxWidth: 260, textAlign: 'center', letterSpacing: -1.2,
+                }, numerals]}
+              />
+            </Row>
+          </Card>
 
           <Field
-            label="Title (optional)"
+            label="Title"
             value={note}
             onChangeText={setNote}
             placeholder="e.g. October salary"
+            containerStyle={{ marginTop: 20, marginBottom: 0 }}
           />
 
-          <T size={13} sub style={{ marginBottom: 9 }}>Category</T>
+          <Label style={{ marginTop: 20 }}>Category</Label>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
             {cats.map((k) => (
               <Chip key={k.id} label={k.name} color={k.color} active={catId === k.id} onPress={() => setCatId(k.id)} />
             ))}
+            {otherCat && !isOther ? (
+              <Pressable
+                onPress={() => setCatId(otherCat.id)}
+                accessibilityRole="button"
+                accessibilityLabel="New category"
+                style={({ pressed }) => ({
+                  minHeight: 36, paddingHorizontal: 14, borderRadius: radius.pill, marginBottom: 8,
+                  borderWidth: 1, borderStyle: 'dashed', borderColor: c.border,
+                  justifyContent: 'center', opacity: pressed ? 0.7 : 1,
+                })}
+              >
+                <T size={14} weight="600" style={{ color: c.accent }}>+ New</T>
+              </Pressable>
+            ) : null}
           </View>
 
           {isOther && (
@@ -222,77 +240,47 @@ export default function IncomeForm() {
               onChangeText={setCustomCat}
               placeholder="e.g. Dividend"
               maxLength={30}
-              containerStyle={{ marginTop: 12 }}
+              containerStyle={{ marginTop: 8, marginBottom: 0 }}
             />
           )}
 
-          <PlacePicker value={place} onChange={setPlace} onDraft={setPlaceDraft} />
+          <Label style={{ marginTop: 20 }}>Received in</Label>
+          <Segmented options={METHOD_OPTIONS} value={method} onChange={setMethod} />
+          {method === 'UPI' ? (
+            <View style={{ marginTop: 12 }}>
+              {bankAccounts.length > 0 ? (
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center' }}>
+                  <T size={14} sub style={{ marginRight: 10, marginBottom: 8 }}>Into</T>
+                  {bankAccounts.map((a) => (
+                    <Chip
+                      key={a.id}
+                      label={a.institution ? `${a.name} · ${a.institution}` : a.name}
+                      active={accountId === a.id}
+                      onPress={() => setAccountId(accountId === a.id ? null : a.id)}
+                    />
+                  ))}
+                </View>
+              ) : (
+                <Pressable onPress={() => router.push('/expense/net-worth')} hitSlop={8} accessibilityRole="button" style={{ minHeight: 36, justifyContent: 'center' }}>
+                  <T size={14} weight="600" style={{ color: c.accent }}>Add a bank account to track balance</T>
+                </Pressable>
+              )}
+            </View>
+          ) : null}
 
-          <T size={13} sub style={{ marginTop: 16, marginBottom: 9 }}>For user / Tag person (optional)</T>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center' }}>
-            {savedUsers.map((u) => (
-              <Chip
-                key={u.id}
-                label={u.name}
-                icon="person-outline"
-                active={userTag.toLowerCase() === u.name.toLowerCase()}
-                onPress={() => setUserTag(userTag.toLowerCase() === u.name.toLowerCase() ? '' : u.name)}
-              />
-            ))}
-            {!showNewUserInput && (
-              <Chip
-                label="+ Add person"
-                active={false}
-                onPress={() => setShowNewUserInput(true)}
-              />
-            )}
-          </View>
-
-          {showNewUserInput && (
-            <Row style={{ gap: 8, marginTop: 4, marginBottom: 8, alignItems: 'center' }}>
-              <Field
-                value={newUserName}
-                onChangeText={setNewUserName}
-                placeholder="Person name (e.g. Rahul, Mom)"
-                containerStyle={{ flex: 1, marginBottom: 0 }}
-                autoFocus
-              />
-              <Button
-                title="Add"
-                kind="ghost"
-                disabled={!newUserName.trim()}
-                onPress={async () => {
-                  const trimmed = newUserName.trim();
-                  if (!trimmed) return;
-                  await findOrCreateTaggedUser(trimmed);
-                  setUserTag(trimmed);
-                  if (!savedUsers.some((u) => u.name.toLowerCase() === trimmed.toLowerCase())) {
-                    setSavedUsers((prev) => [...prev, { id: trimmed, name: trimmed }].sort((a, b) => a.name.localeCompare(b.name)));
-                  }
-                  setNewUserName('');
-                  setShowNewUserInput(false);
-                }}
-              />
-              <Pressable
-                hitSlop={10}
-                onPress={() => { setShowNewUserInput(false); setNewUserName(''); }}
-                accessibilityLabel="Cancel add person"
-              >
-                <Ionicons name="close-circle" size={22} color={c.faint} />
-              </Pressable>
-            </Row>
-          )}
-
-          <T size={13} sub style={{ marginTop: 16, marginBottom: 9 }}>Date</T>
-          <Pressable
-            onPress={() => setShowPicker((s) => !s)}
-            style={{ backgroundColor: c.card, borderWidth: 1, borderColor: c.line, borderRadius: radius.md, padding: 14, marginBottom: 16 }}
-          >
-            <Row style={{ justifyContent: 'space-between' }}>
-              <T size={15}>{prettyDate(date)}</T>
-              <Ionicons name="calendar-outline" size={18} color={c.sub} />
-            </Row>
-          </Pressable>
+          <ListCard style={{ marginTop: method === 'UPI' ? 8 : 16 }}>
+            <ListRow icon="calendar-outline" iconColor={c.text} label={longDate(date)} onPress={() => setShowPicker((s) => !s)} />
+            <ListRow
+              icon={moreOpen ? 'remove' : 'add'}
+              iconColor={c.text}
+              label="More details"
+              sub="Place, person, notes"
+              onPress={() => setMoreOpen((o) => !o)}
+              chevron={false}
+              right={<Ionicons name={moreOpen ? 'chevron-up' : 'chevron-down'} size={18} color={c.faint} />}
+              last
+            />
+          </ListCard>
           {showPicker && (
             <DateTimePicker
               value={fromStr(date)}
@@ -306,39 +294,77 @@ export default function IncomeForm() {
             />
           )}
 
-          <Field label="Notes (optional)" value={notes} onChangeText={setNotes} placeholder="Any extra detail" />
+          {moreOpen && (
+            <View>
+              <PlacePicker value={place} onChange={setPlace} onDraft={setPlaceDraft} />
 
-          <T size={13} sub style={{ marginBottom: 9 }}>Received via</T>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-            {METHODS.map((m) => (
-              <Chip key={m} label={m} active={method === m} onPress={() => setMethod(m)} />
-            ))}
-          </View>
+              <Label style={{ marginTop: 20 }}>Person</Label>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center' }}>
+                {savedUsers.map((u) => (
+                  <Chip
+                    key={u.id}
+                    label={u.name}
+                    icon="person-outline"
+                    active={userTag.toLowerCase() === u.name.toLowerCase()}
+                    onPress={() => setUserTag(userTag.toLowerCase() === u.name.toLowerCase() ? '' : u.name)}
+                  />
+                ))}
+                {!showNewUserInput && (
+                  <Chip label="Add person" icon="add" active={false} onPress={() => setShowNewUserInput(true)} />
+                )}
+              </View>
 
-          {method === 'UPI' ? (
-            <View style={{ marginTop: 14 }}>
-              <T size={13} sub style={{ marginBottom: 9 }}>Into which bank</T>
-              {bankAccounts.length > 0 ? (
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-                  {bankAccounts.map((a) => (
-                    <Chip
-                      key={a.id}
-                      label={a.institution ? `${a.name} · ${a.institution}` : a.name}
-                      active={accountId === a.id}
-                      onPress={() => setAccountId(accountId === a.id ? null : a.id)}
-                    />
-                  ))}
-                </View>
-              ) : (
-                <Pressable onPress={() => router.push('/expense/net-worth')}>
-                  <T size={13} style={{ color: c.accent }}>Add a bank account to track balance ›</T>
-                </Pressable>
+              {showNewUserInput && (
+                <Row style={{ gap: 8, marginTop: 4, alignItems: 'center' }}>
+                  <Field
+                    value={newUserName}
+                    onChangeText={setNewUserName}
+                    placeholder="Person name (e.g. Rahul, Mom)"
+                    containerStyle={{ flex: 1, marginBottom: 0 }}
+                    autoFocus
+                  />
+                  <Button
+                    title="Add"
+                    kind="ghost"
+                    disabled={!newUserName.trim()}
+                    onPress={async () => {
+                      const trimmed = newUserName.trim();
+                      if (!trimmed) return;
+                      await findOrCreateTaggedUser(trimmed);
+                      setUserTag(trimmed);
+                      if (!savedUsers.some((u) => u.name.toLowerCase() === trimmed.toLowerCase())) {
+                        setSavedUsers((prev) => [...prev, { id: trimmed, name: trimmed }].sort((a, b) => a.name.localeCompare(b.name)));
+                      }
+                      setNewUserName('');
+                      setShowNewUserInput(false);
+                    }}
+                  />
+                  <Pressable
+                    hitSlop={6}
+                    onPress={() => { setShowNewUserInput(false); setNewUserName(''); }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Cancel add person"
+                    style={({ pressed }) => ({ width: 40, height: 40, borderRadius: 20, backgroundColor: c.well, alignItems: 'center', justifyContent: 'center', opacity: pressed ? 0.6 : 1 })}
+                  >
+                    <Ionicons name="close" size={20} color={c.sub} />
+                  </Pressable>
+                </Row>
               )}
-            </View>
-          ) : null}
 
-          <Button title={editId ? 'Save changes' : 'Add income'} onPress={onSave} disabled={!valid} style={{ marginTop: 22, backgroundColor: valid ? c.good : undefined }} />
-          {editId ? <Button title="Delete income" kind="danger" onPress={() => setConfirmingDelete(true)} style={{ marginTop: 10 }} /> : null}
+              <Field
+                label="Notes"
+                value={notes}
+                onChangeText={setNotes}
+                placeholder="Any extra detail"
+                multiline
+                containerStyle={{ marginTop: 20, marginBottom: 0 }}
+              />
+            </View>
+          )}
+
+          {editId ? (
+            <Button title="Delete income" icon="trash-outline" kind="danger" onPress={() => setConfirmingDelete(true)} style={{ marginTop: 28 }} />
+          ) : null}
         </ScrollView>
       </KeyboardAvoidingView>
       <ConfirmDialog
@@ -349,5 +375,31 @@ export default function IncomeForm() {
         onCancel={() => setConfirmingDelete(false)}
       />
     </Screen>
+  );
+}
+
+type Detail = { icon: keyof typeof Ionicons.glyphMap; label: string; value: string; block?: boolean };
+
+/** A row in the details card: icon, label, value on the right (or below, for notes). */
+function DetailRow({ icon, label, value, block, last }: Detail & { last?: boolean }) {
+  const { c } = useTheme();
+  return (
+    <View style={{
+      flexDirection: 'row', alignItems: block ? 'flex-start' : 'center', gap: 12, minHeight: 52, paddingVertical: 12,
+      borderBottomWidth: last ? 0 : StyleSheet.hairlineWidth, borderBottomColor: c.line,
+    }}>
+      <Ionicons name={icon} size={20} color={c.sub} />
+      {block ? (
+        <View style={{ flex: 1 }}>
+          <T size={15} sub>{label}</T>
+          <T size={15} style={{ marginTop: 4, lineHeight: 21 }}>{value}</T>
+        </View>
+      ) : (
+        <>
+          <T size={15} sub>{label}</T>
+          <T size={15} weight="500" style={{ flex: 1, textAlign: 'right' }}>{value}</T>
+        </>
+      )}
+    </View>
   );
 }

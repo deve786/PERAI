@@ -1,10 +1,12 @@
 import { useRouter } from 'expo-router';
-import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Modal, StyleSheet, Text, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { prettyDate } from '../expense/dates';
+import { Button } from '../expense/ui';
 import { formatAmount } from '../format';
 import { setShareProcessing, useShareProcessing } from '../shareProcessingStore';
 import { useTheme } from '../ThemeContext';
-import { SPACE, type Colors } from '../theme';
+import { FONTS, RADIUS, SPACE, type Colors } from '../theme';
 
 /**
  * The card a shared payment goes through: "reading it" while the AI works,
@@ -35,24 +37,25 @@ export function ShareProcessingOverlay() {
       <View style={styles.scrim}>
         {added ? (
           <View style={[styles.card, styles.column]}>
-            <Text style={[type.label, styles.accent]}>ADDED TO EXPENSES</Text>
-            <View>
-              <Text style={[type.display, styles.ink]}>{formatAmount(added.amount, 'INR')}</Text>
-              <Text style={[type.body, styles.ink]} numberOfLines={2}>{added.title}</Text>
+            <View style={styles.heading}>
+              <View style={styles.tick}>
+                <Ionicons name="checkmark" size={18} color={colors.moss} />
+              </View>
+              <Text style={[type.label, styles.accent]}>Added to expenses</Text>
+            </View>
+            <View style={styles.hero}>
+              <Text style={[styles.amount, styles.ink]}>{formatAmount(added.amount, 'INR')}</Text>
+              <Text style={[type.entry, styles.ink]} numberOfLines={2}>{added.title}</Text>
             </View>
             <View style={styles.rows}>
-              <Detail label="DATE" value={prettyDate(added.date)} styles={styles} type={type} />
-              <Detail label="CATEGORY" value={added.category} styles={styles} type={type} />
-              <Detail label="PAID WITH" value={added.bank ? `UPI · ${added.bank}` : 'UPI'} styles={styles} type={type} />
-              <Detail label="NOTES" value={added.notes} styles={styles} type={type} />
+              <Detail label="Date" value={prettyDate(added.date)} styles={styles} type={type} />
+              <Detail label="Category" value={added.category} styles={styles} type={type} />
+              <Detail label="Paid with" value={added.bank ? `UPI · ${added.bank}` : 'UPI'} styles={styles} type={type} last={!added.notes} />
+              <Detail label="Notes" value={added.notes} styles={styles} type={type} last />
             </View>
             <View style={styles.actions}>
-              <Pressable onPress={open} hitSlop={8} style={({ pressed }) => pressed && styles.pressed}>
-                <Text style={[type.label, styles.quiet]}>OPEN EXPENSE</Text>
-              </Pressable>
-              <Pressable onPress={close} hitSlop={8} style={({ pressed }) => pressed && styles.pressed}>
-                <Text style={[type.label, styles.ink]}>DONE</Text>
-              </Pressable>
+              <Button title="Open expense" kind="ghost" onPress={open} style={styles.action} />
+              <Button title="Done" onPress={close} style={styles.action} />
             </View>
           </View>
         ) : (
@@ -71,15 +74,18 @@ function Detail({
   value,
   styles,
   type,
+  last,
 }: {
   label: string;
   value: string;
   styles: ReturnType<typeof makeStyles>;
   type: ReturnType<typeof useTheme>['type'];
+  last?: boolean;
 }) {
+  if (!value) return null;
   return (
-    <View style={styles.detail}>
-      <Text style={[type.label, styles.quiet]}>{label}</Text>
+    <View style={[styles.detail, last && styles.detailLast]}>
+      <Text style={type.fine}>{label}</Text>
       <Text style={[type.body, styles.ink, styles.detailValue]} numberOfLines={2}>{value}</Text>
     </View>
   );
@@ -95,23 +101,43 @@ function makeStyles(colors: Colors) {
       padding: SPACE.page,
     },
     card: {
-      backgroundColor: colors.paper,
-      borderLeftWidth: 2,
-      borderLeftColor: colors.moss,
-      paddingVertical: 20,
-      paddingHorizontal: 18,
+      backgroundColor: colors.surface,
+      borderRadius: RADIUS.card,
+      borderWidth: 1,
+      borderColor: colors.rule,
+      padding: 20,
       maxWidth: 420,
     },
     row: { flexDirection: 'row', alignItems: 'center', gap: 14 },
     column: { width: '100%', gap: 16 },
-    rows: { gap: 8 },
-    detail: { flexDirection: 'row', justifyContent: 'space-between', gap: 16 },
+    heading: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    tick: {
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      backgroundColor: colors.mossSoft,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    hero: { gap: 4 },
+    amount: { fontFamily: FONTS.monoMedium, fontSize: 32, letterSpacing: -0.8 },
+    rows: {},
+    detail: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      gap: 16,
+      minHeight: 44,
+      paddingVertical: 8,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.rule,
+    },
+    detailLast: { borderBottomWidth: 0 },
     detailValue: { flexShrink: 1, textAlign: 'right' },
-    actions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 22, paddingTop: 4 },
+    actions: { flexDirection: 'row', gap: 10, paddingTop: 4 },
+    action: { flex: 1 },
     accent: { color: colors.moss },
     ink: { color: colors.ink },
-    quiet: { color: colors.mist },
     shrink: { flexShrink: 1 },
-    pressed: { opacity: 0.6 },
   });
 }
