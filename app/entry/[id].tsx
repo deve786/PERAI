@@ -1,7 +1,10 @@
+import { Ionicons } from '@expo/vector-icons';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
+  LayoutAnimation,
   Platform,
   Pressable,
   ScrollView,
@@ -10,11 +13,10 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { ChipRow } from '@/components/Chip';
 import { TripSpending } from '@/components/TripSpending';
 import { completeMemory, reopenMemory } from '@/complete';
 import { deleteMemory, getMemory, rememberSpelling, updateMemory } from '@/db/queries';
-import { fullDateLabel, hasStatedTime, timeLabel } from '@/format';
+import { dayLabel, fullDateLabel, hasStatedTime, timeLabel } from '@/format';
 import { logOk } from '@/log';
 import { showDialog } from '@/dialogStore';
 import { syncReminders } from '@/reminders';
@@ -23,8 +25,9 @@ import { nextOccurrence } from '@/repeat';
 import { useGroups } from '@/useGroups';
 import { useMemories } from '@/useMemories';
 import { useTheme } from '@/ThemeContext';
-import { FONTS, SPACE, type Colors } from '@/theme';
-import { CATEGORIES, MEMORY_TYPES, PRIORITIES, REPEATS, type Memory } from '@/types';
+import { FONTS, RADIUS, SPACE, type Colors } from '@/theme';
+import { CATEGORIES, MEMORY_TYPES, PRIORITIES, REPEATS, type Memory, type Repeat } from '@/types';
+import { Button, Chip, Empty, PillButton, Screen, TopBar } from '@/expense/ui';
 
 /** Quick snooze presets covering hours, start-of-day, weekends and next week */
 const SNOOZE_PRESETS: { label: string; calc: () => { date: Date; desc: string } }[] = [
@@ -104,7 +107,8 @@ type Picker = 'group' | 'repeat' | 'priority' | 'type' | 'category';
  * Until this screen there was no way to correct an entry or move it: anything
  * not done on the day it was said could only be struck off or deleted, so the
  * record filled up with work that had quietly gone stale. Reached by
- * long-pressing a row on the Timeline or the Today screen.
+ * long-pressing a row on the Timeline or the Today screen. The back button
+ * saves a changed title before leaving, as the Close link used to.
  */
 export default function EntryScreen() {
   const { colors, type } = useTheme();
@@ -117,6 +121,9 @@ export default function EntryScreen() {
   const [gone, setGone] = useState(false);
   /** A group being typed, before it is committed to the entry. */
   const [groupDraft, setGroupDraft] = useState('');
+  /** Which detail row is open to show its choices. */
+  const [picking, setPicking] = useState<Picker | null>(null);
+  const [showDatePicker, setShowDatePicker] = useState(false);
   const { memories } = useMemories();
   const { empty: madeGroups } = useGroups();
   const existingGroups = groupNames(memories, madeGroups);
@@ -157,12 +164,19 @@ export default function EntryScreen() {
 
   if (gone) {
     return (
-      <View style={styles.center}>
-        <Text style={type.label}>THIS ENTRY IS GONE</Text>
-      </View>
+      <Screen edges={['top', 'bottom']}>
+        <TopBar title="Entry" onBack={() => router.back()} />
+        <Empty icon="trash-outline" title="This entry is gone" hint="It was deleted, here or on another device." />
+      </Screen>
     );
   }
-  if (!memory) return <View style={styles.center} />;
+  if (!memory) {
+    return (
+      <Screen edges={['top', 'bottom']}>
+        <TopBar title="Entry" onBack={() => router.back()} />
+      </Screen>
+    );
+  }
 
   const entry = memory;
 
@@ -182,6 +196,16 @@ export default function EntryScreen() {
     await patch({ eventDate: target.date.toISOString(), dateExpression: target.desc });
     await syncReminders().catch(() => {});
     logOk('Snoozed entry', entry.title);
+  };
+
+  /** A day picked from the calendar; the clock time stays as it was. */
+  const moveToDay = async (day: Date) => {
+    const when = new Date(entry.eventDate);
+    when.setFullYear(day.getFullYear(), day.getMonth(), day.getDate());
+    if (when.getTime() === new Date(entry.eventDate).getTime()) return;
+    await patch({ eventDate: when.toISOString() });
+    await syncReminders().catch(() => {});
+    logOk('Moved entry', entry.title);
   };
 
   /** Give the entry a span of this many days, or clear it with 0. */
@@ -222,6 +246,11 @@ export default function EntryScreen() {
     await patch({ title: next });
   };
 
+  const close = async () => {
+    await saveTitle();
+    router.back();
+  };
+
   const confirmDelete = () => {
     showDialog({
       title: 'Delete this entry?',
@@ -242,266 +271,373 @@ export default function EntryScreen() {
   };
 
   const struck = entry.status !== 'active';
-  const when = hasStatedTime(entry.dateExpression)
-    ? `${fullDateLabel(entry.eventDate)} · ${timeLabel(entry.eventDate)}`
-    : fullDateLabel(entry.eventDate);
   const comesBack = entry.repeat
     ? fullDateLabel(nextOccurrence(entry.eventDate, entry.repeat))
     : null;
 
-  return (
-    <KeyboardAvoidingView
-      style={styles.flex}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <TextInput
-          value={title}
-          onChangeText={setTitle}
-          onBlur={() => void saveTitle()}
-          style={styles.title}
-          multiline
-        />
-        {/* Leaving the screen saves it too, but an edit you can see is
-            pending should have something to press. */}
-        {titleChanged ? (
-          <Pressable onPress={() => void saveTitle()} hitSlop={10} style={styles.saveTitle}>
-            <Text style={[type.label, styles.saveTitleText]}>SAVE TITLE</Text>
-          </Pressable>
-        ) : null}
+  const toggle = (which: Picker) => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setPicking((open) => (open === which ? null : which));
+  };
 
-        <View style={styles.field}>
-          <Text style={type.label}>WHEN</Text>
-          <Text style={type.body}>{when}</Text>
+  const pickers: { key: Picker; label: string; value: string; sub?: string | null }[] = [
+    { key: 'group', label: 'Group', value: entry.groupName ?? 'None' },
+    {
+      key: 'repeat',
+      label: 'Repeats',
+      value: entry.repeat ? REPEAT_LABEL[entry.repeat] : 'Once',
+      sub: comesBack ? `Ticking it off moves it to ${comesBack}.` : null,
+    },
+    { key: 'priority', label: 'Priority', value: entry.priority ? sentence(entry.priority) : 'None' },
+    { key: 'type', label: 'Type', value: sentence(entry.type) },
+    { key: 'category', label: 'Category', value: sentence(entry.category) },
+  ];
 
-          <Text style={[type.stamp, { marginTop: 6, color: colors.mist }]}>QUICK SNOOZE</Text>
-          <View style={styles.pushRow}>
-            {SNOOZE_PRESETS.map((option) => (
-              <Pressable
-                key={option.label}
-                onPress={() => void snoozeTo(option.calc())}
-                style={({ pressed }) => [styles.push, pressed && styles.pressed]}
-              >
-                <Text style={[type.label, styles.pushText]}>{option.label}</Text>
-              </Pressable>
+  /** The choices under an open row. Tapping the chosen one again clears it, as before. */
+  const choices = (which: Picker) => {
+    switch (which) {
+      case 'repeat':
+        return (
+          <View style={styles.chips}>
+            <Chip label="Once" active={entry.repeat === null} onPress={() => void patch({ repeat: null })} />
+            {REPEATS.map((option) => (
+              <Chip
+                key={option}
+                label={REPEAT_LABEL[option]}
+                active={entry.repeat === option}
+                onPress={() => void patch({ repeat: entry.repeat === option ? null : option })}
+              />
             ))}
           </View>
-
-          <Text style={[type.stamp, { marginTop: 6, color: colors.mist }]}>SHIFT DATE</Text>
-          <View style={styles.pushRow}>
-            {PUSHES.map((option) => (
-              <Pressable
-                key={option.label}
-                onPress={() => void push(option.days)}
-                style={({ pressed }) => [styles.push, pressed && styles.pressed]}
-              >
-                <Text style={[type.label, styles.pushText]}>{option.label}</Text>
-              </Pressable>
+        );
+      case 'priority':
+        return (
+          <View style={styles.chips}>
+            <Chip label="None" active={entry.priority === null} onPress={() => void patch({ priority: null })} />
+            {PRIORITIES.map((option) => (
+              <Chip
+                key={option}
+                label={sentence(option)}
+                active={entry.priority === option}
+                onPress={() => void patch({ priority: entry.priority === option ? null : option })}
+              />
             ))}
           </View>
-          <View style={styles.stepRow}>
-            <Pressable onPress={() => void push(-1)} hitSlop={8}>
-              <Text style={[type.label, styles.step]}>A DAY EARLIER</Text>
-            </Pressable>
-            <Pressable onPress={() => void push(1)} hitSlop={8}>
-              <Text style={[type.label, styles.step]}>A DAY LATER</Text>
-            </Pressable>
-          </View>
-        </View>
-
-        {/* An entry that covers days rather than a moment — a trip. Gives the
-            Spending card below a span to gather expenses from. */}
-        <View style={styles.field}>
-          <Text style={type.label}>ENDS</Text>
-          <Text style={type.body}>
-            {entry.endDate ? fullDateLabel(entry.endDate) : 'Same day'}
-          </Text>
-          <View style={styles.pushRow}>
-            {ENDS.map((option) => (
-              <Pressable
-                key={option.label}
-                onPress={() => void setEnd(option.days)}
-                style={({ pressed }) => [styles.push, pressed && styles.pressed]}
-              >
-                <Text style={[type.label, styles.pushText]}>{option.label}</Text>
-              </Pressable>
+        );
+      case 'type':
+        return (
+          <View style={styles.chips}>
+            {MEMORY_TYPES.map((option) => (
+              <Chip
+                key={option}
+                label={sentence(option)}
+                active={entry.type === option}
+                onPress={() => {
+                  if (entry.type !== option) void patch({ type: option });
+                }}
+              />
             ))}
           </View>
-          {entry.endDate ? (
-            <View style={styles.stepRow}>
-              <Pressable onPress={() => void nudgeEnd(-1)} hitSlop={8}>
-                <Text style={[type.label, styles.step]}>A DAY SHORTER</Text>
-              </Pressable>
-              <Pressable onPress={() => void nudgeEnd(1)} hitSlop={8}>
-                <Text style={[type.label, styles.step]}>A DAY LONGER</Text>
-              </Pressable>
-            </View>
-          ) : null}
-        </View>
-
-        {entry.endDate ? <TripSpending memory={entry} /> : null}
-
-        <View style={styles.field}>
-          <Text style={type.label}>REPEATS</Text>
-          <ChipRow
-            options={REPEATS}
-            value={entry.repeat}
-            onChange={(value) => void patch({ repeat: value })}
-            allLabel="Once"
-          />
-          {comesBack ? (
-            <Text style={type.fine}>Ticking it off moves it to {comesBack}.</Text>
-          ) : null}
-        </View>
-
-        <View style={styles.field}>
-          <Text style={type.label}>PRIORITY</Text>
-          <ChipRow
-            options={PRIORITIES}
-            value={entry.priority}
-            onChange={(value) => void patch({ priority: value })}
-            allLabel="None"
-          />
-        </View>
-
-        <View style={styles.field}>
-          <Text style={type.label}>TYPE</Text>
-          <ChipRow
-            options={MEMORY_TYPES}
-            value={entry.type}
-            onChange={(value) => value && void patch({ type: value })}
-            allLabel="—"
-          />
-        </View>
-
-        <View style={styles.field}>
-          <Text style={type.label}>CATEGORY</Text>
-          <ChipRow
-            options={CATEGORIES}
-            value={entry.category}
-            onChange={(value) => value && void patch({ category: value })}
-            allLabel="—"
-          />
-        </View>
-
-        {/* A group is only a name: picking one here is what puts this entry
-            with the others, and clearing it takes it back out. */}
-        <View style={styles.field}>
-          <Text style={type.label}>GROUP</Text>
-          {existingGroups.length > 0 ? (
-            <ChipRow
-              options={existingGroups}
-              value={entry.groupName}
-              onChange={(value) => void patch({ groupName: value })}
-              allLabel="None"
+        );
+      case 'category':
+        return (
+          <View style={styles.chips}>
+            {CATEGORIES.map((option) => (
+              <Chip
+                key={option}
+                label={sentence(option)}
+                active={entry.category === option}
+                onPress={() => {
+                  if (entry.category !== option) void patch({ category: option });
+                }}
+              />
+            ))}
+          </View>
+        );
+      case 'group':
+        // A group is only a name: picking one here is what puts this entry
+        // with the others, and clearing it takes it back out.
+        return (
+          <View style={styles.groupChoices}>
+            {existingGroups.length > 0 ? (
+              <View style={styles.chips}>
+                <Chip
+                  label="None"
+                  active={entry.groupName === null}
+                  onPress={() => void patch({ groupName: null })}
+                />
+                {existingGroups.map((name) => (
+                  <Chip
+                    key={name}
+                    label={name}
+                    active={entry.groupName === name}
+                    onPress={() => void patch({ groupName: entry.groupName === name ? null : name })}
+                  />
+                ))}
+              </View>
+            ) : null}
+            <TextInput
+              value={groupDraft}
+              onChangeText={setGroupDraft}
+              onSubmitEditing={() => {
+                const name = normalizeGroupName(groupDraft);
+                setGroupDraft('');
+                if (name) void patch({ groupName: name });
+              }}
+              placeholder={entry.groupName ? 'Move to another group…' : 'New group…'}
+              placeholderTextColor={colors.mist}
+              returnKeyType="done"
+              accessibilityLabel="Group name"
+              style={styles.input}
             />
-          ) : null}
-          <TextInput
-            value={groupDraft}
-            onChangeText={setGroupDraft}
-            onSubmitEditing={() => {
-              const name = normalizeGroupName(groupDraft);
-              setGroupDraft('');
-              if (name) void patch({ groupName: name });
-            }}
-            placeholder={entry.groupName ? 'Move to another group…' : 'New group…'}
-            placeholderTextColor={colors.mist}
-            returnKeyType="done"
-            style={styles.groupInput}
-          />
-        </View>
+          </View>
+        );
+    }
+  };
 
-        <View style={styles.actions}>
-          <Pressable
-            onPress={async () => {
-              if (struck) await reopenMemory(entry);
-              else await completeMemory(entry);
-              await load();
-            }}
-            style={({ pressed }) => [styles.primary, pressed && styles.pressed]}
-          >
-            <Text style={[type.label, styles.primaryText]}>
-              {struck ? 'PUT IT BACK' : entry.repeat ? 'DONE FOR NOW' : 'DONE'}
-            </Text>
-          </Pressable>
-          <Pressable onPress={confirmDelete} hitSlop={8}>
-            <Text style={[type.label, styles.delete]}>DELETE</Text>
-          </Pressable>
-        </View>
+  return (
+    <Screen edges={['top', 'bottom']}>
+      <TopBar title="Entry" onBack={() => void close()} />
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+          <View style={styles.tags}>
+            <View style={[styles.tag, styles.kindTag]}>
+              <Text style={[styles.tagText, styles.kindText]}>{sentence(entry.type)}</Text>
+            </View>
+            <View style={[styles.tag, styles.categoryTag]}>
+              <Text style={styles.tagText}>{sentence(entry.category)}</Text>
+            </View>
+            {struck ? (
+              <View style={[styles.tag, styles.categoryTag]}>
+                <Ionicons name="checkmark" size={14} color={colors.graphite} />
+                <Text style={styles.tagText}>Done</Text>
+              </View>
+            ) : null}
+          </View>
 
-        <Pressable
-          onPress={async () => {
-            await saveTitle();
-            router.back();
-          }}
-          hitSlop={8}
-          style={styles.close}
-        >
-          <Text style={[type.label, styles.closeText]}>CLOSE</Text>
-        </Pressable>
-      </ScrollView>
-    </KeyboardAvoidingView>
+          <View>
+            <TextInput
+              value={title}
+              onChangeText={setTitle}
+              onBlur={() => void saveTitle()}
+              style={styles.title}
+              accessibilityLabel="Title"
+              multiline
+            />
+            {/* Leaving the screen saves it too, but an edit you can see is
+                pending should have something to press. */}
+            {titleChanged ? (
+              <View style={styles.saveTitle}>
+                <PillButton label="Save title" icon="checkmark" onPress={() => void saveTitle()} />
+              </View>
+            ) : null}
+          </View>
+
+          <View style={styles.card}>
+            <View style={styles.whenHead}>
+              <View style={styles.whenIcon}>
+                <Ionicons name="time-outline" size={20} color={colors.moss} />
+              </View>
+              <View style={styles.whenText}>
+                <Text style={type.fine}>When</Text>
+                <Text style={styles.whenValue}>{whenLabel(entry.eventDate, entry.dateExpression)}</Text>
+              </View>
+              <PillButton
+                label={showDatePicker && Platform.OS === 'ios' ? 'Done' : 'Change'}
+                onPress={() => setShowDatePicker((open) => !open)}
+              />
+            </View>
+            {showDatePicker ? (
+              <DateTimePicker
+                value={new Date(entry.eventDate)}
+                mode="date"
+                display={Platform.OS === 'ios' ? 'inline' : 'default'}
+                accentColor={colors.moss}
+                onChange={(event, day) => {
+                  if (Platform.OS !== 'ios') setShowDatePicker(false);
+                  if (day && event.type !== 'dismissed') void moveToDay(day);
+                }}
+              />
+            ) : null}
+
+            <View style={styles.moveBlock}>
+              <Text style={type.fine}>Move it</Text>
+              <View style={styles.chips}>
+                {SNOOZE_PRESETS.map((option) => (
+                  <Chip key={option.label} label={option.label} onPress={() => void snoozeTo(option.calc())} />
+                ))}
+                {PUSHES.map((option) => (
+                  <Chip key={option.label} label={option.label} onPress={() => void push(option.days)} />
+                ))}
+              </View>
+            </View>
+          </View>
+
+          {/* An entry that covers days rather than a moment — a trip. Gives the
+              Spending card below a span to gather expenses from. */}
+          <View style={styles.card}>
+            <View style={styles.whenHead}>
+              <View style={styles.whenIcon}>
+                <Ionicons name="flag-outline" size={19} color={colors.moss} />
+              </View>
+              <View style={styles.whenText}>
+                <Text style={type.fine}>Ends</Text>
+                <Text style={styles.whenValue}>
+                  {entry.endDate ? dayLabel(entry.endDate) : 'Same day'}
+                </Text>
+              </View>
+            </View>
+            <View style={styles.chips}>
+              {ENDS.map((option) => (
+                <Chip key={option.label} label={option.label} onPress={() => void setEnd(option.days)} />
+              ))}
+              {entry.endDate ? (
+                <>
+                  <Chip label="A day shorter" onPress={() => void nudgeEnd(-1)} />
+                  <Chip label="A day longer" onPress={() => void nudgeEnd(1)} />
+                </>
+              ) : null}
+            </View>
+          </View>
+
+          {entry.endDate ? <TripSpending memory={entry} /> : null}
+
+          <View style={styles.list}>
+            {pickers.map((row, index) => {
+              const open = picking === row.key;
+              return (
+                <View
+                  key={row.key}
+                  style={[styles.pickRow, index === pickers.length - 1 && styles.lastRow]}
+                >
+                  <Pressable
+                    onPress={() => toggle(row.key)}
+                    accessibilityRole="button"
+                    accessibilityState={{ expanded: open }}
+                    accessibilityLabel={`${row.label}: ${row.value}`}
+                    style={({ pressed }) => [styles.pickHead, pressed && styles.pressed]}
+                  >
+                    <View style={styles.pickLabel}>
+                      <Text style={styles.rowLabel}>{row.label}</Text>
+                      {row.sub ? <Text style={type.fine}>{row.sub}</Text> : null}
+                    </View>
+                    <Text style={styles.rowValue} numberOfLines={1}>
+                      {row.value}
+                    </Text>
+                    <Ionicons
+                      name={open ? 'chevron-up' : 'chevron-forward'}
+                      size={18}
+                      color={colors.mist}
+                    />
+                  </Pressable>
+                  {open ? <View style={styles.pickBody}>{choices(row.key)}</View> : null}
+                </View>
+              );
+            })}
+          </View>
+
+          <View style={styles.spacer} />
+
+          <View style={styles.actions}>
+            <Button
+              title={struck ? 'Put it back' : entry.repeat ? 'Done for now' : 'Mark done'}
+              icon={struck ? 'arrow-undo' : 'checkmark'}
+              onPress={async () => {
+                if (struck) await reopenMemory(entry);
+                else await completeMemory(entry);
+                await load();
+              }}
+              style={styles.primary}
+            />
+            <Button title="Delete entry" kind="danger" onPress={confirmDelete} />
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </Screen>
   );
 }
 
 function makeStyles(colors: Colors) {
   return StyleSheet.create({
-    flex: { flex: 1, backgroundColor: colors.paper },
-    center: {
-      flex: 1,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: colors.paper,
-    },
-    content: { padding: SPACE.page, paddingTop: 28, paddingBottom: 48, gap: 22 },
-    title: {
-      fontFamily: FONTS.sans,
-      fontSize: 22,
-      lineHeight: 30,
-      color: colors.ink,
-      paddingBottom: 8,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: colors.rule,
-    },
-    field: { gap: 8 },
-    groupInput: {
-      fontFamily: FONTS.sans,
-      fontSize: 15,
-      color: colors.ink,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: colors.rule,
-      paddingVertical: 6,
-    },
-    pushRow: { flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
-    push: {
-      paddingVertical: 8,
-      paddingHorizontal: 14,
-      borderRadius: 4,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: colors.rule,
-    },
-    pushText: { color: colors.graphite },
-    stepRow: { flexDirection: 'row', alignItems: 'center', gap: 20 },
-    step: { color: colors.mist, paddingVertical: 4 },
-    actions: {
+    flex: { flex: 1 },
+    content: { flexGrow: 1, padding: SPACE.page, paddingTop: 18, paddingBottom: 24, gap: 16 },
+    tags: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    tag: {
       flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'space-between',
-      paddingTop: 8,
+      gap: 4,
+      minHeight: 28,
+      paddingHorizontal: 12,
+      borderRadius: RADIUS.pill,
     },
-    primary: {
-      paddingVertical: 12,
-      paddingHorizontal: 20,
-      borderRadius: 4,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: colors.moss,
+    kindTag: { backgroundColor: colors.mossSoft },
+    categoryTag: { backgroundColor: colors.well },
+    tagText: { fontFamily: FONTS.sans, fontSize: 13, color: colors.graphite },
+    kindText: { fontFamily: FONTS.sansSemi, color: colors.moss },
+    title: {
+      fontFamily: FONTS.sansSemi,
+      fontSize: 26,
+      lineHeight: 32,
+      letterSpacing: -0.3,
+      color: colors.ink,
+      padding: 0,
     },
-    primaryText: { color: colors.moss },
-    delete: { color: colors.alert },
-    pressed: { opacity: 0.5 },
-    saveTitle: { alignSelf: 'flex-start', marginTop: -10 },
-    saveTitleText: { color: colors.moss },
-    close: { alignItems: 'center', paddingTop: 10 },
-    closeText: { color: colors.mist },
+    saveTitle: { alignSelf: 'flex-start', marginTop: 8 },
+    card: {
+      backgroundColor: colors.surface,
+      borderRadius: RADIUS.card,
+      borderWidth: 1,
+      borderColor: colors.rule,
+      padding: 14,
+      gap: 12,
+    },
+    whenHead: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+    whenIcon: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      backgroundColor: colors.mossSoft,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    whenText: { flex: 1 },
+    whenValue: { fontFamily: FONTS.sansSemi, fontSize: 17, lineHeight: 23, color: colors.ink },
+    moveBlock: { gap: 8 },
+    // The shared Chip carries its own right and bottom margins.
+    chips: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: -8 },
+    list: {
+      backgroundColor: colors.surface,
+      borderRadius: RADIUS.card,
+      borderWidth: 1,
+      borderColor: colors.rule,
+      paddingHorizontal: 14,
+    },
+    pickRow: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.rule },
+    lastRow: { borderBottomWidth: 0 },
+    pickHead: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 54, paddingVertical: 8 },
+    pickLabel: { flex: 1, gap: 2 },
+    rowLabel: { fontFamily: FONTS.sans, fontSize: 16, color: colors.ink },
+    rowValue: { fontFamily: FONTS.sans, fontSize: 15, color: colors.graphite, maxWidth: '50%' },
+    pickBody: { paddingBottom: 14 },
+    groupChoices: { gap: 12 },
+    input: {
+      fontFamily: FONTS.sans,
+      fontSize: 16,
+      color: colors.ink,
+      minHeight: 48,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: RADIUS.input,
+      backgroundColor: colors.surface,
+    },
+    spacer: { flexGrow: 1 },
+    actions: { gap: 4, paddingTop: 8 },
+    primary: { minHeight: 52 },
+    pressed: { opacity: 0.6 },
   });
 }

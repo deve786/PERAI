@@ -2,11 +2,11 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
-  Text,
   TextInput,
   View,
 } from 'react-native';
@@ -24,18 +24,17 @@ import {
   type CommandPlan,
 } from '@/ai/command';
 import { PlanCard } from '@/components/PlanCard';
-import { useTheme as useExpenseTheme } from '@/expense/theme';
+import { FONTS, radius, useTheme } from '@/expense/theme';
+import { Button, Card, Empty, Label, ListRow, Meter, PillButton, Screen, T, TopBar } from '@/expense/ui';
 import { addEmptyGroup, deleteMemory, insertMemory, removeEmptyGroup, updateMemory } from '@/db/queries';
 import { fileNote } from '@/fileNote';
-import { fullDateLabel } from '@/format';
+import { fullDateLabel, toSentence } from '@/format';
 import { groupSummaries, membersOf, normalizeGroupName, splitTasks } from '@/groups';
 import { logOk } from '@/log';
 import { showDialog } from '@/dialogStore';
 import { normalizeQuery } from '@/manglish';
 import { knownPeople } from '@/speechText';
 import { dueToday, parseWhen } from '@/whenText';
-import { useTheme } from '@/ThemeContext';
-import { FONTS, SPACE, type Colors } from '@/theme';
 import type { Memory } from '@/types';
 import { useGroups } from '@/useGroups';
 import { useMemories } from '@/useMemories';
@@ -50,8 +49,7 @@ import { useVoiceInput } from '@/useVoiceInput';
  * tickets tomorrow and pack bags on Friday" lands two tasks on two days.
  */
 export default function GroupScreen() {
-  const { colors, type } = useTheme();
-  const styles = makeStyles(colors);
+  const { c, budget, setBudget } = useTheme();
   const router = useRouter();
   const { name } = useLocalSearchParams<{ name: string }>();
   const groupName = normalizeGroupName(decodeURIComponent(String(name ?? ''))) ?? '';
@@ -73,7 +71,8 @@ export default function GroupScreen() {
   const [plan, setPlan] = useState<CommandPlan | null>(null);
   /** The change just carried out, kept so it can be undone. */
   const [outcome, setOutcome] = useState<CommandOutcome | null>(null);
-  const { budget, setBudget } = useExpenseTheme();
+  const [renaming, setRenaming] = useState(false);
+  const [menu, setMenu] = useState(false);
 
   /**
    * An instruction rather than a task: "push the cab to Friday", "make the
@@ -320,311 +319,367 @@ export default function GroupScreen() {
   const open = members.filter((memory) => memory.status === 'active');
   const done = members.filter((memory) => memory.status !== 'active');
 
+  async function finishAll() {
+    for (const memory of open) await completeMemory(memory);
+    logOk('Finished a group', groupName);
+  }
+
+  async function close() {
+    await rename(false);
+    router.back();
+  }
+
+  const nameChanged = !!normalizeGroupName(title) && normalizeGroupName(title) !== groupName;
+
+  function saveName() {
+    setRenaming(false);
+    void rename();
+  }
+
+  const nextLine =
+    !summary || summary.open === 0
+      ? null
+      : summary.overdue > 0
+        ? `${summary.overdue} overdue`
+        : summary.nextDue
+          ? `Next ${fullDateLabel(summary.nextDue)}`
+          : null;
+
   return (
-    <KeyboardAvoidingView
-      style={styles.flex}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        {/* The heading is the name: edit it here and every entry moves with it. */}
-        <TextInput
-          value={title}
-          onChangeText={setTitle}
-          onBlur={() => void rename()}
-          onSubmitEditing={() => void rename()}
-          style={styles.title}
-          returnKeyType="done"
-          submitBehavior="blurAndSubmit"
-        />
-        {/* A name you can see is changed should have something to press. */}
-        {normalizeGroupName(title) && normalizeGroupName(title) !== groupName ? (
-          <Pressable onPress={() => void rename()} hitSlop={10} style={styles.saveName}>
-            <Text style={[type.label, styles.saveNameText]}>SAVE NAME</Text>
-          </Pressable>
-        ) : null}
-
-        {summary && summary.total > 0 ? (
-          <View style={styles.progress}>
-            <View style={styles.track}>
-              <View style={[styles.fill, { width: `${Math.round(summary.progress * 100)}%` }]} />
-            </View>
-            <Text style={[type.fine, summary.overdue > 0 && styles.late]}>
-              {summary.done} of {summary.total} done
-              {summary.open === 0
-                ? ''
-                : summary.overdue > 0
-                  ? ` · ${summary.overdue} overdue`
-                  : summary.nextDue
-                    ? ` · next ${fullDateLabel(summary.nextDue)}`
-                    : ''}
-            </Text>
-          </View>
-        ) : null}
-
-        <View style={styles.add}>
-          <TextInput
-            value={listening ? voice.liveText : text}
-            onChangeText={setText}
-            onSubmitEditing={() => void addTyped()}
-            placeholder={listening ? 'Listening…' : 'Add tasks — one line, or several split by commas'}
-            placeholderTextColor={colors.mist}
-            returnKeyType="done"
-            editable={!listening && !saving}
-            multiline
-            style={styles.input}
-          />
-          {text.trim() ? (
-            <View style={styles.addActions}>
-              {/* Straight in, or read properly first — the same choice the
-                  mic already makes for anything spoken. */}
-              <Pressable
-                onPress={() => void addUnderstood(text, false)}
-                hitSlop={10}
-                disabled={saving}
-                accessibilityLabel="Add, understanding dates, amounts and people"
-              >
-                <Ionicons name="sparkles-outline" size={19} color={colors.moss} />
-              </Pressable>
-              <Pressable onPress={() => void addTyped()} hitSlop={10} disabled={saving}>
-                <Text style={[type.label, styles.addOn]}>ADD</Text>
-              </Pressable>
-            </View>
-          ) : (
-            <Pressable
-              onPress={() => void voice.toggle()}
-              hitSlop={10}
-              disabled={saving}
-              accessibilityLabel={listening ? 'Stop and add' : 'Add by voice'}
-            >
-              <Ionicons
-                name={listening ? 'stop-circle-outline' : 'mic-outline'}
-                size={22}
-                color={listening ? colors.moss : colors.graphite}
-              />
-            </Pressable>
-          )}
-        </View>
-
-        {listening ? <VoiceWaveform level={voice.level} /> : null}
-
-        {/* A way out of either kind of adding, the same as on Record. */}
-        {listening ? (
-          <Pressable onPress={voice.cancel} hitSlop={10} style={styles.cancelRow}>
-            <Text style={[type.label, styles.cancel]}>CANCEL</Text>
-          </Pressable>
-        ) : text.trim() && !saving ? (
+    <Screen>
+      <TopBar
+        title={groupName}
+        onBack={() => void close()}
+        right={
           <Pressable
-            onPress={() => {
-              setText('');
-              setError(null);
-              voice.clearError();
-            }}
-            hitSlop={10}
-            style={styles.cancelRow}
+            onPress={() => setMenu(true)}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Group actions"
+            style={({ pressed }) => [styles.roundButton, { backgroundColor: c.well, opacity: pressed ? 0.6 : 1 }]}
           >
-            <Text style={[type.label, styles.cancel]}>CLEAR</Text>
+            <Ionicons name="ellipsis-horizontal" size={20} color={c.text} />
           </Pressable>
-        ) : null}
+        }
+      />
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+          {/* The name: edit it here and every entry moves with it. */}
+          {renaming || nameChanged ? (
+            <Card style={styles.gapCard}>
+              <Label style={styles.noMargin}>Group name</Label>
+              <TextInput
+                value={title}
+                onChangeText={setTitle}
+                onSubmitEditing={saveName}
+                autoFocus={renaming}
+                returnKeyType="done"
+                submitBehavior="blurAndSubmit"
+                accessibilityLabel="Group name"
+                style={[styles.nameInput, { color: c.text, borderColor: c.border, backgroundColor: c.card }]}
+              />
+              <View style={styles.actionsRow}>
+                <PillButton label="Save name" primary disabled={!nameChanged} onPress={saveName} />
+                <PillButton
+                  label="Cancel"
+                  onPress={() => {
+                    setTitle(groupName);
+                    setRenaming(false);
+                  }}
+                />
+              </View>
+            </Card>
+          ) : null}
 
-        <Text style={[type.fine, styles.hint]}>
-          {saving
-            ? 'Adding…'
-            : listening
-              ? 'Say everything at once — dates are understood'
-              : looksMalayalam
-                ? 'Malayalam is read properly either way, and written down the way Settings says.'
-                : text.trim()
-                  ? 'ADD puts the lines in as typed, with their dates. ✨ reads the whole thing properly — amounts, people, several events.'
-                  : 'Type the date in and it is read: table parcel by tomorrow 9am'}
-        </Text>
+          {summary && summary.total > 0 ? (
+            <Card style={styles.gapCard}>
+              <View style={styles.progressHead}>
+                <T size={15} weight="600">{summary.done} of {summary.total} done</T>
+                <T size={13} sub tabular>{Math.round(summary.progress * 100)}%</T>
+              </View>
+              <Meter fraction={summary.progress} />
+              {nextLine ? (
+                <T size={13} sub style={summary.overdue > 0 ? { color: c.danger } : undefined}>
+                  {nextLine}
+                </T>
+              ) : null}
+            </Card>
+          ) : null}
 
-        {error || voice.error ? (
-          <Text style={[type.body, styles.error]}>{error ?? voice.error}</Text>
-        ) : null}
+          <View style={styles.addBlock}>
+            <View style={[styles.add, { backgroundColor: c.card, borderColor: c.border }]}>
+              <TextInput
+                value={listening ? voice.liveText : text}
+                onChangeText={setText}
+                onSubmitEditing={() => void addTyped()}
+                placeholder={listening ? 'Listening…' : 'Add tasks — one line, or several split by commas'}
+                placeholderTextColor={c.faint}
+                returnKeyType="done"
+                editable={!listening && !saving}
+                multiline
+                style={[styles.input, { color: c.text }]}
+              />
+              {text.trim() ? (
+                <View style={styles.addActions}>
+                  {/* Straight in, or read properly first — the same choice the
+                      mic already makes for anything spoken. */}
+                  <Pressable
+                    onPress={() => void addUnderstood(text, false)}
+                    hitSlop={8}
+                    disabled={saving}
+                    accessibilityLabel="Add, understanding dates, amounts and people"
+                    style={[styles.roundButton, { backgroundColor: c.accentSoft }]}
+                  >
+                    <Ionicons name="sparkles-outline" size={19} color={c.accent} />
+                  </Pressable>
+                  <PillButton label="Add" primary disabled={saving} onPress={() => void addTyped()} />
+                </View>
+              ) : (
+                <Pressable
+                  onPress={() => void voice.toggle()}
+                  hitSlop={8}
+                  disabled={saving}
+                  accessibilityLabel={listening ? 'Stop and add' : 'Add by voice'}
+                  style={[styles.roundButton, { backgroundColor: listening ? c.accentSoft : c.well }]}
+                >
+                  <Ionicons
+                    name={listening ? 'stop-circle-outline' : 'mic-outline'}
+                    size={22}
+                    color={listening ? c.accent : c.sub}
+                  />
+                </Pressable>
+              )}
+            </View>
 
-        {/* Nothing has happened yet: this is what an instruction would do. */}
-        {plan && !saving ? (
-          <PlanCard plan={plan} onCancel={() => setPlan(null)} onConfirm={() => void confirmPlan()} />
-        ) : null}
+            {listening ? <VoiceWaveform level={voice.level} /> : null}
 
-        {outcome && !saving ? (
-          <View style={styles.card}>
-            <Text style={[type.label, styles.cardLabel]}>{outcome.label}</Text>
-            <Text style={type.body}>{outcome.summary}</Text>
-            <View style={styles.cardActions}>
-              {outcome.undo ? (
+            <View style={styles.hintRow}>
+              <T size={13} sub style={styles.flex}>
+                {saving
+                  ? 'Adding…'
+                  : listening
+                    ? 'Say everything at once — dates are understood'
+                    : looksMalayalam
+                      ? 'Malayalam is read properly either way, and written down the way Settings says.'
+                      : text.trim()
+                        ? 'Add puts the lines in as typed, with their dates. ✨ reads the whole thing properly — amounts, people, several events.'
+                        : 'Type the date in and it is read: table parcel by tomorrow 9am'}
+              </T>
+              {/* A way out of either kind of adding, the same as on Record. */}
+              {listening ? (
+                <Pressable onPress={voice.cancel} hitSlop={12} accessibilityRole="button">
+                  <T size={14} weight="600" sub>Cancel</T>
+                </Pressable>
+              ) : text.trim() && !saving ? (
                 <Pressable
                   onPress={() => {
+                    setText('');
+                    setError(null);
+                    voice.clearError();
+                  }}
+                  hitSlop={12}
+                  accessibilityRole="button"
+                >
+                  <T size={14} weight="600" sub>Clear</T>
+                </Pressable>
+              ) : null}
+            </View>
+          </View>
+
+          {error || voice.error ? (
+            <T size={15} style={{ color: c.danger }}>{error ?? voice.error}</T>
+          ) : null}
+
+          {/* Nothing has happened yet: this is what an instruction would do. */}
+          {plan && !saving ? (
+            <PlanCard plan={plan} onCancel={() => setPlan(null)} onConfirm={() => void confirmPlan()} />
+          ) : null}
+
+          {outcome && !saving ? (
+            <Card style={styles.gapCard}>
+              <T size={14} weight="700" style={{ color: c.accent }}>{toSentence(outcome.label)}</T>
+              <T size={15}>{outcome.summary}</T>
+              <View style={styles.actionsRow}>
+                {outcome.undo ? (
+                  <PillButton
+                    label="Undo"
+                    icon="arrow-undo-outline"
+                    onPress={() => {
+                      void (async () => {
+                        await outcome.undo?.();
+                        setOutcome(null);
+                      })();
+                    }}
+                  />
+                ) : null}
+                <PillButton label="Dismiss" onPress={() => setOutcome(null)} />
+              </View>
+            </Card>
+          ) : null}
+
+          {/* What just went in, read back the way Record reads a saved note —
+              a mishearing is obvious while it is still one press to undo. */}
+          {added && added.length > 0 && !saving ? (
+            <Card style={styles.addedCard}>
+              <T size={14} weight="700" style={{ color: c.accent }}>
+                {added.length === 1 ? 'Added' : `Added ${added.length}`}
+              </T>
+              {added.map((entry) => (
+                <MemoryRow key={`added-${entry.id}`} memory={entry} gutter="date" showAdded={false} />
+              ))}
+              <View style={[styles.actionsRow, styles.addedActions]}>
+                <PillButton
+                  label="Undo"
+                  icon="arrow-undo-outline"
+                  onPress={() => {
                     void (async () => {
-                      await outcome.undo?.();
-                      setOutcome(null);
+                      for (const entry of added) await deleteMemory(entry.id);
+                      logOk('Undone', `${groupName} · ${added.map((e) => e.title).join(', ')}`);
+                      setAdded(null);
                     })();
                   }}
-                  hitSlop={10}
-                >
-                  <Text style={[type.label, styles.undo]}>UNDO</Text>
-                </Pressable>
-              ) : null}
-              <Pressable onPress={() => setOutcome(null)} hitSlop={10}>
-                <Text style={[type.label, styles.cancel]}>DISMISS</Text>
-              </Pressable>
-            </View>
-          </View>
-        ) : null}
+                />
+                {added.length === 1 ? (
+                  <PillButton label="Edit" icon="pencil-outline" onPress={() => router.push(`/entry/${added[0].id}`)} />
+                ) : null}
+                <PillButton label="Dismiss" onPress={() => setAdded(null)} />
+              </View>
+            </Card>
+          ) : null}
 
-        {/* What just went in, read back the way Record reads a saved note —
-            a mishearing is obvious while it is still one press to undo. */}
-        {added && added.length > 0 && !saving ? (
-          <View style={styles.card}>
-            <Text style={[type.label, styles.cardLabel]}>
-              {added.length === 1 ? 'ADDED' : `ADDED ${added.length}`}
-            </Text>
-            {added.map((entry) => (
-              <MemoryRow key={`added-${entry.id}`} memory={entry} gutter="date" showAdded={false} />
-            ))}
-            <View style={styles.cardActions}>
-              <Pressable
+          {open.length > 0 ? (
+            <Section label={`To do · ${open.length}`}>
+              {open.map((memory) => (
+                <MemoryRow
+                  key={memory.id}
+                  memory={memory}
+                  gutter="date"
+                  showAdded={false}
+                  onPress={() => toggle(memory)}
+                  onLongPress={() => taskActions(memory)}
+                />
+              ))}
+            </Section>
+          ) : null}
+
+          {open.length > 0 ? (
+            <Button title="Tick off everything left" kind="ghost" icon="checkmark-done-outline" onPress={() => void finishAll()} />
+          ) : null}
+
+          {done.length > 0 ? (
+            <Section label={`Done · ${done.length}`}>
+              {done.map((memory) => (
+                <MemoryRow
+                  key={memory.id}
+                  memory={memory}
+                  gutter="date"
+                  showAdded={false}
+                  struck
+                  onPress={() => toggle(memory)}
+                  onLongPress={() => taskActions(memory)}
+                />
+              ))}
+            </Section>
+          ) : null}
+
+          {members.length > 0 ? (
+            <T size={13} sub style={styles.centre}>Tap to tick off · hold to edit or delete</T>
+          ) : (
+            <Empty
+              icon="checkbox-outline"
+              title="Nothing in this group yet"
+              hint="Type the tasks above — several at once, split by commas — or say them."
+            />
+          )}
+        </ScrollView>
+      </KeyboardAvoidingView>
+
+      {/* Rename, finish and delete: the group's own actions. */}
+      <Modal visible={menu} transparent animationType="fade" onRequestClose={() => setMenu(false)}>
+        <Pressable style={styles.scrim} onPress={() => setMenu(false)}>
+          <Pressable onPress={(e) => e.stopPropagation()} style={[styles.menu, { backgroundColor: c.card, borderColor: c.line }]}>
+            <ListRow
+              icon="pencil-outline"
+              label="Rename"
+              chevron={false}
+              onPress={() => {
+                setMenu(false);
+                setRenaming(true);
+              }}
+            />
+            {open.length > 0 ? (
+              <ListRow
+                icon="checkmark-done-outline"
+                label="Tick off everything left"
+                chevron={false}
                 onPress={() => {
-                  void (async () => {
-                    for (const entry of added) await deleteMemory(entry.id);
-                    logOk('Undone', `${groupName} · ${added.map((e) => e.title).join(', ')}`);
-                    setAdded(null);
-                  })();
+                  setMenu(false);
+                  void finishAll();
                 }}
-                hitSlop={10}
-              >
-                <Text style={[type.label, styles.undo]}>UNDO</Text>
-              </Pressable>
-              {added.length === 1 ? (
-                <Pressable onPress={() => router.push(`/entry/${added[0].id}`)} hitSlop={10}>
-                  <Text style={[type.label, styles.undo]}>EDIT</Text>
-                </Pressable>
-              ) : null}
-              <Pressable onPress={() => setAdded(null)} hitSlop={10}>
-                <Text style={[type.label, styles.cancel]}>DISMISS</Text>
-              </Pressable>
-            </View>
-          </View>
-        ) : null}
-
-        {open.length > 0 ? (
-          <Section label={`TO DO  ·  ${open.length}`}>
-            {open.map((memory) => (
-              <MemoryRow
-                key={memory.id}
-                memory={memory}
-                gutter="date"
-                showAdded={false}
-                onPress={() => toggle(memory)}
-                onLongPress={() => taskActions(memory)}
               />
-            ))}
-          </Section>
-        ) : null}
-
-        {done.length > 0 ? (
-          <Section label={`DONE  ·  ${done.length}`}>
-            {done.map((memory) => (
-              <MemoryRow
-                key={memory.id}
-                memory={memory}
-                gutter="date"
-                showAdded={false}
-                struck
-                onPress={() => toggle(memory)}
-                onLongPress={() => taskActions(memory)}
-              />
-            ))}
-          </Section>
-        ) : null}
-
-        {members.length > 0 ? (
-          <Text style={[type.fine, styles.hint]}>Tap to tick off · hold to edit or delete</Text>
-        ) : (
-          <Text style={[type.body, styles.empty]}>
-            Nothing in this group yet. Type the tasks above — several at once,
-            split by commas — or say them.
-          </Text>
-        )}
-
-        {open.length > 0 ? (
-          <Pressable
-            onPress={async () => {
-              for (const memory of open) await completeMemory(memory);
-              logOk('Finished a group', groupName);
-            }}
-            hitSlop={8}
-            style={styles.finish}
-          >
-            <Text style={[type.label, styles.finishText]}>TICK OFF EVERYTHING LEFT</Text>
+            ) : null}
+            <ListRow
+              icon="trash-outline"
+              iconColor={c.danger}
+              label="Delete group"
+              chevron={false}
+              last
+              onPress={() => {
+                setMenu(false);
+                confirmDeleteGroup();
+              }}
+            />
           </Pressable>
-        ) : null}
-
-        <View style={styles.footer}>
-          <Pressable onPress={confirmDeleteGroup} hitSlop={8}>
-            <Text style={[type.label, styles.delete]}>DELETE GROUP</Text>
-          </Pressable>
-          <Pressable
-            onPress={async () => {
-              await rename(false);
-              router.back();
-            }}
-            hitSlop={8}
-          >
-            <Text style={[type.label, styles.closeText]}>CLOSE</Text>
-          </Pressable>
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+        </Pressable>
+      </Modal>
+    </Screen>
   );
 }
 
-function makeStyles(colors: Colors) {
-  return StyleSheet.create({
-    flex: { flex: 1, backgroundColor: colors.paper },
-    content: { padding: SPACE.page, paddingTop: 68, paddingBottom: 48, gap: 20 },
-    title: {
-      fontFamily: FONTS.sans,
-      fontSize: 30,
-      lineHeight: 36,
-      color: colors.ink,
-      padding: 0,
-    },
-    saveName: { alignSelf: 'flex-start', marginTop: -12 },
-    saveNameText: { color: colors.moss },
-    progress: { gap: 6, marginTop: -8 },
-    track: { height: 2, backgroundColor: colors.rule },
-    fill: { height: 2, backgroundColor: colors.moss },
-    late: { color: colors.alert },
-    add: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 12,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: colors.rule,
-    },
-    input: { flex: 1, fontFamily: FONTS.sans, fontSize: 15, color: colors.ink, paddingVertical: 8 },
-    addActions: { flexDirection: 'row', alignItems: 'center', gap: 14 },
-    addOn: { color: colors.moss },
-    card: {
-      gap: 8,
-      borderLeftWidth: 2,
-      borderLeftColor: colors.moss,
-      paddingLeft: 12,
-      paddingVertical: 2,
-    },
-    cardLabel: { color: colors.moss },
-    cardActions: { flexDirection: 'row', gap: 20, paddingTop: 2 },
-    undo: { color: colors.moss },
-    cancelRow: { alignSelf: 'flex-start', marginTop: -12 },
-    cancel: { color: colors.mist },
-    hint: { marginTop: -12 },
-    error: { color: colors.alert },
-    empty: { maxWidth: 320 },
-    finish: { paddingTop: 4 },
-    finishText: { color: colors.moss },
-    footer: { flexDirection: 'row', justifyContent: 'space-between', paddingTop: 8 },
-    delete: { color: colors.alert },
-    closeText: { color: colors.mist },
-  });
-}
+const styles = StyleSheet.create({
+  flex: { flex: 1 },
+  content: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 48, gap: 16 },
+  roundButton: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  gapCard: { gap: 10 },
+  noMargin: { marginBottom: 0 },
+  nameInput: {
+    fontFamily: FONTS.sans,
+    fontSize: 16,
+    minHeight: 48,
+    borderWidth: 1,
+    borderRadius: radius.sm,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  actionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  progressHead: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between' },
+  addBlock: { gap: 8 },
+  add: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    minHeight: 56,
+    borderWidth: 1,
+    borderRadius: radius.sm,
+    paddingLeft: 14,
+    paddingRight: 8,
+    paddingVertical: 6,
+  },
+  input: { flex: 1, fontFamily: FONTS.sans, fontSize: 16, paddingVertical: 8 },
+  addActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  hintRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 16 },
+  addedCard: { gap: 4, paddingVertical: 14 },
+  addedActions: { paddingTop: 8 },
+  centre: { textAlign: 'center' },
+  scrim: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 28,
+  },
+  menu: { width: '100%', maxWidth: 360, borderRadius: 18, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 4 },
+});

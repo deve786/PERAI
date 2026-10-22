@@ -1,19 +1,30 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { FlatList, ScrollView, View } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { FlatList, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { expenseTripLabels, listCategories, listExpenses, listIncome, listIncomeCategories, type Category, type ExpenseRow, type IncomeRow } from '@/expense/db';
 import { getAllMemories } from '@/db/queries';
-import { sum } from '@/expense/stats';
-import { useTheme } from '@/expense/theme';
-import { Chip, Divider, Empty, Field, Row, Screen, T, Title } from '@/expense/ui';
-import { ExpenseItem } from '@/expense/ExpenseItem';
+import { todayStr } from '@/expense/dates';
+import { monthsWithData, OVERALL, periodRange, type Period } from '@/expense/period';
+import { PeriodPicker } from '@/expense/PeriodPicker';
+import { fmtMoney, sum } from '@/expense/stats';
+import { FONTS, radius, useTheme } from '@/expense/theme';
+import { Chip, Empty, ListCard, Row, Screen, Segmented, T, TopBar } from '@/expense/ui';
+import { dayHeading, ExpenseItem, groupByDate } from '@/expense/ExpenseItem';
 import { IncomeItem } from '@/expense/IncomeItem';
 
 type Kind = 'all' | 'expense' | 'income';
 type Entry = { kind: 'expense'; row: ExpenseRow } | { kind: 'income'; row: IncomeRow };
 
+const KINDS: { key: Kind; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'expense', label: 'Spent' },
+  { key: 'income', label: 'Income' },
+];
+
 export default function History() {
   const { c, symbol } = useTheme();
+  const router = useRouter();
   const [expenseRows, setExpenseRows] = useState<ExpenseRow[]>([]);
   const [incomeRows, setIncomeRows] = useState<IncomeRow[]>([]);
   const [expenseCats, setExpenseCats] = useState<Category[]>([]);
@@ -23,6 +34,7 @@ export default function History() {
   const [q, setQ] = useState('');
   const [catName, setCatName] = useState<string | null>(null);
   const [kind, setKind] = useState<Kind>('all');
+  const [period, setPeriod] = useState<Period>(OVERALL);
 
   const load = useCallback(async () => {
     const [ex, inc, exCats, incCats, links, memories] = await Promise.all([
@@ -49,6 +61,15 @@ export default function History() {
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
+  const currentMonth = todayStr().slice(0, 7);
+  const monthOptions = useMemo(
+    () => monthsWithData([...expenseRows, ...incomeRows].map((r) => r.date), currentMonth),
+    [expenseRows, incomeRows, currentMonth]
+  );
+  const range = periodRange(period);
+  const from = range?.from ?? '';
+  const to = range?.to ?? '';
+
   const visibleCats = kind === 'income' ? incomeCats : kind === 'expense' ? expenseCats : [];
 
   const filtered = useMemo(() => {
@@ -59,6 +80,7 @@ export default function History() {
     ];
     return entries
       .filter(({ row }) => {
+        if (from && (row.date < from || row.date > to)) return false;
         if (catName && row.cat_name !== catName) return false;
         if (!needle) return true;
         return (
@@ -73,35 +95,50 @@ export default function History() {
         );
       })
       .sort((a, b) => b.row.date.localeCompare(a.row.date));
-  }, [expenseRows, incomeRows, q, catName, kind]);
+  }, [expenseRows, incomeRows, q, catName, kind, from, to]);
 
+  const groups = useMemo(() => groupByDate(filtered), [filtered]);
   const expenseTotal = sum(filtered.filter((e) => e.kind === 'expense').map((e) => e.row));
   const incomeTotal = sum(filtered.filter((e) => e.kind === 'income').map((e) => e.row));
+  const hasAny = expenseRows.length > 0 || incomeRows.length > 0;
 
-  return (
-    <Screen>
-      <View style={{ paddingHorizontal: 20, paddingTop: 12 }}>
-        <Title style={{ marginBottom: 14 }}>History</Title>
-        <Field value={q} onChangeText={setQ} placeholder="Search titles, categories, amounts" />
-      </View>
+  const header = (
+    <View style={{ paddingTop: 14 }}>
+      <Row style={[styles.search, { backgroundColor: c.card, borderColor: c.border }]}>
+        <Ionicons name="search" size={18} color={c.sub} />
+        <TextInput
+          value={q}
+          onChangeText={setQ}
+          placeholder="Search title, category, place, amount"
+          placeholderTextColor={c.faint}
+          returnKeyType="search"
+          accessibilityLabel="Search history"
+          style={{ flex: 1, fontFamily: FONTS.sans, fontSize: 16, color: c.text, paddingVertical: 12 }}
+        />
+        {q ? (
+          <Pressable onPress={() => setQ('')} hitSlop={10} accessibilityRole="button" accessibilityLabel="Clear search">
+            <Ionicons name="close-circle" size={18} color={c.faint} />
+          </Pressable>
+        ) : null}
+      </Row>
 
-      <Row style={{ paddingHorizontal: 20, marginBottom: 2 }}>
-        {(['all', 'expense', 'income'] as Kind[]).map((k) => (
-          <Chip
-            key={k}
-            label={k === 'all' ? 'All' : k === 'expense' ? 'Expenses' : 'Income'}
-            active={kind === k}
-            onPress={() => { setKind(k); setCatName(null); }}
-          />
-        ))}
+      <Row style={{ gap: 8, marginTop: 12 }}>
+        <Segmented
+          options={KINDS}
+          value={kind}
+          onChange={(k) => { setKind(k); setCatName(null); }}
+          style={{ flex: 1 }}
+        />
+        <PeriodPicker value={period} months={monthOptions} currentMonth={currentMonth} onChange={setPeriod} />
       </Row>
 
       {visibleCats.length > 0 && (
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
+          style={{ marginTop: 12, marginHorizontal: -20, flexGrow: 0 }}
           contentContainerStyle={{ paddingHorizontal: 20 }}
-          style={{ flexGrow: 0 }}
+          keyboardShouldPersistTaps="handled"
         >
           <Chip label="All categories" active={catName === null} onPress={() => setCatName(null)} />
           {visibleCats.map((k) => (
@@ -116,34 +153,64 @@ export default function History() {
         </ScrollView>
       )}
 
-      <Row style={{ justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 10 }}>
-        <T size={13} sub tabular>{filtered.length} {filtered.length === 1 ? 'entry' : 'entries'}</T>
-        <Row style={{ gap: 10 }}>
-          {kind !== 'income' && <T size={13} weight="600" tabular>{expenseTotal > 0 ? `-${symbol}${expenseTotal.toLocaleString('en-IN')}` : ''}</T>}
-          {kind !== 'expense' && incomeTotal > 0 && (
-            <T size={13} weight="600" tabular style={{ color: c.good }}>+{symbol}{incomeTotal.toLocaleString('en-IN')}</T>
-          )}
-        </Row>
-      </Row>
-      <Divider style={{ marginHorizontal: 20 }} />
+      <T size={14} sub style={{ marginTop: visibleCats.length > 0 ? 4 : 12 }}>
+        {filtered.length} {filtered.length === 1 ? 'entry' : 'entries'}
+        {kind !== 'income' ? (
+          <>
+            {' · spent '}
+            <T size={14} weight="600" tabular>{fmtMoney(expenseTotal, symbol)}</T>
+          </>
+        ) : null}
+        {kind !== 'expense' ? (
+          <>
+            {' · earned '}
+            <T size={14} weight="600" tabular style={{ color: c.good }}>{fmtMoney(incomeTotal, symbol)}</T>
+          </>
+        ) : null}
+      </T>
+    </View>
+  );
 
+  return (
+    <Screen>
+      <TopBar title="History" onBack={() => router.back()} />
       <FlatList
-        data={filtered}
-        keyExtractor={(e) => `${e.kind}${e.row.id}`}
+        data={groups}
+        keyExtractor={(g) => g.date}
+        ListHeaderComponent={header}
         contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 40 }}
-        renderItem={({ item }) =>
-          item.kind === 'expense'
-            ? <ExpenseItem e={item.row} onDeleted={load} trip={tripFor.get(item.row.id)} />
-            : <IncomeItem e={item.row} onDeleted={load} />
-        }
+        renderItem={({ item: g }) => (
+          <View style={{ marginTop: 16 }}>
+            <T size={14} weight="600" sub style={{ marginBottom: 6 }}>{dayHeading(g.date)}</T>
+            <ListCard>
+              {g.items.map((e, i) =>
+                e.kind === 'expense'
+                  ? <ExpenseItem key={`e${e.row.id}`} e={e.row} showDate={false} onDeleted={load} trip={tripFor.get(e.row.id)} last={i === g.items.length - 1} />
+                  : <IncomeItem key={`i${e.row.id}`} e={e.row} showDate={false} onDeleted={load} last={i === g.items.length - 1} />
+              )}
+            </ListCard>
+          </View>
+        )}
         ListEmptyComponent={
           <Empty
-            title={expenseRows.length || incomeRows.length ? 'Nothing matches' : 'Nothing yet'}
-            hint={expenseRows.length || incomeRows.length ? 'Try a different search or category.' : 'Add your first entry from Home.'}
+            icon={hasAny ? 'search-outline' : 'receipt-outline'}
+            title={hasAny ? 'Nothing matches' : 'Nothing yet'}
+            hint={hasAny ? 'Try a different search, category or month.' : 'Add your first entry from the Money tab.'}
           />
         }
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
       />
     </Screen>
   );
 }
+
+const styles = StyleSheet.create({
+  search: {
+    gap: 10,
+    minHeight: 48,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderRadius: radius.sm,
+  },
+});

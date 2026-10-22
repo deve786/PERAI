@@ -1,9 +1,10 @@
 import React from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useTheme } from '@/ThemeContext';
-import { FONTS, SPACE, type Colors } from '@/theme';
+import { FONTS, RADIUS, type Colors } from '@/theme';
 import type { Memory } from '@/types';
 import { updateMemory } from '@/db/queries';
 import { syncReminders } from '@/reminders';
@@ -27,7 +28,7 @@ interface SnoozeOption {
 const SNOOZE_OPTIONS: SnoozeOption[] = [
   {
     id: '3h',
-    label: '+3 Hours',
+    label: 'In 3 hours',
     desc: 'Later today',
     icon: 'time-outline',
     getTargetDate: () => {
@@ -37,8 +38,8 @@ const SNOOZE_OPTIONS: SnoozeOption[] = [
   },
   {
     id: 'tomorrow_9am',
-    label: 'Tomorrow 9 AM',
-    desc: 'Start of day',
+    label: 'Tomorrow',
+    desc: '9:00 AM',
     icon: 'sunny-outline',
     getTargetDate: () => {
       const d = new Date();
@@ -49,8 +50,8 @@ const SNOOZE_OPTIONS: SnoozeOption[] = [
   },
   {
     id: 'weekend',
-    label: 'This Weekend',
-    desc: 'Saturday 9 AM',
+    label: 'This weekend',
+    desc: 'Saturday, 9:00 AM',
     icon: 'cafe-outline',
     getTargetDate: () => {
       const d = new Date();
@@ -63,8 +64,8 @@ const SNOOZE_OPTIONS: SnoozeOption[] = [
   },
   {
     id: 'next_week',
-    label: 'Next Week',
-    desc: 'Monday 9 AM',
+    label: 'Next week',
+    desc: 'Monday, 9:00 AM',
     icon: 'calendar-outline',
     getTargetDate: () => {
       const d = new Date();
@@ -77,9 +78,11 @@ const SNOOZE_OPTIONS: SnoozeOption[] = [
   },
 ];
 
+/** Bottom sheet: push a plan to a later time in one tap. */
 export function SnoozeModal({ visible, memory, onClose, onSnoozed }: Props) {
   const { colors, type } = useTheme();
   const styles = makeStyles(colors);
+  const insets = useSafeAreaInsets();
 
   if (!memory) return null;
 
@@ -112,43 +115,49 @@ export function SnoozeModal({ visible, memory, onClose, onSnoozed }: Props) {
       animationType="fade"
       onRequestClose={onClose}
     >
-      <Pressable style={styles.backdrop} onPress={onClose}>
-        <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+      <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Close">
+        <Pressable
+          style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 12) + 16 }]}
+          onPress={(e) => e.stopPropagation()}
+        >
+          <View style={styles.grabber} />
+
           <View style={styles.header}>
-            <View style={styles.headerTitleRow}>
-              <Ionicons name="alarm-outline" size={18} color={colors.moss} />
-              <Text style={[type.label, styles.title]}>QUICK SNOOZE</Text>
-            </View>
-            <Pressable onPress={onClose} hitSlop={10}>
-              <Ionicons name="close-outline" size={20} color={colors.mist} />
-            </Pressable>
+            <Text style={styles.title}>Snooze</Text>
+            <Text style={type.fine} numberOfLines={2}>
+              {memory.title}
+            </Text>
           </View>
 
-          <Text style={[type.entry, styles.memoryTitle]} numberOfLines={2}>
-            {memory.title}
-          </Text>
-
           <View style={styles.optionsList}>
-            {SNOOZE_OPTIONS.map((opt) => (
+            {SNOOZE_OPTIONS.map((opt, index) => (
               <Pressable
                 key={opt.id}
                 onPress={() => void handleSnooze(opt)}
+                accessibilityRole="button"
+                accessibilityLabel={`Snooze: ${opt.label}, ${opt.desc}`}
                 style={({ pressed }) => [
                   styles.optionRow,
-                  pressed && styles.optionRowPressed,
+                  index === SNOOZE_OPTIONS.length - 1 && styles.optionRowLast,
+                  pressed && styles.pressed,
                 ]}
               >
-                <View style={styles.optionIconContainer}>
-                  <Ionicons name={opt.icon} size={18} color={colors.ink} />
+                <View style={styles.optionIcon}>
+                  <Ionicons name={opt.icon} size={18} color={colors.moss} />
                 </View>
-                <View style={styles.optionTextContainer}>
-                  <Text style={[type.body, styles.optionLabel]}>{opt.label}</Text>
-                  <Text style={[type.fine, styles.optionDesc]}>{opt.desc}</Text>
-                </View>
-                <Ionicons name="chevron-forward-outline" size={16} color={colors.mist} />
+                <Text style={[type.entry, styles.optionLabel]}>{opt.label}</Text>
+                <Text style={styles.optionDesc}>{opt.desc}</Text>
               </Pressable>
             ))}
           </View>
+
+          <Pressable
+            onPress={onClose}
+            accessibilityRole="button"
+            style={({ pressed }) => [styles.cancel, pressed && styles.pressed]}
+          >
+            <Text style={styles.cancelText}>Cancel</Text>
+          </Pressable>
         </Pressable>
       </Pressable>
     </Modal>
@@ -164,71 +173,57 @@ function makeStyles(colors: Colors) {
     },
     sheet: {
       backgroundColor: colors.paper,
-      borderTopLeftRadius: 16,
-      borderTopRightRadius: 16,
-      borderTopWidth: 1,
-      borderColor: colors.rule,
-      padding: 20,
-      paddingBottom: 36,
+      borderTopLeftRadius: 20,
+      borderTopRightRadius: 20,
+      paddingHorizontal: 20,
+      paddingTop: 8,
       gap: 16,
     },
-    header: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
+    grabber: {
+      alignSelf: 'center',
+      width: 36,
+      height: 4,
+      borderRadius: 2,
+      backgroundColor: colors.border,
     },
-    headerTitleRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
-    },
-    title: {
-      color: colors.moss,
-      fontWeight: '600',
-    },
-    memoryTitle: {
-      color: colors.ink,
-      fontSize: 16,
-      lineHeight: 22,
-    },
+    header: { gap: 2 },
+    title: { fontFamily: FONTS.sansSemi, fontSize: 20, lineHeight: 26, color: colors.ink },
     optionsList: {
-      gap: 8,
-      marginTop: 4,
+      backgroundColor: colors.surface,
+      borderRadius: RADIUS.card,
+      borderWidth: 1,
+      borderColor: colors.rule,
+      paddingHorizontal: 14,
     },
     optionRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      paddingVertical: 12,
-      paddingHorizontal: 14,
-      borderRadius: 10,
-      backgroundColor: colors.surface,
-      borderWidth: 1,
-      borderColor: colors.rule,
       gap: 12,
+      minHeight: 56,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.rule,
     },
-    optionRowPressed: {
-      opacity: 0.75,
-      backgroundColor: colors.rule,
-    },
-    optionIconContainer: {
-      width: 32,
-      height: 32,
-      borderRadius: 16,
-      backgroundColor: colors.paper,
+    optionRowLast: { borderBottomWidth: 0 },
+    pressed: { opacity: 0.6 },
+    optionIcon: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      backgroundColor: colors.mossSoft,
       alignItems: 'center',
       justifyContent: 'center',
     },
-    optionTextContainer: {
-      flex: 1,
+    optionLabel: { flex: 1 },
+    optionDesc: { fontFamily: FONTS.mono, fontSize: 13, color: colors.graphite },
+    cancel: {
+      minHeight: 48,
+      borderRadius: RADIUS.button,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+      alignItems: 'center',
+      justifyContent: 'center',
     },
-    optionLabel: {
-      color: colors.ink,
-      fontWeight: '600',
-      fontSize: 14,
-    },
-    optionDesc: {
-      color: colors.mist,
-      fontSize: 11,
-    },
+    cancelText: { fontFamily: FONTS.sansSemi, fontSize: 16, color: colors.ink },
   });
 }

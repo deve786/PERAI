@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'expo-router';
 import {
+  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -9,7 +10,10 @@ import {
   Text,
   TextInput,
   View,
+  type LayoutChangeEvent,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import { askAI, type AskResult } from '@/ai/ask';
 import {
   looksLikeCommand,
@@ -24,17 +28,16 @@ import { getTitleLanguage } from '@/settings';
 import { describeError, hasApiKey } from '@/ai/client';
 import { MemoryRow } from '@/components/MemoryRow';
 import { PlanCard } from '@/components/PlanCard';
-import { ComposeButton, type ComposeMode } from '@/components/ComposeButton';
-import { Section } from '@/components/Section';
 import { VoiceWaveform } from '@/components/VoiceWaveform';
 import { forgetQuestion, getAllMemories, getRecentQuestions, saveQuestion } from '@/db/queries';
 import { buildChatContext } from '@/expense/chatContext';
 import { getSetting, listExpenses } from '@/expense/db';
 import { addDays, todayStr } from '@/expense/dates';
 import { useTheme as useExpenseTheme } from '@/expense/theme';
+import { Header, PillButton, Screen } from '@/expense/ui';
 import { useTheme } from '@/ThemeContext';
-import { FONTS, GUTTER, SPACE, type Colors } from '@/theme';
-import { formatAmount, shortDate } from '@/format';
+import { FONTS, RADIUS, SPACE, type Colors } from '@/theme';
+import { formatAmount, shortDate, toSentence } from '@/format';
 import { reminderTime } from '@/reminderTime';
 import { useMemories } from '@/useMemories';
 import { answerTripSpend } from '@/expense/tripAnswer';
@@ -50,19 +53,20 @@ const TRY_ASKING = [
   'Where am I spending the most?',
 ];
 
-/** Which source(s) a found answer actually drew on — memories, Expense data, or both. */
+/** Which source(s) a found answer actually drew on — memories, Money data, or both. */
 function sourceLabel(result: AskResult): string {
   const { evidence, usedExpenseData } = result;
-  const memoryPart = evidence.length > 0 ? (evidence.length === 1 ? '1 ENTRY' : `${evidence.length} ENTRIES`) : null;
-  if (memoryPart && usedExpenseData) return `FROM ${memoryPart} + EXPENSE DATA`;
-  if (memoryPart) return `FROM ${memoryPart}`;
-  if (usedExpenseData) return 'FROM EXPENSE DATA';
-  return 'FROM YOUR RECORD';
+  const memoryPart = evidence.length > 0 ? (evidence.length === 1 ? '1 entry' : `${evidence.length} entries`) : null;
+  if (memoryPart && usedExpenseData) return `From ${memoryPart} and your Money entries`;
+  if (memoryPart) return `From ${memoryPart}`;
+  if (usedExpenseData) return 'From your Money entries';
+  return 'From your record';
 }
 
 export default function AskScreen() {
   const { colors, type } = useTheme();
   const styles = makeStyles(colors);
+  const insets = useSafeAreaInsets();
 
   const [question, setQuestion] = useState('');
   const [asking, setAsking] = useState('');
@@ -84,6 +88,17 @@ export default function AskScreen() {
   const { memories } = useMemories();
   const [recentQuestions, setRecentQuestions] = useState<string[]>([]);
 
+  // The newest exchange is scrolled to the top of the view when it appears,
+  // so a long answer is read from its start rather than its end.
+  const scrollRef = useRef<ScrollView>(null);
+  const scrollToNewest = useRef(false);
+  const onNewestLayout = useCallback((event: LayoutChangeEvent) => {
+    if (!scrollToNewest.current) return;
+    scrollToNewest.current = false;
+    const y = Math.max(0, event.nativeEvent.layout.y - 12);
+    scrollRef.current?.scrollTo({ y, animated: true });
+  }, []);
+
   const loadRecent = useCallback(async () => {
     try {
       setRecentQuestions(await getRecentQuestions(5));
@@ -96,15 +111,15 @@ export default function AskScreen() {
     void loadRecent();
   }, [loadRecent]);
 
-  // "42 ENTRIES · SINCE 3 SEPT" — what answers are drawn from.
+  // "Answers from 42 entries · since 3 Sept" — what answers are drawn from.
   const scope = useMemo(() => {
     if (memories.length === 0) return null;
     const first = memories.reduce(
       (earliest, m) => (m.createdAt < earliest ? m.createdAt : earliest),
       memories[0].createdAt
     );
-    const count = memories.length === 1 ? '1 ENTRY' : `${memories.length} ENTRIES`;
-    return `ANSWERS FROM ${count} · SINCE ${shortDate(first).toUpperCase()}`;
+    const count = memories.length === 1 ? '1 entry' : `${memories.length} entries`;
+    return `Answers from ${count} · since ${shortDate(first)}`;
   }, [memories]);
 
   // A few facts about the last 7 days, worked out on the phone. Each one is a
@@ -124,7 +139,7 @@ export default function AskScreen() {
     }
     const ahead = memories.filter((m) => reminderTime(m, now) !== null).length;
 
-    const facts: Array<{ figure: string; text: string; question: string }> = [];
+    const facts: { figure: string; text: string; question: string }[] = [];
     if (inWeek.length > 0) {
       facts.push({
         figure: String(inWeek.length),
@@ -159,6 +174,7 @@ export default function AskScreen() {
     setQuestion('');
     setOutcome(null);
     setClarify(null);
+    scrollToNewest.current = true;
     try {
       // An instruction is worked out first, but only when it reads like one —
       // the check is local, so asking a question still costs one call as before.
@@ -175,10 +191,12 @@ export default function AskScreen() {
         );
         if (proposed && 'question' in proposed) {
           // It matched more than one thing. Asking is cheaper than guessing.
+          scrollToNewest.current = true;
           setClarify(proposed.question);
           return;
         }
         if (proposed) {
+          scrollToNewest.current = true;
           setPlan(proposed);
           return;
         }
@@ -209,6 +227,7 @@ export default function AskScreen() {
 
       const result =
         tripAnswer ?? (await askAI(q, new Date().toISOString(), all, history, expenseContext));
+      scrollToNewest.current = true;
       setThread((current) => [{ question: q, result }, ...current]);
       await saveQuestion(q);
       await loadRecent();
@@ -291,19 +310,12 @@ export default function AskScreen() {
   const voice = useVoiceInput((spoken) => void ask(spoken), { contextualStrings: hints });
 
   const listening = voice.stage === 'listening';
+  const finishing = voice.stage === 'finishing';
   const typed = question.trim().length > 0;
-  const mode: ComposeMode = listening
-    ? 'listening'
-    : busy || voice.stage === 'finishing'
-      ? 'busy'
-      : typed
-        ? 'send'
-        : 'voice';
-
-  function press() {
-    if (mode === 'send') void ask(question);
-    else void voice.toggle();
-  }
+  // Suggestions ask straight away, so they only work while nothing else is going on.
+  const canTapToAsk = configured && !busy && voice.stage === 'idle' && !typed;
+  const canSend = configured && typed && !busy && voice.stage === 'idle';
+  const micDisabled = !listening && (!configured || busy || finishing);
 
   const idle = thread.length === 0 && !busy && !error && !plan && !outcome && !clarify;
   // The box shows what's being heard, live, while listening.
@@ -312,314 +324,517 @@ export default function AskScreen() {
   // Questions already in this conversation are above; no need to offer them.
   const inThread = new Set(thread.map((turn) => turn.question));
   const otherQuestions = recentQuestions.filter((q) => !inThread.has(q));
+  const suggestions = TRY_ASKING.filter((q) => !inThread.has(q));
+
+  // Oldest at the top, newest just above the box — read like a conversation.
+  const conversation = [...thread].reverse();
 
   return (
-    <KeyboardAvoidingView
-      style={styles.flex}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
-    >
-      <ScrollView
-        contentContainerStyle={styles.content}
-        keyboardShouldPersistTaps="handled"
+    <Screen edges={['top']}>
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
       >
-        <Text style={type.display}>Ask your record</Text>
-
-        <View style={styles.askBar}>
-          <TextInput
-            value={displayQuestion}
-            onChangeText={setQuestion}
-            placeholder={listening ? 'Listening…' : 'Ask out loud or type'}
-            placeholderTextColor={colors.mist}
-            style={styles.input}
-            editable={voice.stage === 'idle' && !busy}
-            returnKeyType="search"
-            onSubmitEditing={() => void ask(question)}
-            multiline
-          />
-          <ComposeButton
-            mode={mode}
-            level={voice.level}
-            onPress={press}
-            disabled={!configured}
-            accessibilityLabel={
-              mode === 'send' ? 'Ask' : mode === 'listening' ? 'Stop and ask' : 'Ask with your voice'
+        <ScrollView
+          ref={scrollRef}
+          style={styles.flex}
+          contentContainerStyle={styles.content}
+          keyboardShouldPersistTaps="handled"
+        >
+          <Header
+            title="Ask"
+            subtitle="About your notes and your money"
+            right={
+              thread.length > 0 && !busy ? (
+                <PillButton label="Clear" icon="refresh" onPress={() => setThread([])} />
+              ) : undefined
             }
           />
-        </View>
 
-        {scope && !listening ? (
-          <View style={styles.scopeRow}>
-            <Text style={[type.stamp, styles.scope]}>
-              {thread.length > 0 ? 'FOLLOW ON, OR ASK SOMETHING NEW' : scope}
-            </Text>
-            {thread.length > 0 ? (
-              <Pressable onPress={() => setThread([])} hitSlop={10}>
-                <Text style={[type.label, styles.cancel]}>CLEAR</Text>
-              </Pressable>
-            ) : null}
-          </View>
-        ) : null}
+          {scope && thread.length === 0 && !listening ? (
+            <Text style={[type.fine, styles.scope]}>{scope}</Text>
+          ) : null}
 
-        {listening ? (
-          <View style={styles.listening}>
-            <VoiceWaveform level={voice.level} />
-            <View style={styles.listenRow}>
-              <Text style={[type.label, styles.live]} accessibilityLiveRegion="polite">
-                LISTENING · SAY "STOP" TO FINISH
+          {!configured ? (
+            <View style={styles.info}>
+              <Ionicons name="information-circle-outline" size={20} color={colors.graphite} />
+              <Text style={[type.body, styles.infoText]}>
+                No API key yet. Add EXPO_PUBLIC_GEMINI_API_KEY to .env to ask
+                questions.
               </Text>
-              <Pressable onPress={voice.cancel} hitSlop={10}>
-                <Text style={[type.label, styles.cancel]}>CANCEL</Text>
-              </Pressable>
             </View>
-          </View>
-        ) : null}
+          ) : null}
 
-        {voice.error ? (
-          <View style={styles.notice}>
-            <Text style={[type.body, styles.noticeText]}>{voice.error}</Text>
-          </View>
-        ) : null}
-
-        {!configured ? (
-          <View style={styles.notice}>
-            <Text style={[type.body, styles.noticeText]}>
-              No API key yet. Add EXPO_PUBLIC_GEMINI_API_KEY to .env to ask
-              questions.
-            </Text>
-          </View>
-        ) : null}
-
-        {error ? (
-          <View style={styles.notice}>
-            <Text style={[type.body, styles.noticeText]}>{error}</Text>
-          </View>
-        ) : null}
-
-        {busy ? (
-          <View style={styles.answerBlock}>
-            <Text style={[type.stamp, styles.question]}>{asking.toUpperCase()}</Text>
-            <Text style={type.label}>
-              {plan ? 'APPLYING THE CHANGE' : 'SEARCHING YOUR RECORD'}
-            </Text>
-          </View>
-        ) : null}
-
-        {/* An instruction that could mean several entries is asked about
-            rather than guessed at. Answering it is just the next question. */}
-        {clarify && !busy ? (
-          <View style={styles.plan}>
-            <Text style={[type.label, styles.planLabel]}>WHICH ONE?</Text>
-            <Text style={type.answer}>{clarify}</Text>
-            <View style={styles.planActions}>
-              <Pressable onPress={() => setClarify(null)} hitSlop={10}>
-                <Text style={[type.label, styles.cancel]}>DISMISS</Text>
-              </Pressable>
-            </View>
-          </View>
-        ) : null}
-
-        {/* Nothing has been changed yet: this is what would be, line by line
-            and before → after, so a misheard instruction is caught before it
-            costs anything. */}
-        {plan && !busy ? (
-          <PlanCard plan={plan} onCancel={() => setPlan(null)} onConfirm={() => void confirmPlan()} />
-        ) : null}
-
-        {outcome && !busy ? (
-          <View style={styles.plan}>
-            <Text style={[type.label, styles.planLabel]}>{outcome.label}</Text>
-            <Text style={type.answer}>{outcome.summary}</Text>
-            <View style={styles.planActions}>
-              {outcome.undo ? (
-                <Pressable onPress={() => void undoOutcome()} hitSlop={10}>
-                  <Text style={[type.label, styles.confirm]}>UNDO</Text>
-                </Pressable>
-              ) : null}
-              <Pressable onPress={() => setOutcome(null)} hitSlop={10}>
-                <Text style={[type.label, styles.cancel]}>DISMISS</Text>
-              </Pressable>
-            </View>
-          </View>
-        ) : null}
-
-        {thread.map(({ question: asked, result }, index) => (
-          <View
-            key={`${asked}-${thread.length - index}`}
-            style={[styles.answerBlock, index > 0 && styles.earlier]}
-          >
-            <Text style={[type.stamp, styles.question]}>{asked.toUpperCase()}</Text>
-
-            {result.headline ? (
-              <Text style={[type.figure, styles.headline]}>{result.headline}</Text>
-            ) : null}
-
-            <Text style={type.answer}>{result.answer}</Text>
-
-            {/* The substance as a list: a phone screen makes a paragraph of
-                dates and amounts almost unreadable. */}
-            {result.items.length > 0 ? (
-              <View style={styles.items}>
-                {result.items.map((item, index) => (
-                  <View key={`${item}-${index}`} style={styles.item}>
-                    <Text style={[type.gutter, styles.itemMark]}>{index + 1}</Text>
-                    <Text style={[type.body, styles.itemText]}>{item}</Text>
-                  </View>
-                ))}
-              </View>
-            ) : null}
-
-            {result.found ? (
-              <View style={styles.evidence}>
-                <Text style={type.label}>{sourceLabel(result)}</Text>
-                <View style={styles.evidenceRule} />
-                {result.evidence.map((memory) => (
-                  <MemoryRow key={memory.id} memory={memory} gutter="date" />
-                ))}
-              </View>
-            ) : (
-              <Text style={[type.fine, styles.noEvidence]}>
-                Nothing in your record matches this.
-              </Text>
-            )}
-          </View>
-        ))}
-
-        {idle && week.length > 0 ? (
-          <Section label="THIS WEEK" inset={false}>
-            {week.map((fact) => (
-              <Pressable
-                key={fact.text + fact.figure}
-                onPress={() => void ask(fact.question)}
-                disabled={!configured || mode !== 'voice'}
-                style={({ pressed }) => [styles.fact, pressed && styles.pressed]}
-                accessibilityHint={`Asks: ${fact.question}`}
+          {conversation.map(({ question: asked, result }, index) => {
+            const newest = index === conversation.length - 1;
+            return (
+              <View
+                key={`${asked}-${index}`}
+                style={[styles.turn, !newest && styles.earlier]}
+                onLayout={newest ? onNewestLayout : undefined}
               >
-                <Text style={[type.figure, styles.factFigure]}>{fact.figure}</Text>
-                <Text style={type.body}>{fact.text}</Text>
-              </Pressable>
-            ))}
-          </Section>
-        ) : null}
+                <View style={styles.bubble}>
+                  <Text style={styles.bubbleText}>{asked}</Text>
+                </View>
 
-        {idle ? (
-          <Section label="TRY ASKING" inset={false}>
-            {TRY_ASKING.map((q) => (
-              <Pressable
-                key={q}
-                onPress={() => void ask(q)}
-                disabled={!configured || mode !== 'voice'}
-                style={({ pressed }) => [styles.recent, pressed && styles.pressed]}
-                accessibilityHint={`Asks: ${q}`}
-              >
-                <Text style={type.body}>{q}</Text>
-              </Pressable>
-            ))}
-          </Section>
-        ) : null}
+                <View style={styles.answerCard}>
+                  {result.headline ? (
+                    <Text style={styles.headline}>{result.headline}</Text>
+                  ) : null}
 
-        {!busy && otherQuestions.length > 0 ? (
-          <Section label="RECENT QUESTIONS" inset={false}>
-            {otherQuestions
-              .map((q) => (
-                <Pressable
-                  key={q}
-                  onPress={() => void ask(q)}
-                  onLongPress={() => void forgetQuestion(q).then(loadRecent)}
-                  disabled={!configured || mode !== 'voice'}
-                  style={({ pressed }) => [styles.recent, pressed && styles.pressed]}
-                  accessibilityHint="Asks this again. Long-press to remove it."
-                >
-                  <Text style={type.body} numberOfLines={2}>
-                    {q}
+                  <Text style={result.headline ? styles.answerSmall : type.answer}>
+                    {result.answer}
                   </Text>
-                </Pressable>
-              ))}
-          </Section>
-        ) : null}
 
-        {idle ? (
-          <Text style={[type.fine, styles.disclaimer]}>
-            Answers come only from what you have recorded. When there is no
-            entry for something, this says so instead of guessing.
-          </Text>
-        ) : null}
-      </ScrollView>
-    </KeyboardAvoidingView>
+                  {/* The substance as a list: a phone screen makes a paragraph of
+                      dates and amounts almost unreadable. */}
+                  {result.items.length > 0 ? (
+                    <View style={styles.items}>
+                      {result.items.map((item, i) => (
+                        <View key={`${item}-${i}`} style={styles.item}>
+                          <Text style={[type.gutter, styles.itemMark]}>{i + 1}</Text>
+                          <Text style={[type.body, styles.itemText]}>{item}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  ) : null}
+
+                  {result.found ? (
+                    <>
+                      <Text style={type.fine}>{sourceLabel(result)}</Text>
+                      {result.evidence.length > 0 ? (
+                        <View style={styles.evidence}>
+                          {/* Rows draw a hairline under themselves; this hides the last one. */}
+                          <View style={styles.evidenceInner}>
+                            {result.evidence.map((memory) => (
+                              <MemoryRow key={memory.id} memory={memory} gutter="date" />
+                            ))}
+                          </View>
+                        </View>
+                      ) : null}
+                    </>
+                  ) : (
+                    <Text style={type.fine}>Nothing in your record matches this.</Text>
+                  )}
+                </View>
+              </View>
+            );
+          })}
+
+          {busy ? (
+            <View style={styles.turn} onLayout={onNewestLayout}>
+              {asking ? (
+                <View style={styles.bubble}>
+                  <Text style={styles.bubbleText}>{asking}</Text>
+                </View>
+              ) : null}
+              <View style={[styles.answerCard, styles.pending]}>
+                <ActivityIndicator size="small" color={colors.moss} />
+                <Text style={type.body}>
+                  {plan ? 'Applying the change…' : 'Searching your record…'}
+                </Text>
+              </View>
+            </View>
+          ) : null}
+
+          {/* An instruction that could mean several entries is asked about
+              rather than guessed at. Answering it is just the next question. */}
+          {clarify && !busy ? (
+            <View style={styles.card} onLayout={onNewestLayout}>
+              <Text style={[type.label, styles.cardLabel]}>Which one?</Text>
+              <Text style={styles.cardText}>{clarify}</Text>
+              <View style={styles.cardActions}>
+                <PillButton label="Dismiss" onPress={() => setClarify(null)} />
+              </View>
+            </View>
+          ) : null}
+
+          {/* Nothing has been changed yet: this is what would be, line by line
+              and before → after, so a misheard instruction is caught before it
+              costs anything. */}
+          {plan && !busy ? (
+            <View onLayout={onNewestLayout}>
+              <PlanCard plan={plan} onCancel={() => setPlan(null)} onConfirm={() => void confirmPlan()} />
+            </View>
+          ) : null}
+
+          {outcome && !busy ? (
+            <View style={styles.card}>
+              <View style={styles.cardHead}>
+                <Ionicons name="checkmark-circle" size={18} color={colors.moss} />
+                <Text style={[type.label, styles.cardLabel]}>{toSentence(outcome.label)}</Text>
+              </View>
+              <Text style={styles.cardText}>{outcome.summary}</Text>
+              <View style={styles.cardActions}>
+                <PillButton label="Dismiss" onPress={() => setOutcome(null)} />
+                {outcome.undo ? (
+                  <PillButton label="Undo" icon="arrow-undo" primary onPress={() => void undoOutcome()} />
+                ) : null}
+              </View>
+            </View>
+          ) : null}
+
+          {voice.error ? (
+            <View style={styles.notice}>
+              <Ionicons name="alert-circle-outline" size={18} color={colors.alert} />
+              <Text style={[type.body, styles.noticeText]}>{voice.error}</Text>
+            </View>
+          ) : null}
+
+          {error ? (
+            <View style={styles.notice}>
+              <Ionicons name="alert-circle-outline" size={18} color={colors.alert} />
+              <Text style={[type.body, styles.noticeText]}>{error}</Text>
+            </View>
+          ) : null}
+
+          {idle && week.length > 0 ? (
+            <View style={styles.group}>
+              <Text style={type.label}>This week</Text>
+              <View style={styles.listCard}>
+                {week.map((fact, i) => (
+                  <Pressable
+                    key={fact.text + fact.figure}
+                    onPress={() => void ask(fact.question)}
+                    disabled={!canTapToAsk}
+                    style={({ pressed }) => [
+                      styles.listRow,
+                      i === week.length - 1 && styles.listRowLast,
+                      pressed && styles.pressed,
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityHint={`Asks: ${fact.question}`}
+                  >
+                    <Text style={styles.factFigure}>{fact.figure}</Text>
+                    <Text style={[type.body, styles.flexText]}>{fact.text}</Text>
+                    <Ionicons name="chevron-forward" size={16} color={colors.mist} />
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+          ) : null}
+
+          {!busy && !plan && !clarify && suggestions.length > 0 ? (
+            <View style={styles.group}>
+              <Text style={type.label}>Try asking</Text>
+              <View style={styles.chips}>
+                {suggestions.map((q) => (
+                  <Pressable
+                    key={q}
+                    onPress={() => void ask(q)}
+                    disabled={!canTapToAsk}
+                    style={({ pressed }) => [
+                      styles.chip,
+                      !canTapToAsk && styles.disabled,
+                      pressed && styles.pressed,
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityHint={`Asks: ${q}`}
+                  >
+                    <Text style={styles.chipText}>{q}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+          ) : null}
+
+          {!busy && otherQuestions.length > 0 ? (
+            <View style={styles.group}>
+              <Text style={type.label}>Recent questions</Text>
+              <View style={styles.listCard}>
+                {otherQuestions.map((q, i) => (
+                  <Pressable
+                    key={q}
+                    onPress={() => void ask(q)}
+                    onLongPress={() => void forgetQuestion(q).then(loadRecent)}
+                    disabled={!canTapToAsk}
+                    style={({ pressed }) => [
+                      styles.listRow,
+                      i === otherQuestions.length - 1 && styles.listRowLast,
+                      pressed && styles.pressed,
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityHint="Asks this again. Long-press to remove it."
+                  >
+                    <Ionicons name="time-outline" size={18} color={colors.mist} />
+                    <Text style={[type.body, styles.recentText]} numberOfLines={2}>
+                      {q}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+          ) : null}
+
+          {idle ? (
+            <Text style={[type.fine, styles.disclaimer]}>
+              Answers come only from what you have recorded. When there is no
+              entry for something, this says so instead of guessing.
+            </Text>
+          ) : null}
+        </ScrollView>
+
+        <View style={styles.dock}>
+          {listening ? (
+            <View style={styles.listening}>
+              <VoiceWaveform level={voice.level} />
+              <View style={styles.listenRow}>
+                <Text style={[type.fine, styles.live]} accessibilityLiveRegion="polite">
+                  Listening · say “stop” to finish
+                </Text>
+                <Pressable
+                  onPress={voice.cancel}
+                  hitSlop={10}
+                  accessibilityRole="button"
+                  style={styles.textButton}
+                >
+                  <Text style={[type.label, styles.cancel]}>Cancel</Text>
+                </Pressable>
+              </View>
+            </View>
+          ) : null}
+
+          <View style={styles.inputRow}>
+            <TextInput
+              value={displayQuestion}
+              onChangeText={setQuestion}
+              placeholder={
+                listening
+                  ? 'Listening…'
+                  : thread.length > 0
+                    ? 'Follow on, or ask something new'
+                    : 'Ask anything…'
+              }
+              placeholderTextColor={colors.mist}
+              style={styles.input}
+              editable={voice.stage === 'idle' && !busy}
+              returnKeyType="search"
+              onSubmitEditing={() => void ask(question)}
+              accessibilityLabel="Your question"
+              multiline
+            />
+            <Pressable
+              onPress={() => void voice.toggle()}
+              disabled={micDisabled}
+              hitSlop={6}
+              accessibilityRole="button"
+              accessibilityLabel={listening ? 'Stop and ask' : 'Ask with your voice'}
+              style={({ pressed }) => [
+                styles.round,
+                styles.mic,
+                listening && styles.micLive,
+                micDisabled && styles.disabled,
+                pressed && styles.pressed,
+              ]}
+            >
+              {finishing ? (
+                <ActivityIndicator size="small" color={colors.moss} />
+              ) : (
+                <Ionicons
+                  name={listening ? 'stop' : 'mic-outline'}
+                  size={listening ? 18 : 21}
+                  color={listening ? colors.onAccent : colors.moss}
+                />
+              )}
+            </Pressable>
+            <Pressable
+              onPress={() => void ask(question)}
+              disabled={!canSend}
+              hitSlop={6}
+              accessibilityRole="button"
+              accessibilityLabel="Ask"
+              style={({ pressed }) => [
+                styles.round,
+                styles.send,
+                !canSend && !busy && styles.sendOff,
+                pressed && styles.pressed,
+              ]}
+            >
+              {busy ? (
+                <ActivityIndicator size="small" color={colors.onAccent} />
+              ) : (
+                <Ionicons name="arrow-up" size={22} color={canSend ? colors.onAccent : colors.mist} />
+              )}
+            </Pressable>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </Screen>
   );
 }
 
 function makeStyles(colors: Colors) {
   return StyleSheet.create({
-    flex: { flex: 1, backgroundColor: colors.paper },
+    flex: { flex: 1 },
     content: {
-      padding: SPACE.page,
-      paddingTop: 68,
-      paddingBottom: 48,
-      gap: 20,
+      paddingHorizontal: SPACE.page,
+      paddingTop: 22,
+      paddingBottom: 32,
+      gap: 16,
     },
-    askBar: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-    input: {
-      flex: 1,
-      fontFamily: FONTS.sans,
-      fontSize: 16,
-      lineHeight: 23,
+    scope: { marginTop: -14 },
+    info: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 10,
+      padding: 14,
+      borderRadius: RADIUS.card,
+      borderWidth: 1,
+      borderColor: colors.rule,
+      backgroundColor: colors.surface,
+    },
+    infoText: { flex: 1 },
+    notice: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 10,
+      padding: 14,
+      borderRadius: RADIUS.input,
+      backgroundColor: colors.alertSoft,
+    },
+    noticeText: { flex: 1, color: colors.alert },
+
+    turn: { gap: 12 },
+    // Earlier exchanges stay readable but step back from the newest one.
+    earlier: { opacity: 0.6 },
+    bubble: {
+      alignSelf: 'flex-end',
+      maxWidth: '82%',
+      backgroundColor: colors.mossFill,
+      borderTopLeftRadius: 18,
+      borderTopRightRadius: 18,
+      borderBottomLeftRadius: 18,
+      borderBottomRightRadius: 4,
+      paddingVertical: 11,
+      paddingHorizontal: 14,
+    },
+    bubbleText: { fontFamily: FONTS.sans, fontSize: 16, lineHeight: 22, color: colors.onAccent },
+    answerCard: {
+      alignSelf: 'flex-start',
+      width: '92%',
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.rule,
+      borderTopLeftRadius: 18,
+      borderTopRightRadius: 18,
+      borderBottomRightRadius: 18,
+      borderBottomLeftRadius: 4,
+      padding: 14,
+      gap: 8,
+    },
+    pending: { flexDirection: 'row', alignItems: 'center', gap: 10, width: 'auto' },
+    headline: {
+      fontFamily: FONTS.monoMedium,
+      fontSize: 26,
+      lineHeight: 32,
+      letterSpacing: -0.5,
       color: colors.ink,
-      maxHeight: 110,
+    },
+    answerSmall: { fontFamily: FONTS.sans, fontSize: 15, lineHeight: 22, color: colors.ink },
+    items: { gap: 2 },
+    item: { flexDirection: 'row', alignItems: 'baseline', gap: 10, paddingVertical: 4 },
+    itemMark: { width: 18, color: colors.mist },
+    itemText: { flex: 1, color: colors.ink },
+    evidence: {
+      marginTop: 2,
+      marginBottom: -8,
+      overflow: 'hidden',
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: colors.rule,
+    },
+    evidenceInner: { marginBottom: -1 },
+
+    card: {
+      gap: 10,
+      padding: 14,
+      borderRadius: RADIUS.card,
+      borderWidth: 1,
+      borderColor: colors.rule,
+      backgroundColor: colors.surface,
+    },
+    cardHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    cardLabel: { color: colors.moss },
+    cardText: { fontFamily: FONTS.sans, fontSize: 16, lineHeight: 23, color: colors.ink },
+    cardActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, paddingTop: 2 },
+
+    group: { gap: 8, marginTop: 4 },
+    chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    chip: {
+      minHeight: 38,
+      justifyContent: 'center',
+      paddingVertical: 8,
+      paddingHorizontal: 13,
+      borderRadius: RADIUS.pill,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+    },
+    chipText: { fontFamily: FONTS.sans, fontSize: 14, lineHeight: 19, color: colors.ink },
+    listCard: {
+      borderRadius: RADIUS.card,
+      borderWidth: 1,
+      borderColor: colors.rule,
+      backgroundColor: colors.surface,
+      paddingHorizontal: 14,
+    },
+    listRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      minHeight: 48,
       paddingVertical: 10,
-      paddingHorizontal: 0,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: colors.rule,
     },
-    listening: { gap: 8 },
+    listRowLast: { borderBottomWidth: 0 },
+    factFigure: { fontFamily: FONTS.monoMedium, fontSize: 16, color: colors.ink, minWidth: 44 },
+    flexText: { flex: 1 },
+    recentText: { flex: 1, color: colors.ink },
+    disclaimer: { maxWidth: 320 },
+
+    dock: {
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      gap: 8,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: colors.rule,
+      backgroundColor: colors.paper,
+    },
+    listening: { gap: 6, paddingHorizontal: 4 },
     listenRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
     live: { color: colors.moss },
-    cancel: { color: colors.mist },
-    notice: {
-      borderLeftWidth: 2,
-      borderLeftColor: colors.alert,
-      paddingLeft: 12,
-      paddingVertical: 2,
+    cancel: { color: colors.graphite },
+    textButton: { minHeight: 32, justifyContent: 'center' },
+    inputRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
+    input: {
+      flex: 1,
+      minHeight: 46,
+      maxHeight: 110,
+      borderRadius: 23,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+      paddingHorizontal: 16,
+      paddingTop: 12,
+      paddingBottom: 12,
+      fontFamily: FONTS.sans,
+      fontSize: 16,
+      lineHeight: 21,
+      color: colors.ink,
     },
-    noticeText: { color: colors.alert },
-    plan: {
-      gap: 10,
-      borderLeftWidth: 2,
-      borderLeftColor: colors.moss,
-      paddingLeft: 12,
-      paddingVertical: 2,
-    },
-    planLabel: { color: colors.moss },
-    planActions: { flexDirection: 'row', gap: 20, paddingTop: 2 },
-    confirm: { color: colors.moss },
-    answerBlock: { gap: 14 },
-    headline: { fontSize: 30, lineHeight: 36, color: colors.ink, marginBottom: -6 },
-    items: { gap: 2, marginTop: -4 },
-    item: { flexDirection: 'row', alignItems: 'baseline', gap: 10, paddingVertical: 5 },
-    itemMark: { width: 18, color: colors.mist },
-    itemText: { flex: 1, color: colors.ink },
-    question: { color: colors.mist },
-    evidence: { gap: 6, marginTop: 6 },
-    evidenceRule: {
-      height: StyleSheet.hairlineWidth,
-      backgroundColor: colors.rule,
-      marginLeft: GUTTER,
-    },
-    noEvidence: { marginTop: -4 },
-    disclaimer: { maxWidth: 320 },
-    scopeRow: {
-      flexDirection: 'row',
+    round: {
+      width: 46,
+      height: 46,
+      borderRadius: 23,
       alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: 12,
-      marginTop: -8,
+      justifyContent: 'center',
     },
-    scope: { color: colors.mist },
-    // Earlier exchanges stay readable but step back from the newest one.
-    earlier: { opacity: 0.6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.rule, paddingTop: 16 },
-    recent: { paddingVertical: 9 },
-    fact: { flexDirection: 'row', alignItems: 'baseline', gap: 10, paddingVertical: 8 },
-    factFigure: { minWidth: GUTTER - 10, fontSize: 16 },
-    pressed: { opacity: 0.45 },
+    mic: { borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
+    micLive: { backgroundColor: colors.mossFill, borderColor: colors.mossFill },
+    send: { backgroundColor: colors.mossFill },
+    sendOff: { backgroundColor: colors.well },
+    disabled: { opacity: 0.45 },
+    pressed: { opacity: 0.6 },
   });
 }
