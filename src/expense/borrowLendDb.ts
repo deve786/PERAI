@@ -77,7 +77,7 @@ export async function listBorrowLend(filter?: {
     params.push(filter.type);
   }
 
-  query += ' ORDER BY CASE WHEN status = "active" THEN 0 WHEN status = "request" THEN 1 ELSE 2 END, date DESC';
+  query += " ORDER BY CASE WHEN status = 'active' THEN 0 WHEN status = 'request' THEN 1 ELSE 2 END, date DESC";
   return db.getAllAsync<BorrowLendItem>(query, ...(params as SQLite.SQLiteBindValue[]));
 }
 
