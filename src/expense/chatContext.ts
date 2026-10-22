@@ -56,6 +56,7 @@ export async function buildChatContext(currency: string, budget: number) {
     peopleCount: r.people_count ?? null,
     itemCount: r.item_count > 1 ? r.item_count : null,
     refunded: r.cancelled === 1,
+    refundPending: r.cancelled === 1 && r.refund_amount == null,
     refundAmount: r.refund_amount ?? null,
     refundPeopleCount: r.refund_people_count ?? null,
     refundBank: r.refund_account_id ? bankName.get(r.refund_account_id) ?? null : null,

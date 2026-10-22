@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
@@ -16,6 +16,7 @@ import { FONTS, numerals, radius, useTheme } from '@/expense/theme';
 import {
   ActionBar, Button, Card, Chip, ConfirmDialog, Field, IconDot, Label, ListCard, ListRow, Row, Screen, Segmented, T,
 } from '@/expense/ui';
+import { KeyboardLift } from '@/components/KeyboardLift';
 
 type Mode = 'view' | 'edit';
 const parseAmt = (s: string) => parseFloat(s.replace(/,/g, ''));
@@ -182,7 +183,7 @@ export default function IncomeForm() {
         onCancel={editId ? () => setMode('view') : () => router.back()}
         actions={[{ label: 'Save', onPress: onSave, primary: true, disabled: !valid }]}
       />
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardLift style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={{ padding: 20, paddingTop: 16, paddingBottom: 32 }} keyboardShouldPersistTaps="handled">
           <Card style={{ alignItems: 'center', paddingVertical: 20 }}>
             <T size={14} sub>Amount received</T>
@@ -366,7 +367,7 @@ export default function IncomeForm() {
             <Button title="Delete income" icon="trash-outline" kind="danger" onPress={() => setConfirmingDelete(true)} style={{ marginTop: 28 }} />
           ) : null}
         </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardLift>
       <ConfirmDialog
         visible={confirmingDelete}
         title="Delete this income entry?"

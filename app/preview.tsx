@@ -1,8 +1,6 @@
 import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
-  KeyboardAvoidingView,
-  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -20,6 +18,7 @@ import { useMemories } from '@/useMemories';
 import { useTheme } from '@/ThemeContext';
 import { FONTS, RADIUS, SPACE, type Colors } from '@/theme';
 import { Button, Chip, Empty, Screen, TopBar } from '@/expense/ui';
+import { KeyboardLift } from '@/components/KeyboardLift';
 
 export default function PreviewScreen() {
   const { colors, type } = useTheme();
@@ -136,10 +135,7 @@ export default function PreviewScreen() {
   return (
     <Screen edges={['top', 'bottom']}>
       <TopBar title={heading} subtitle="Check each one before it goes into your record" />
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
+      <KeyboardLift style={styles.flex}>
         <ScrollView
           contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
@@ -211,7 +207,7 @@ export default function PreviewScreen() {
             <Button title="Discard all" kind="danger" onPress={discardAll} />
           </View>
         </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardLift>
     </Screen>
   );
 }

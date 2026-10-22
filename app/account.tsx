@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import { useState, type ReactNode } from 'react';
-import { KeyboardAvoidingView, Platform, ScrollView, View } from 'react-native';
+import { ScrollView, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { logFail, logOk } from '@/log';
 import { getSupabase, isConfigured } from '@/sync/client';
@@ -8,6 +8,7 @@ import { useSync } from '@/sync/useSync';
 import { timeLabel, shortDate } from '@/format';
 import { useTheme } from '@/expense/theme';
 import { Button, Card, Field, Row, Screen, T, TopBar } from '@/expense/ui';
+import { KeyboardLift } from '@/components/KeyboardLift';
 
 /** Round tinted icon beside a title and a line or two of explanation. */
 function StatusCard({ icon, tone, title, children }: {
@@ -101,7 +102,7 @@ export default function AccountScreen() {
   return (
     <Screen>
       <TopBar title="Record backup" onBack={() => router.back()} />
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardLift style={{ flex: 1 }}>
         <ScrollView
           contentContainerStyle={{ padding: 20, paddingTop: 18, paddingBottom: 40, gap: 16 }}
           keyboardShouldPersistTaps="handled"
@@ -189,7 +190,7 @@ export default function AccountScreen() {
             </>
           )}
         </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardLift>
     </Screen>
   );
 }

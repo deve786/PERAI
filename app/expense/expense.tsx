@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
@@ -11,7 +11,7 @@ import { generateExpenseTitleWithAI } from '@/expense/ai/title';
 import {
   METHODS, deleteExpense, findOrCreateCategory, findOrCreateTaggedUser, findOrCreateTicketType, getExpense,
   listCategories, listExpenseItems, listTaggedUsers, listTicketTypes, saveExpense, saveExpenseItems,
-  setExpenseRefund, setExpenseReimbursement,
+  setExpenseCancelledPending, setExpenseRefund, setExpenseReimbursement,
   type Category, type ExpenseItem as ExpenseItemRow, type TaggedUser, type TicketType,
 } from '@/expense/db';
 import { listAccounts, type AccountItem } from '@/expense/accountsDb';
@@ -24,6 +24,7 @@ import {
   ActionBar, Button, Card, Chip, ConfirmDialog, Field, IconDot, Label, ListCard, ListRow, Money, Row, Screen, Section, Segmented, T,
 } from '@/expense/ui';
 import { showDialog } from '@/dialogStore';
+import { KeyboardLift } from '@/components/KeyboardLift';
 
 type DraftItem = { name: string; qty: string; amount: string };
 type Mode = 'view' | 'edit';
@@ -398,16 +399,19 @@ export default function ExpenseForm() {
     // so there's nothing to set (or clear) on another category.
     if (isTicket) {
       const parsedRefund = round2(parseAmt(refundAmount) || 0);
-      await setExpenseRefund(
-        newId,
-        refunded && parsedRefund > 0
-          ? {
-              amount: parsedRefund,
-              accountId: refundAccountId,
-              peopleCount: parseAmt(refundPeopleCount) > 0 ? Math.round(parseAmt(refundPeopleCount)) : null,
-            }
-          : null
-      );
+      if (refunded && parsedRefund > 0) {
+        await setExpenseRefund(newId, {
+          amount: parsedRefund,
+          accountId: refundAccountId,
+          peopleCount: parseAmt(refundPeopleCount) > 0 ? Math.round(parseAmt(refundPeopleCount)) : null,
+        });
+      } else if (refunded) {
+        // Cancelled, but the refund hasn't come yet: remembered, and the app
+        // reminds every 2 days until the amount is entered.
+        await setExpenseCancelledPending(newId);
+      } else {
+        await setExpenseRefund(newId, null);
+      }
     }
     // Whoever this was tagged "for user" can pay back what it cost — any
     // category, not just a Ticket, so it's keyed off the tag, not isTicket.
@@ -561,6 +565,12 @@ export default function ExpenseForm() {
     if (userTag.trim()) details.push({ icon: 'person-outline', label: 'For', value: userTag });
     if (subCategory.trim()) details.push({ icon: 'ticket-outline', label: 'Ticket type', value: subCategory });
     if (peopleCount.trim()) details.push({ icon: 'people-outline', label: 'People', value: peopleCount });
+    if (refunded && !refundAmount.trim()) {
+      details.push({
+        icon: 'time-outline', label: 'Refund', tone: c.warn,
+        value: 'Not entered yet — reminding every 2 days',
+      });
+    }
     if (refunded && refundAmount.trim()) {
       details.push({
         icon: 'arrow-undo-outline', label: 'Refunded', tone: c.danger,
@@ -645,7 +655,7 @@ export default function ExpenseForm() {
         onCancel={editId ? () => setMode('view') : () => router.back()}
         actions={[{ label: saving ? 'Saving…' : 'Save', onPress: onSave, primary: true, disabled: !valid || saving }]}
       />
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardLift style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={{ padding: 20, paddingTop: 16, paddingBottom: 32 }} keyboardShouldPersistTaps="handled">
           <Card style={{ alignItems: 'center', paddingVertical: 20 }}>
             <T size={14} sub>Amount</T>
@@ -912,7 +922,7 @@ export default function ExpenseForm() {
                     containerStyle={{ marginTop: 16, marginBottom: 0 }}
                   />
 
-                  <Label style={{ marginTop: 20 }}>Refunded?</Label>
+                  <Label style={{ marginTop: 20 }}>Cancelled?</Label>
                   <Segmented options={YES_NO} value={refunded ? 'yes' : 'no'} onChange={(k) => setRefunded(k === 'yes')} />
 
                   {refunded ? (
@@ -946,6 +956,11 @@ export default function ExpenseForm() {
                         keyboardType="decimal-pad"
                         containerStyle={{ marginTop: 14, marginBottom: 0 }}
                       />
+                      {!refundAmount.trim() ? (
+                        <T size={13} sub style={{ marginTop: 6 }}>
+                          Refund not come yet? Leave this empty and we'll remind you every 2 days to enter it.
+                        </T>
+                      ) : null}
 
                       <Label style={{ marginTop: 14 }}>Into which bank (UPI)</Label>
                       {bankChips(refundAccountId, setRefundAccountId)}
@@ -1060,7 +1075,7 @@ export default function ExpenseForm() {
             <Button title="Delete expense" icon="trash-outline" kind="danger" onPress={() => setConfirmingDelete(true)} style={{ marginTop: 28 }} />
           ) : null}
         </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardLift>
       <ConfirmDialog
         visible={confirmingDelete}
         title="Delete this expense?"

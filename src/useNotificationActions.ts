@@ -5,6 +5,7 @@ import { Platform } from 'react-native';
 import { completeMemory } from './complete';
 import { getMemory, updateMemory } from './db/queries';
 import { logOk } from './log';
+import { REFUND_NOTIFICATION } from './expense/refundReminders';
 import { ACTION_DONE, ACTION_TOMORROW } from './reminders';
 
 /** The weekly review reminder carries this instead of an entry id. */
@@ -29,8 +30,15 @@ export function useNotificationActions(ready: boolean) {
       void (async () => {
         const data = response.notification.request.content.data as {
           memoryId?: string;
+          expenseId?: string;
           kind?: string;
         };
+
+        // A cancelled ticket's refund is due: open it to enter the amount.
+        if (data?.kind === REFUND_NOTIFICATION && data.expenseId) {
+          router.push({ pathname: '/expense/expense', params: { id: data.expenseId, mode: 'edit' } });
+          return;
+        }
 
         if (data?.kind === REVIEW_NOTIFICATION) {
           router.push('/review');

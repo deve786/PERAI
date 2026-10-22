@@ -26,6 +26,8 @@ export type Expense = {
   cancelled?: number;
   /** How much of this expense was refunded. Null/absent when nothing has been. */
   refund_amount?: number | null;
+  /** When it was marked cancelled with the refund still to come — the 2-day refund reminders count from here. Null once the refund is entered. */
+  cancelled_at?: string | null;
   /** The bank account the refund landed in, if any — set via setExpenseRefund. */
   refund_account_id?: string | null;
   /** The Income row (Refund category) recording the refund, so editing or clearing it updates that same row instead of creating another. */
@@ -413,6 +415,7 @@ async function init() {
   await addColumnIfMissing(db, 'income', 'account_id', 'TEXT');
   await addColumnIfMissing(db, 'expenses', 'cancelled', 'INTEGER NOT NULL DEFAULT 0');
   await addColumnIfMissing(db, 'expenses', 'refund_amount', 'REAL');
+  await addColumnIfMissing(db, 'expenses', 'cancelled_at', 'TEXT');
   await addColumnIfMissing(db, 'expenses', 'refund_account_id', 'TEXT');
   await addColumnIfMissing(db, 'expenses', 'refund_income_id', 'TEXT');
   await addColumnIfMissing(db, 'expenses', 'people_count', 'INTEGER');
@@ -847,7 +850,7 @@ export async function setExpenseRefund(
   if (!refund || refund.amount <= 0) {
     if (expense.refund_income_id) await deleteIncome(expense.refund_income_id);
     await db.runAsync(
-      'UPDATE expenses SET cancelled = 0, refund_amount = NULL, refund_account_id = NULL, refund_income_id = NULL, refund_people_count = NULL, updated_at = ?, dirty = 1 WHERE id = ?',
+      'UPDATE expenses SET cancelled = 0, refund_amount = NULL, refund_account_id = NULL, refund_income_id = NULL, refund_people_count = NULL, cancelled_at = NULL, updated_at = ?, dirty = 1 WHERE id = ?',
       now, id
     );
     return;
@@ -870,8 +873,38 @@ export async function setExpenseRefund(
   });
 
   await db.runAsync(
-    'UPDATE expenses SET cancelled = 1, refund_amount = ?, refund_account_id = ?, refund_income_id = ?, refund_people_count = ?, updated_at = ?, dirty = 1 WHERE id = ?',
+    'UPDATE expenses SET cancelled = 1, refund_amount = ?, refund_account_id = ?, refund_income_id = ?, refund_people_count = ?, cancelled_at = NULL, updated_at = ?, dirty = 1 WHERE id = ?',
     refund.amount, refund.accountId, incomeId, refund.peopleCount ?? null, now, id
+  );
+}
+
+/**
+ * Marks a ticket cancelled while its refund hasn't come yet: cancelled = 1
+ * with no refund amount. The app reminds the person every 2 days to enter it
+ * (src/expense/refundReminders.ts). Entering the amount later goes through
+ * setExpenseRefund as usual.
+ */
+export async function setExpenseCancelledPending(id: string): Promise<void> {
+  const db = await getDb();
+  const expense = await getExpense(id);
+  if (!expense) return;
+  // A refund that was entered before is taken back along with its income row.
+  if (expense.refund_income_id) await deleteIncome(expense.refund_income_id);
+  // Keep the date it was first marked cancelled: the 2-day reminders count from it.
+  const stillPending = expense.cancelled === 1 && expense.refund_amount == null && !!expense.cancelled_at;
+  const now = nowIso();
+  await db.runAsync(
+    'UPDATE expenses SET cancelled = 1, refund_amount = NULL, refund_account_id = NULL, refund_income_id = NULL, refund_people_count = NULL, cancelled_at = ?, updated_at = ?, dirty = 1 WHERE id = ?',
+    stillPending ? (expense.cancelled_at as string) : now, now, id
+  );
+}
+
+/** Cancelled tickets still waiting for their refund amount, oldest first. */
+export async function listRefundsPending(): Promise<{ id: string; note: string; amount: number; date: string; since: string }[]> {
+  const db = await getDb();
+  return db.getAllAsync(
+    `SELECT id, note, amount, date, COALESCE(cancelled_at, updated_at) AS since FROM expenses
+      WHERE deleted = 0 AND cancelled = 1 AND refund_amount IS NULL ORDER BY since ASC`
   );
 }
 

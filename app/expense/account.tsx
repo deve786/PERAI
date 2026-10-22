@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { KeyboardAvoidingView, Platform, ScrollView, View } from 'react-native';
+import { ScrollView, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { getSupabase, isConfigured } from '@/expense/sync/client';
@@ -8,6 +8,7 @@ import { exportCsv } from '@/expense/csv';
 import { showDialog } from '@/dialogStore';
 import { useTheme } from '@/expense/theme';
 import { Button, Card, Field, ListCard, ListRow, Screen, T, TopBar } from '@/expense/ui';
+import { KeyboardLift } from '@/components/KeyboardLift';
 
 function formatLastSynced(iso: string): string {
   const d = new Date(iso);
@@ -101,7 +102,7 @@ export default function AccountScreen() {
   return (
     <Screen>
       <TopBar title="Backup" onBack={() => router.back()} />
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardLift style={{ flex: 1 }}>
         <ScrollView
           contentContainerStyle={{ padding: 20, paddingTop: 18, paddingBottom: 40, gap: 16 }}
           keyboardShouldPersistTaps="handled"
@@ -197,7 +198,7 @@ export default function AccountScreen() {
             </ListCard>
           </View>
         </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardLift>
     </Screen>
   );
 }

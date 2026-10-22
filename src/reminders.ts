@@ -1,6 +1,8 @@
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import { onDatabaseChange } from './db/client';
+import { onDatabaseChange as onExpenseChange } from './expense/db';
+import { scheduleRefundReminders } from './expense/refundReminders';
 import { getAllMemories } from './db/queries';
 import { hasStatedTime } from './format';
 import { APPOINTMENT_LEAD_MINUTES, reminderTime } from './reminderTime';
@@ -143,6 +145,8 @@ async function syncNow(): Promise<void> {
   // The cancel-all above takes the weekly review with it, so it is put back
   // here rather than only at launch.
   await scheduleWeeklyReview();
+  // Cancelled tickets still waiting for their refund amount.
+  await scheduleRefundReminders().catch(() => {});
 }
 
 /** Sunday evening: a nudge to look back at the week (app/review.tsx). */
@@ -192,13 +196,18 @@ export function startReminderSync(): () => void {
   void prepareNotifications().then(syncReminders);
 
   let pending: ReturnType<typeof setTimeout> | null = null;
-  const unsubscribe = onDatabaseChange(() => {
+  const resync = () => {
     if (pending) clearTimeout(pending);
     pending = setTimeout(() => void syncReminders(), 400);
-  });
+  };
+  const unsubscribe = onDatabaseChange(resync);
+  // Money lives in its own database: a ticket marked cancelled, or its refund
+  // entered, changes which refund reminders should exist.
+  const unsubscribeExpense = onExpenseChange(resync);
 
   return () => {
     if (pending) clearTimeout(pending);
     unsubscribe();
+    unsubscribeExpense();
   };
 }

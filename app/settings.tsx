@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, View } from 'react-native';
+import { Pressable, ScrollView, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme, type ThemeMode } from '@/expense/theme';
@@ -23,6 +23,7 @@ import {
   type VoiceLanguage,
 } from '@/settings';
 import { APP_BUILD, APP_VERSION } from '@/appVersion';
+import { KeyboardLift } from '@/components/KeyboardLift';
 
 const SYMBOLS = ['₹', '$', '€', '£'] as const;
 const SYMBOL_OPTIONS = SYMBOLS.map((s) => ({ key: s, label: s }));
@@ -121,7 +122,7 @@ export default function Settings() {
   return (
     <Screen>
       <TopBar title="Settings" onBack={() => router.back()} />
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardLift style={{ flex: 1 }}>
         <ScrollView
           contentContainerStyle={{ padding: 20, paddingTop: 0, paddingBottom: 40 }}
           keyboardShouldPersistTaps="handled"
@@ -364,7 +365,7 @@ export default function Settings() {
             One app, two records — your notes and your expenses each keep their own backup.
           </T>
         </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardLift>
     </Screen>
   );
 }

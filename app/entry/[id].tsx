@@ -3,7 +3,6 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  KeyboardAvoidingView,
   LayoutAnimation,
   Platform,
   Pressable,
@@ -28,6 +27,7 @@ import { useTheme } from '@/ThemeContext';
 import { FONTS, RADIUS, SPACE, type Colors } from '@/theme';
 import { CATEGORIES, MEMORY_TYPES, PRIORITIES, REPEATS, type Memory, type Repeat } from '@/types';
 import { Button, Chip, Empty, PillButton, Screen, TopBar } from '@/expense/ui';
+import { KeyboardLift } from '@/components/KeyboardLift';
 
 /** Quick snooze presets covering hours, start-of-day, weekends and next week */
 const SNOOZE_PRESETS: { label: string; calc: () => { date: Date; desc: string } }[] = [
@@ -398,10 +398,7 @@ export default function EntryScreen() {
   return (
     <Screen edges={['top', 'bottom']}>
       <TopBar title="Entry" onBack={() => void close()} />
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
+      <KeyboardLift style={styles.flex}>
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
           <View style={styles.tags}>
             <View style={[styles.tag, styles.kindTag]}>
@@ -555,7 +552,7 @@ export default function EntryScreen() {
             <Button title="Delete entry" kind="danger" onPress={confirmDelete} />
           </View>
         </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardLift>
     </Screen>
   );
 }

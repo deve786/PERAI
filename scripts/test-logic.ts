@@ -62,6 +62,7 @@ import {
 import { tripSpendQuestion } from '../src/tripQuestion';
 import { stockGain } from '../src/expense/accountsLogic';
 import { toSentence } from '../src/format';
+import { refundReminderTimes } from '../src/expense/refundSchedule';
 import { monthsWithData, OVERALL, periodLabel, periodRange, previousMonth } from '../src/expense/period';
 import { needsTranslation, normalizeMoney, normalizeQuery } from '../src/manglish';
 import {
@@ -1799,6 +1800,20 @@ section('sentence-case labels');
   check('section label with a count', toSentence('TO DO  ·  3') === 'To do  ·  3');
   check('weekday kept capital', toSentence('REMINDS YOU THU 22 OCT, 10:00') === 'Reminds you Thu 22 Oct, 10:00');
   check('already fine text is unchanged', toSentence('Still open') === 'Still open');
+}
+
+section('refund reminders every 2 days');
+{
+  const since = new Date(2026, 9, 10, 15, 30); // 10 Oct, 3:30 pm
+  const now = new Date(2026, 9, 11, 9, 0);
+  const times = refundReminderTimes(since, now, 3);
+  check('first one is 2 days after, at 10:00', times[0].getTime() === new Date(2026, 9, 12, 10, 0).getTime());
+  check('then every 2 days', times[1].getTime() === new Date(2026, 9, 14, 10, 0).getTime() && times[2].getTime() === new Date(2026, 9, 16, 10, 0).getTime());
+  const later = refundReminderTimes(since, new Date(2026, 9, 20, 12, 0), 2);
+  check('days already gone are skipped', later[0].getTime() === new Date(2026, 9, 22, 10, 0).getTime());
+  check('rescheduling later does not move them', refundReminderTimes(since, new Date(2026, 9, 11, 22, 0), 1)[0].getTime() === times[0].getTime());
+  check('a reminder less than a minute away is skipped', refundReminderTimes(since, new Date(2026, 9, 12, 9, 59, 30), 1)[0].getTime() === new Date(2026, 9, 14, 10, 0).getTime());
+  check('a bad date gives nothing', refundReminderTimes('not a date', now, 3).length === 0);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

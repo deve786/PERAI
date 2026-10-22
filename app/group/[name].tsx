@@ -1,9 +1,7 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
-  KeyboardAvoidingView,
   Modal,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -39,6 +37,7 @@ import type { Memory } from '@/types';
 import { useGroups } from '@/useGroups';
 import { useMemories } from '@/useMemories';
 import { useVoiceInput } from '@/useVoiceInput';
+import { KeyboardLift } from '@/components/KeyboardLift';
 
 /**
  * One group: everything under that name, with a finish line.
@@ -362,10 +361,7 @@ export default function GroupScreen() {
           </Pressable>
         }
       />
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
+      <KeyboardLift style={styles.flex}>
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
           {/* The name: edit it here and every entry moves with it. */}
           {renaming || nameChanged ? (
@@ -595,7 +591,7 @@ export default function GroupScreen() {
             />
           )}
         </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardLift>
 
       {/* Rename, finish and delete: the group's own actions. */}
       <Modal visible={menu} transparent animationType="fade" onRequestClose={() => setMenu(false)}>

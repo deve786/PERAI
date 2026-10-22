@@ -2,8 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'expo-router';
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
+  Keyboard,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -12,7 +11,6 @@ import {
   View,
   type LayoutChangeEvent,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { askAI, type AskResult } from '@/ai/ask';
 import {
@@ -44,6 +42,7 @@ import { answerTripSpend } from '@/expense/tripAnswer';
 import { knownPeople } from '@/speechText';
 import { tripSpendQuestion } from '@/tripQuestion';
 import { useVoiceInput } from '@/useVoiceInput';
+import { KeyboardLift } from '@/components/KeyboardLift';
 
 // Prompts that work even on day one, before any week-of-data facts exist.
 const TRY_ASKING = [
@@ -66,7 +65,6 @@ function sourceLabel(result: AskResult): string {
 export default function AskScreen() {
   const { colors, type } = useTheme();
   const styles = makeStyles(colors);
-  const insets = useSafeAreaInsets();
 
   const [question, setQuestion] = useState('');
   const [asking, setAsking] = useState('');
@@ -97,6 +95,14 @@ export default function AskScreen() {
     scrollToNewest.current = false;
     const y = Math.max(0, event.nativeEvent.layout.y - 12);
     scrollRef.current?.scrollTo({ y, animated: true });
+  }, []);
+
+  // Like a chat app: when the keyboard opens, keep the latest exchange in view.
+  useEffect(() => {
+    const sub = Keyboard.addListener('keyboardDidShow', () => {
+      setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 80);
+    });
+    return () => sub.remove();
   }, []);
 
   const loadRecent = useCallback(async () => {
@@ -331,11 +337,7 @@ export default function AskScreen() {
 
   return (
     <Screen edges={['top']}>
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
-      >
+      <KeyboardLift style={styles.flex}>
         <ScrollView
           ref={scrollRef}
           style={styles.flex}
@@ -659,7 +661,7 @@ export default function AskScreen() {
             </Pressable>
           </View>
         </View>
-      </KeyboardAvoidingView>
+      </KeyboardLift>
     </Screen>
   );
 }

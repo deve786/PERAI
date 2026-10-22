@@ -29,6 +29,8 @@ export default function TabsLayout() {
     <Tabs
       screenOptions={{
         headerShown: false,
+        // Typing hides the bar, so the input sits right above the keyboard.
+        tabBarHideOnKeyboard: true,
         tabBarActiveTintColor: colors.moss,
         tabBarInactiveTintColor: colors.graphite,
         tabBarStyle: {
