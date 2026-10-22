@@ -1,18 +1,22 @@
-import React, { useEffect, useRef } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useMemo } from 'react';
+import { PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useTheme } from '@/ThemeContext';
-import { FONTS, SPACE, type Colors } from '@/theme';
+import { FONTS, type Colors } from '@/theme';
 
 interface Props {
   selectedDate: string; // YYYY-MM-DD
   onSelectDate: (date: string) => void;
   /** Set of YYYY-MM-DD date strings that contain entries/activity */
   activityDates?: Set<string>;
-  daysRange?: number; // default 7 before and 7 after = 15 days
 }
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MONTHS = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
 
 function formatDate(d: Date): string {
   const y = d.getFullYear();
@@ -21,80 +25,113 @@ function formatDate(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-export function DateScrubber({
-  selectedDate,
-  onSelectDate,
-  activityDates = new Set(),
-  daysRange = 7,
-}: Props) {
-  const { colors, type } = useTheme();
-  const styles = makeStyles(colors);
-  const scrollRef = useRef<ScrollView>(null);
+function parseDate(s: string): Date {
+  const [y, m, d] = s.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
 
+function shiftDays(s: string, n: number): string {
+  const d = parseDate(s);
+  d.setDate(d.getDate() + n);
+  return formatDate(d);
+}
+
+/**
+ * Month name with ‹ › arrows, then the week (Mon–Sun) holding the selected
+ * day as seven day cards. The arrows, or a sideways swipe on the strip, move
+ * a week at a time; a dot under a day means something is on it.
+ */
+export function DateScrubber({ selectedDate, onSelectDate, activityDates }: Props) {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   const todayStr = formatDate(new Date());
 
-  // Generate date items: -daysRange to +daysRange around today
-  const dates = React.useMemo(() => {
-    const list: { dateStr: string; dayName: string; dayNum: number; isToday: boolean }[] = [];
-    const base = new Date();
-    for (let i = -daysRange; i <= daysRange; i++) {
-      const d = new Date(base);
-      d.setDate(base.getDate() + i);
+  const week = useMemo(() => {
+    const selected = parseDate(selectedDate);
+    // Monday-first: Sunday (0) is the last day of its week.
+    const monday = new Date(selected);
+    monday.setDate(selected.getDate() - ((selected.getDay() + 6) % 7));
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + i);
       const dateStr = formatDate(d);
-      list.push({
-        dateStr,
-        dayName: WEEKDAYS[d.getDay()],
-        dayNum: d.getDate(),
-        isToday: dateStr === todayStr,
-      });
-    }
-    return list;
-  }, [daysRange, todayStr]);
+      return { dateStr, dayName: WEEKDAYS[d.getDay()], dayNum: d.getDate() };
+    });
+  }, [selectedDate]);
 
-  // Auto-scroll to center the selected date on mount or selection
-  useEffect(() => {
-    const idx = dates.findIndex((item) => item.dateStr === selectedDate);
-    if (idx !== -1 && scrollRef.current) {
-      // Each item is approx 48px wide + 8px gap = 56px
-      const x = Math.max(0, idx * 56 - 130);
-      scrollRef.current.scrollTo({ x, animated: true });
-    }
-  }, [selectedDate, dates]);
+  const selected = parseDate(selectedDate);
+  const monthLabel = `${MONTHS[selected.getMonth()]} ${selected.getFullYear()}`;
 
-  const handleSelect = (dateStr: string) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-    onSelectDate(dateStr);
-  };
+  const select = useCallback(
+    (dateStr: string) => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+      onSelectDate(dateStr);
+    },
+    [onSelectDate]
+  );
+
+  // A sideways swipe on the strip moves a week: left for later, right for earlier.
+  const swipe = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_, g) =>
+          Math.abs(g.dx) > 18 && Math.abs(g.dx) > Math.abs(g.dy) * 1.5,
+        onPanResponderRelease: (_, g) => {
+          if (Math.abs(g.dx) < 40) return;
+          select(shiftDays(selectedDate, g.dx < 0 ? 7 : -7));
+        },
+      }),
+    [select, selectedDate]
+  );
 
   return (
     <View style={styles.container}>
-      <ScrollView
-        ref={scrollRef}
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.scrollContent}
-      >
-        {dates.map((item) => {
+      <View style={styles.monthRow}>
+        <Pressable
+          onPress={() => select(shiftDays(selectedDate, -7))}
+          hitSlop={6}
+          accessibilityRole="button"
+          accessibilityLabel="Previous week"
+          style={({ pressed }) => [styles.arrow, pressed && styles.pressed]}
+        >
+          <Ionicons name="chevron-back" size={20} color={colors.graphite} />
+        </Pressable>
+        <Text style={styles.month}>{monthLabel}</Text>
+        <Pressable
+          onPress={() => select(shiftDays(selectedDate, 7))}
+          hitSlop={6}
+          accessibilityRole="button"
+          accessibilityLabel="Next week"
+          style={({ pressed }) => [styles.arrow, pressed && styles.pressed]}
+        >
+          <Ionicons name="chevron-forward" size={20} color={colors.graphite} />
+        </Pressable>
+      </View>
+
+      <View style={styles.week} {...swipe.panHandlers}>
+        {week.map((item) => {
           const isSelected = item.dateStr === selectedDate;
-          const hasDot = activityDates.has(item.dateStr);
+          const isToday = item.dateStr === todayStr;
+          const hasDot = activityDates?.has(item.dateStr) ?? false;
 
           return (
             <Pressable
               key={item.dateStr}
-              onPress={() => handleSelect(item.dateStr)}
+              onPress={() => select(item.dateStr)}
+              accessibilityRole="button"
+              accessibilityState={{ selected: isSelected }}
+              accessibilityLabel={`${item.dayName} ${item.dayNum}${isToday ? ', today' : ''}`}
               style={({ pressed }) => [
                 styles.dayCell,
+                isToday && !isSelected && styles.dayCellToday,
                 isSelected && styles.dayCellSelected,
-                item.isToday && !isSelected && styles.dayCellToday,
                 pressed && styles.pressed,
               ]}
-              hitSlop={4}
             >
               <Text
                 style={[
                   styles.dayName,
-                  isSelected ? styles.textSelected : styles.textDim,
-                  item.isToday && !isSelected ? styles.textToday : null,
+                  isSelected ? styles.textSelected : isToday ? styles.textToday : null,
                 ]}
               >
                 {item.dayName}
@@ -102,103 +139,57 @@ export function DateScrubber({
               <Text
                 style={[
                   styles.dayNum,
-                  isSelected ? styles.textSelected : styles.textInk,
-                  item.isToday && !isSelected ? styles.textToday : null,
+                  isSelected ? styles.textSelected : isToday ? styles.textToday : null,
                 ]}
               >
                 {item.dayNum}
               </Text>
-              <View style={styles.dotContainer}>
-                {hasDot ? (
-                  <View
-                    style={[
-                      styles.dot,
-                      isSelected ? styles.dotSelected : styles.dotActive,
-                    ]}
-                  />
-                ) : null}
-              </View>
+              <View style={[styles.dot, hasDot && (isSelected ? styles.dotSelected : styles.dotActive)]} />
             </Pressable>
           );
         })}
-      </ScrollView>
+      </View>
     </View>
   );
 }
 
 function makeStyles(colors: Colors) {
   return StyleSheet.create({
-    container: {
-      marginVertical: 4,
-    },
-    scrollContent: {
-      paddingHorizontal: 4,
-      gap: 8,
+    container: { gap: 12 },
+    monthRow: {
+      flexDirection: 'row',
       alignItems: 'center',
+      justifyContent: 'space-between',
     },
-    dayCell: {
-      width: 48,
-      height: 64,
-      borderRadius: 10,
+    arrow: {
+      width: 44,
+      height: 44,
       alignItems: 'center',
       justifyContent: 'center',
-      paddingVertical: 6,
+      borderRadius: 22,
+    },
+    month: { fontFamily: FONTS.sansSemi, fontSize: 17, color: colors.ink },
+    week: { flexDirection: 'row', gap: 6 },
+    dayCell: {
+      flex: 1,
+      height: 64,
+      borderRadius: 14,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 1,
       backgroundColor: colors.surface,
       borderWidth: 1,
       borderColor: colors.rule,
     },
-    dayCellToday: {
-      borderColor: colors.moss,
-      borderWidth: 1.5,
-    },
-    dayCellSelected: {
-      backgroundColor: colors.ink,
-      borderColor: colors.ink,
-    },
-    pressed: {
-      opacity: 0.8,
-    },
-    dayName: {
-      fontFamily: FONTS.mono,
-      fontSize: 10,
-      letterSpacing: 0.5,
-      marginBottom: 2,
-    },
-    dayNum: {
-      fontFamily: FONTS.mono,
-      fontSize: 16,
-      fontWeight: '600',
-    },
-    dotContainer: {
-      height: 6,
-      justifyContent: 'center',
-      alignItems: 'center',
-      marginTop: 2,
-    },
-    dot: {
-      width: 4,
-      height: 4,
-      borderRadius: 2,
-    },
-    dotActive: {
-      backgroundColor: colors.moss,
-    },
-    dotSelected: {
-      backgroundColor: colors.paper,
-    },
-    textDim: {
-      color: colors.mist,
-    },
-    textInk: {
-      color: colors.ink,
-    },
-    textToday: {
-      color: colors.moss,
-      fontWeight: '600',
-    },
-    textSelected: {
-      color: colors.paper,
-      fontWeight: '700',
-    },
+    dayCellToday: { borderColor: colors.moss },
+    dayCellSelected: { backgroundColor: colors.mossFill, borderColor: colors.mossFill },
+    pressed: { opacity: 0.7 },
+    dayName: { fontFamily: FONTS.sans, fontSize: 12, color: colors.graphite },
+    dayNum: { fontFamily: FONTS.sansSemi, fontSize: 17, color: colors.ink },
+    dot: { width: 4, height: 4, borderRadius: 2, marginTop: 2 },
+    dotActive: { backgroundColor: colors.moss },
+    dotSelected: { backgroundColor: colors.onAccent },
+    textToday: { color: colors.moss },
+    textSelected: { color: colors.onAccent },
   });
 }

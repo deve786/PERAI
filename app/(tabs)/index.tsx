@@ -29,7 +29,8 @@ import { notificationsAllowed, syncReminders } from '@/reminders';
 import { reminderTime } from '@/reminderTime';
 import { isStruck, sinkStruck } from '@/strike';
 import { useTheme } from '@/ThemeContext';
-import { FONTS, SPACE, type Colors } from '@/theme';
+import { FONTS, RADIUS, SPACE, type Colors } from '@/theme';
+import { Empty, IconTile, PillButton, Screen } from '@/expense/ui';
 import type { Memory, MemoryDraft, MemoryType } from '@/types';
 import { useMemories } from '@/useMemories';
 import { knownPeople } from '@/speechText';
@@ -222,414 +223,480 @@ export default function CaptureScreen() {
     else void voice.toggle();
   }
 
-  const status = saving || voice.stage === 'finishing'
-    ? 'Saving'
+  const busy = saving || voice.stage === 'finishing';
+  const status = busy
+    ? 'Saving…'
     : typed
       ? 'One line can hold several events'
-      : 'Tap the mic and say what happened';
+      : 'Tap to speak';
 
   const problem = voice.error ?? error;
   // The box shows what's being heard, live, while listening; your typed text
   // is untouched underneath and comes back the moment listening stops.
   const displayText = voice.stage === 'idle' ? text : voice.liveText;
+  const today = new Date().toLocaleDateString('en-GB', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'short',
+  });
 
   return (
-    <KeyboardAvoidingView
-      style={styles.flex}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
-    >
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <View style={styles.titleRow}>
-          <View style={styles.titleActions}>
-            <Pressable
-              onPress={() => router.push('/today')}
-              hitSlop={10}
-              accessibilityRole="button"
-              accessibilityLabel="Today"
-            >
-              <Ionicons name="today-outline" size={22} color={colors.graphite} />
-            </Pressable>
-            <Pressable
-              onPress={() => router.push('/lists')}
-              hitSlop={10}
-              accessibilityRole="button"
-              accessibilityLabel="Lists"
-            >
-              <Ionicons name="bookmark-outline" size={22} color={colors.graphite} />
-            </Pressable>
-            <Pressable
-              onPress={() => router.push('/groups')}
-              hitSlop={10}
-              accessibilityRole="button"
-              accessibilityLabel="Groups"
-            >
-              <Ionicons name="albums-outline" size={21} color={colors.graphite} />
-            </Pressable>
-            <Pressable
-              onPress={() => router.push('/timeline')}
-              hitSlop={10}
-              accessibilityRole="button"
-              accessibilityLabel="Timeline"
-            >
-              <Ionicons name="reorder-two-outline" size={22} color={colors.graphite} />
-            </Pressable>
-            <SyncButton />
-            <ThemeToggle />
+    <Screen>
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+      >
+        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+          <View style={styles.titleRow}>
+            <View style={styles.titleBlock}>
+              <Text style={type.fine}>{today}</Text>
+              <Text style={styles.title} accessibilityRole="header">
+                Record
+              </Text>
+            </View>
+            <View style={styles.titleActions}>
+              <SyncButton />
+              <ThemeToggle />
+            </View>
           </View>
-        </View>
 
-        <View style={styles.composer}>
-          <TextInput
-            value={displayText}
-            onChangeText={(value) => {
-              setText(value);
-              if (problem) {
-                setError(null);
-                voice.clearError();
+          <View style={styles.composer}>
+            <View style={styles.composerHead}>
+              <Text style={[type.fine, styles.prompt]}>
+                {listening ? 'Listening — say “stop” to finish' : 'What happened, or what’s coming up?'}
+              </Text>
+              {typed && !saving && !listening ? (
+                <Pressable
+                  onPress={() => {
+                    setText('');
+                    setError(null);
+                    voice.clearError();
+                  }}
+                  hitSlop={12}
+                  accessibilityRole="button"
+                  accessibilityLabel="Clear what you have written"
+                >
+                  <Text style={styles.link}>Clear</Text>
+                </Pressable>
+              ) : null}
+            </View>
+
+            <TextInput
+              value={displayText}
+              onChangeText={(value) => {
+                setText(value);
+                if (problem) {
+                  setError(null);
+                  voice.clearError();
+                }
+              }}
+              placeholder={
+                listening
+                  ? 'Listening…'
+                  : 'Speak or type — one note or a whole dump of them'
               }
-            }}
-            placeholder={
-              listening
-                ? 'Listening…'
-                : 'Speak or type — one note or a whole dump of them'
-            }
-            placeholderTextColor={colors.mist}
-            style={styles.input}
-            multiline
-            editable={voice.stage === 'idle' && !saving}
-          />
+              placeholderTextColor={colors.mist}
+              style={styles.input}
+              multiline
+              editable={voice.stage === 'idle' && !saving}
+              accessibilityLabel="Your note"
+            />
 
-          <View style={styles.foot}>
-            <View style={styles.statusCol}>
-              {listening ? (
-                <>
-                  <VoiceWaveform level={voice.level} />
-                  <View style={styles.listeningMeta}>
-                    <Text
-                      style={[type.label, styles.live]}
-                      accessibilityLiveRegion="polite"
-                    >
-                      LISTENING · SAY "STOP" TO FINISH
-                    </Text>
-                    <Pressable onPress={voice.cancel} hitSlop={10}>
-                      <Text style={[type.label, styles.cancel]}>CANCEL</Text>
-                    </Pressable>
+            <View style={styles.foot}>
+              <ComposeButton
+                mode={mode}
+                level={voice.level}
+                onPress={press}
+                disabled={!configured}
+                size={56}
+                accessibilityLabel={
+                  mode === 'send'
+                    ? 'Save this'
+                    : mode === 'listening'
+                      ? 'Stop and save'
+                      : 'Record with your voice'
+                }
+              />
+              <View style={styles.statusCol}>
+                {listening ? (
+                  <View style={styles.wave}>
+                    <VoiceWaveform level={voice.level} />
                   </View>
-                </>
+                ) : (
+                  <Text style={styles.statusText} accessibilityLiveRegion="polite">
+                    {status}
+                  </Text>
+                )}
+              </View>
+              {listening ? (
+                <Pressable
+                  onPress={voice.cancel}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                  style={({ pressed }) => [styles.pill, pressed && styles.pressed]}
+                >
+                  <Text style={styles.pillText}>Cancel</Text>
+                </Pressable>
               ) : (
-                <View style={styles.statusRow}>
-                  <Text style={[type.fine, styles.statusText]}>{status}</Text>
-                  {typed && !saving ? (
-                    <Pressable
-                      onPress={() => {
-                        setText('');
-                        setError(null);
-                        voice.clearError();
-                      }}
-                      hitSlop={12}
-                      accessibilityRole="button"
-                      accessibilityLabel="Clear what you have written"
-                    >
-                      <Text style={[type.label, styles.cancel]}>CLEAR</Text>
-                    </Pressable>
-                  ) : null}
-                </View>
+                <Pressable
+                  onPress={() => void save(text)}
+                  disabled={!typed || busy || !configured}
+                  hitSlop={6}
+                  accessibilityRole="button"
+                  accessibilityLabel="Save this"
+                  style={({ pressed }) => [
+                    styles.pill,
+                    typed && !busy && configured ? styles.pillOn : null,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.pillText,
+                      typed && !busy && configured ? styles.pillTextOn : styles.pillTextOff,
+                    ]}
+                  >
+                    Save
+                  </Text>
+                </Pressable>
               )}
             </View>
-            <ComposeButton
-              mode={mode}
-              level={voice.level}
-              onPress={press}
-              disabled={!configured}
-              accessibilityLabel={
-                mode === 'send'
-                  ? 'Save this'
-                  : mode === 'listening'
-                    ? 'Stop and save'
-                    : 'Record with your voice'
-              }
+          </View>
+
+          <View style={styles.tiles}>
+            <IconTile icon="calendar-outline" label="Calendar" onPress={() => router.push('/calendar')} />
+            <IconTile icon="list-outline" label="Timeline" onPress={() => router.push('/timeline')} />
+            <IconTile icon="bookmark-outline" label="Lists" onPress={() => router.push('/lists')} />
+            <IconTile icon="folder-outline" label="Groups" onPress={() => router.push('/groups')} />
+          </View>
+
+          {/* A group can be made here with nothing in it yet, so the name
+              exists before the work does. */}
+          {makingGroup ? (
+            <NewGroupField
+              autoFocus
+              onCreated={(name) => {
+                setMakingGroup(false);
+                router.push(`/group/${encodeURIComponent(name)}`);
+              }}
             />
-          </View>
-        </View>
+          ) : (
+            <Pressable
+              onPress={() => setMakingGroup(true)}
+              hitSlop={10}
+              accessibilityRole="button"
+              style={styles.newGroup}
+            >
+              <Ionicons name="add" size={18} color={colors.moss} />
+              <Text style={styles.link}>New group</Text>
+            </Pressable>
+          )}
 
-        {/* A group can be made here with nothing in it yet, so the name
-            exists before the work does. */}
-        {makingGroup ? (
-          <NewGroupField
-            autoFocus
-            onCreated={(name) => {
-              setMakingGroup(false);
-              router.push(`/group/${encodeURIComponent(name)}`);
-            }}
-          />
-        ) : (
-          <Pressable onPress={() => setMakingGroup(true)} hitSlop={10} style={styles.newGroup}>
-            <Ionicons name="add" size={15} color={colors.graphite} />
-            <Text style={[type.label, styles.newGroupText]}>NEW GROUP</Text>
-          </Pressable>
-        )}
+          {!configured ? (
+            <Notice tone="info">No API key yet. Add EXPO_PUBLIC_GEMINI_API_KEY to .env.</Notice>
+          ) : null}
+          {problem ? <Notice tone="alert">{problem}</Notice> : null}
 
-        {!configured ? (
-          <Notice>No API key yet. Add EXPO_PUBLIC_GEMINI_API_KEY to .env.</Notice>
-        ) : null}
-        {problem ? <Notice>{problem}</Notice> : null}
-
-        {saved ? (
-          <View style={styles.saved}>
-            <View style={styles.savedHead}>
-              <Text style={[type.label, styles.kept]}>
-                {saved.memories.length === 1
-                  ? 'SAVED'
-                  : `SAVED ${saved.memories.length} ENTRIES`}
-              </Text>
-              <View style={styles.savedActions}>
-                <Pressable onPress={() => void undo()} hitSlop={10}>
-                  <Text style={[type.label, styles.action]}>UNDO</Text>
-                </Pressable>
-                <Pressable onPress={() => void edit()} hitSlop={10}>
-                  <Text style={[type.label, styles.action]}>EDIT</Text>
-                </Pressable>
-              </View>
-            </View>
-            {saved.memories.length > 1 ? (
-              <View style={styles.brainDumpBadge}>
-                <Ionicons name="sparkles" size={13} color={colors.moss} />
-                <Text style={[type.stamp, styles.brainDumpText]}>
-                  PARSED {saved.memories.length} DISTINCT ITEMS
-                </Text>
-              </View>
-            ) : null}
-            {saved.memories
-              .filter((m) => m.type === 'purchase' && m.amount !== null)
-              .map((pm) => (
-                <View key={`exp-${pm.id}`} style={styles.expensePill}>
-                  <Ionicons name="card-outline" size={14} color={colors.graphite} />
-                  <Text style={[type.stamp, styles.expensePillText]}>
-                    RECORDED TO EXPENSES · {pm.currency ?? '₹'}{pm.amount} ({pm.category})
+          {saved ? (
+            <View style={styles.saved}>
+              <View style={styles.savedHead}>
+                <View style={styles.savedTitle}>
+                  <Ionicons name="checkmark-circle" size={20} color={colors.moss} />
+                  <Text style={styles.kept}>
+                    {saved.memories.length === 1
+                      ? 'Saved'
+                      : `Saved ${saved.memories.length} entries`}
                   </Text>
-                  <Pressable onPress={() => router.push('/(tabs)/expense-home')} hitSlop={8}>
-                    <Text style={[type.label, styles.expenseLink]}>VIEW ›</Text>
-                  </Pressable>
                 </View>
-              ))}
-            {saved.memories.map((memory) => (
-              <MemoryRow key={memory.id} memory={memory} gutter="date" />
-            ))}
-            {saved.changed.map((fix) => (
-              <Text key={fix.to} style={[type.stamp, styles.spelled]}>
-                HEARD "{fix.from.toUpperCase()}" · SAVED AS {fix.to.toUpperCase()}
-              </Text>
-            ))}
-            {saved.alerts === false ? (
-              <Text style={[type.body, styles.alertsOff]}>
-                Notifications are off, so this won't remind you. Turn them on in
-                Settings › Apps › PERAI › Notifications.
-              </Text>
-            ) : null}
-          </View>
-        ) : null}
-
-        {titles.checking.length > 0 ? (
-          <Section
-            label="CHECKING SPELLING"
-            inset={false}
-            action={{ label: 'STOP ALL', onPress: titles.stopAll }}
-          >
-            {titles.checking.map((item) => (
-              <View key={item.id} style={styles.checkingNote}>
-                <View style={styles.checkingRow}>
-                  <Text style={[type.body, styles.checkingTitle]} numberOfLines={1}>
-                    {item.title}
-                  </Text>
-                  <Text style={[type.stamp, styles.checkingWhy]}>
-                    {item.lastError ? 'WAITING' : 'LOOKING IT UP'}
-                  </Text>
-                  <Pressable onPress={() => titles.stop(item)} hitSlop={10}>
-                    <Text style={[type.label, styles.action]}>STOP</Text>
-                  </Pressable>
+                <View style={styles.savedActions}>
+                  <PillButton label="Undo" icon="arrow-undo" onPress={() => void undo()} />
+                  <PillButton label="Edit" icon="pencil-outline" onPress={() => void edit()} />
                 </View>
-                {item.lastError ? (
-                  <Text style={[type.fine, styles.checkingReason]}>{item.lastError}</Text>
-                ) : null}
               </View>
-            ))}
-          </Section>
-        ) : null}
-
-        {pending.notes.length > 0 ? (
-          <Section label="WAITING TO BE FILED" inset={false}>
-            {pending.notes.map((note) => (
-              <View key={note.id} style={styles.pendingNote}>
-                <Text style={type.body} numberOfLines={3}>
-                  {note.text}
-                </Text>
-                <View style={styles.pendingFoot}>
-                  <Text style={[type.stamp, styles.pendingWhy]} numberOfLines={1}>
-                    {note.lastError ?? 'Waiting'}
+              {saved.memories.length > 1 ? (
+                <View style={styles.badge}>
+                  <Ionicons name="sparkles" size={14} color={colors.moss} />
+                  <Text style={[type.fine, styles.badgeText]}>
+                    Found {saved.memories.length} separate items
                   </Text>
-                  <View style={styles.savedActions}>
-                    <Pressable onPress={() => pending.retry(note.id)} hitSlop={10}>
-                      <Text style={[type.label, styles.action]}>RETRY</Text>
-                    </Pressable>
-                    <Pressable onPress={() => pending.forget(note.id)} hitSlop={10}>
-                      <Text style={[type.label, styles.action]}>DELETE</Text>
+                </View>
+              ) : null}
+              {saved.memories
+                .filter((m) => m.type === 'purchase' && m.amount !== null)
+                .map((pm) => (
+                  <View key={`exp-${pm.id}`} style={styles.expense}>
+                    <Ionicons name="card-outline" size={16} color={colors.graphite} />
+                    <Text style={[type.fine, styles.expenseText]}>
+                      Recorded to Money ·{' '}
+                      <Text style={styles.figure}>
+                        {pm.currency ?? '₹'}
+                        {pm.amount}
+                      </Text>{' '}
+                      ({pm.category})
+                    </Text>
+                    <Pressable
+                      onPress={() => router.push('/(tabs)/expense-home')}
+                      hitSlop={8}
+                      accessibilityRole="button"
+                    >
+                      <Text style={styles.link}>View</Text>
                     </Pressable>
                   </View>
-                </View>
+                ))}
+              <View>
+                {saved.memories.map((memory) => (
+                  <MemoryRow key={memory.id} memory={memory} gutter="date" />
+                ))}
               </View>
-            ))}
-          </Section>
-        ) : null}
+              {saved.changed.map((fix) => (
+                <Text key={fix.to} style={[type.fine, styles.spelled]}>
+                  Heard “{fix.from}” · saved as {fix.to}
+                </Text>
+              ))}
+              {saved.alerts === false ? (
+                <Text style={[type.fine, styles.alertsOff]}>
+                  Notifications are off, so this won&apos;t remind you. Turn them on in
+                  Settings › Apps › PERAI › Notifications.
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
 
-        {upcoming.length > 0 ? (
-          <Section label="COMING UP" tone="ahead">
-            {upcoming.map((memory) => (
-              <MemoryRow key={memory.id} memory={memory} gutter="date" showAdded={false} struck={isStruck(memory)} />
-            ))}
-          </Section>
-        ) : null}
+          {titles.checking.length > 0 ? (
+            <Section
+              label="Checking spelling"
+              action={{ label: 'Stop all', onPress: titles.stopAll }}
+            >
+              {titles.checking.map((item) => (
+                <View key={item.id} style={styles.cardRow}>
+                  <View style={styles.cardRowLine}>
+                    <View style={styles.cardRowText}>
+                      <Text style={type.entry} numberOfLines={1}>
+                        {item.title}
+                      </Text>
+                      <Text style={type.stamp}>
+                        {item.lastError ? 'Waiting' : 'Looking it up…'}
+                      </Text>
+                    </View>
+                    <Pressable
+                      onPress={() => titles.stop(item)}
+                      hitSlop={10}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Stop checking ${item.title}`}
+                    >
+                      <Text style={styles.quiet}>Stop</Text>
+                    </Pressable>
+                  </View>
+                  {item.lastError ? (
+                    <Text style={type.fine}>{item.lastError}</Text>
+                  ) : null}
+                </View>
+              ))}
+            </Section>
+          ) : null}
 
-        {recent.length > 0 ? (
-          <Section
-            label="RECENTLY ADDED"
-            action={{ label: 'ALL', onPress: () => router.push('/timeline') }}
-          >
-            {recent.map((memory) => (
-              <MemoryRow key={memory.id} memory={memory} gutter="date" struck={isStruck(memory)} />
-            ))}
-          </Section>
-        ) : null}
+          {pending.notes.length > 0 ? (
+            <Section label="Waiting to be filed">
+              {pending.notes.map((note) => (
+                <View key={note.id} style={styles.cardRow}>
+                  <Text style={[type.body, styles.pendingText]} numberOfLines={3}>
+                    {note.text}
+                  </Text>
+                  <View style={styles.cardRowLine}>
+                    <Text style={[type.fine, styles.pendingWhy]} numberOfLines={1}>
+                      {note.lastError ?? 'Waiting'}
+                    </Text>
+                    <View style={styles.inlineActions}>
+                      <Pressable
+                        onPress={() => pending.retry(note.id)}
+                        hitSlop={10}
+                        accessibilityRole="button"
+                      >
+                        <Text style={styles.link}>Retry</Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={() => pending.forget(note.id)}
+                        hitSlop={10}
+                        accessibilityRole="button"
+                      >
+                        <Text style={styles.danger}>Delete</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                </View>
+              ))}
+            </Section>
+          ) : null}
 
-        {!loading && memories.length === 0 && !saved ? (
-          <Text style={[type.body, styles.firstRun]}>
-            Everything you record shows up here and in your Timeline. Ask about
-            any of it later from the Ask tab.
-          </Text>
-        ) : null}
-      </ScrollView>
-    </KeyboardAvoidingView>
+          {upcoming.length > 0 ? (
+            <Section label="Coming up">
+              {upcoming.map((memory) => (
+                <MemoryRow key={memory.id} memory={memory} gutter="date" showAdded={false} struck={isStruck(memory)} />
+              ))}
+            </Section>
+          ) : null}
+
+          {recent.length > 0 ? (
+            <Section
+              label="Recently added"
+              action={{ label: 'See all', onPress: () => router.push('/timeline') }}
+            >
+              {recent.map((memory) => (
+                <MemoryRow key={memory.id} memory={memory} gutter="date" struck={isStruck(memory)} />
+              ))}
+            </Section>
+          ) : null}
+
+          {!loading && memories.length === 0 && !saved ? (
+            <Empty
+              icon="mic-outline"
+              title="Nothing recorded yet"
+              hint="Everything you record shows up here and in your Timeline. Ask about any of it later from the Ask tab."
+            />
+          ) : null}
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </Screen>
   );
 }
 
-/** A rule in the margin, not a coloured box. States the fact and the fix. */
-function Notice({ children }: { children: React.ReactNode }) {
+/** A calm card that states the fact and the fix. */
+function Notice({ children, tone }: { children: React.ReactNode; tone: 'info' | 'alert' }) {
   const { colors, type } = useTheme();
   const styles = makeStyles(colors);
+  const alert = tone === 'alert';
   return (
-    <View style={styles.notice}>
-      <Text style={[type.body, styles.noticeText]}>{children}</Text>
+    <View style={[styles.notice, alert && styles.noticeAlert]}>
+      <Ionicons
+        name={alert ? 'alert-circle-outline' : 'information-circle-outline'}
+        size={20}
+        color={alert ? colors.alert : colors.graphite}
+      />
+      <Text style={[type.body, styles.noticeText, alert && styles.noticeTextAlert]}>{children}</Text>
     </View>
   );
 }
 
 function makeStyles(colors: Colors) {
   return StyleSheet.create({
-    flex: { flex: 1, backgroundColor: colors.paper },
-    content: { flexGrow: 1, padding: SPACE.page, paddingTop: 56, paddingBottom: 28, gap: 20 },
-    titleRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'flex-end',
+    flex: { flex: 1 },
+    content: { flexGrow: 1, padding: SPACE.page, paddingTop: 16, paddingBottom: 32, gap: 18 },
+    titleRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+    titleBlock: { flex: 1, gap: 2 },
+    title: {
+      fontFamily: FONTS.sansSemi,
+      fontWeight: '700',
+      fontSize: 28,
+      lineHeight: 34,
+      letterSpacing: -0.4,
+      color: colors.ink,
     },
-    titleActions: { flexDirection: 'row', alignItems: 'center', gap: 16 },
-    composer: { gap: 14 },
-    newGroup: { flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start' },
-    newGroupText: { color: colors.graphite },
+    titleActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    composer: {
+      backgroundColor: colors.surface,
+      borderRadius: 20,
+      borderWidth: 1,
+      borderColor: colors.rule,
+      padding: 16,
+      gap: 12,
+    },
+    composerHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+    prompt: { flex: 1 },
     input: {
       fontFamily: FONTS.sans,
-      fontSize: 19,
-      lineHeight: 28,
+      fontSize: 17,
+      lineHeight: 24,
       color: colors.ink,
-      minHeight: 56,
+      minHeight: 52,
       textAlignVertical: 'top',
-      paddingHorizontal: 0,
-      paddingTop: 4,
-      paddingBottom: 12,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: colors.rule,
+      padding: 0,
     },
-    foot: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
-    statusCol: { flex: 1, gap: 6 },
-    listeningMeta: {
-      flexDirection: 'row',
+    foot: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+    statusCol: { flex: 1, minHeight: 56, justifyContent: 'center', overflow: 'hidden' },
+    wave: { alignItems: 'flex-start' },
+    statusText: { fontFamily: FONTS.sans, fontSize: 14, color: colors.graphite },
+    pill: {
+      minHeight: 40,
+      paddingHorizontal: 18,
+      borderRadius: RADIUS.pill,
+      borderWidth: 1,
+      borderColor: colors.rule,
+      backgroundColor: colors.well,
       alignItems: 'center',
-      justifyContent: 'space-between',
+      justifyContent: 'center',
     },
-    statusRow: {
+    pillOn: { backgroundColor: colors.mossFill, borderColor: colors.mossFill },
+    pillText: { fontFamily: FONTS.sansSemi, fontSize: 15, color: colors.ink },
+    pillTextOn: { color: colors.onAccent },
+    pillTextOff: { color: colors.mist },
+    pressed: { opacity: 0.7 },
+    tiles: { flexDirection: 'row', gap: 8 },
+    newGroup: { flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start', minHeight: 32 },
+    link: { fontFamily: FONTS.sansSemi, fontSize: 14, color: colors.moss },
+    quiet: { fontFamily: FONTS.sansSemi, fontSize: 14, color: colors.graphite },
+    danger: { fontFamily: FONTS.sansSemi, fontSize: 14, color: colors.alert },
+    notice: {
       flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: 12,
+      alignItems: 'flex-start',
+      gap: 10,
+      backgroundColor: colors.surface,
+      borderRadius: RADIUS.card,
+      borderWidth: 1,
+      borderColor: colors.rule,
+      padding: 14,
     },
-    statusText: { flex: 1 },
-    live: { color: colors.moss },
-    cancel: { color: colors.mist },
-    notice: { borderLeftWidth: 2, borderLeftColor: colors.alert, paddingLeft: 12, paddingVertical: 2 },
-    noticeText: { color: colors.alert },
+    noticeAlert: { backgroundColor: colors.alertSoft, borderColor: colors.alertSoft },
+    noticeText: { flex: 1, color: colors.ink },
+    noticeTextAlert: { color: colors.alert },
     saved: {
-      gap: 4,
-      borderLeftWidth: 2,
-      borderLeftColor: colors.moss,
-      paddingLeft: 12,
+      gap: 8,
+      backgroundColor: colors.surface,
+      borderRadius: RADIUS.card,
+      borderWidth: 1,
+      borderColor: colors.rule,
+      paddingHorizontal: 14,
+      paddingTop: 12,
+      paddingBottom: 12,
     },
-    savedHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-    kept: { color: colors.moss },
-    savedActions: { flexDirection: 'row', gap: 20 },
-    action: { color: colors.graphite },
-    alertsOff: { color: colors.alert, marginTop: 8 },
-    spelled: { color: colors.moss, marginTop: 2 },
-    checkingNote: { gap: 2, paddingVertical: 8 },
-    checkingRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: 12,
-    },
-    checkingTitle: { flex: 1 },
-    checkingWhy: { color: colors.mist },
-    checkingReason: { color: colors.graphite },
-    pendingNote: { gap: 6, paddingVertical: 8 },
-    pendingFoot: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: 12,
-    },
-    pendingWhy: { flex: 1, color: colors.alert },
-    firstRun: { maxWidth: 320, marginTop: 8 },
-    brainDumpBadge: {
+    savedHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+    savedTitle: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1 },
+    kept: { fontFamily: FONTS.sansSemi, fontSize: 16, color: colors.moss, flexShrink: 1 },
+    savedActions: { flexDirection: 'row', gap: 8 },
+    badge: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 6,
-      paddingVertical: 4,
-      paddingHorizontal: 8,
-      borderRadius: 4,
-      backgroundColor: colors.surface,
-      marginBottom: 6,
+      alignSelf: 'flex-start',
+      minHeight: 28,
+      paddingHorizontal: 10,
+      borderRadius: RADIUS.pill,
+      backgroundColor: colors.mossSoft,
     },
-    brainDumpText: {
-      color: colors.moss,
-      fontWeight: '600',
-    },
-    expensePill: {
+    badgeText: { color: colors.moss },
+    expense: {
       flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'space-between',
       gap: 8,
-      paddingVertical: 6,
-      paddingHorizontal: 10,
-      borderRadius: 6,
-      backgroundColor: colors.surface,
-      marginBottom: 6,
+      minHeight: 40,
+      paddingHorizontal: 12,
+      borderRadius: RADIUS.input,
+      backgroundColor: colors.well,
     },
-    expensePillText: {
-      flex: 1,
-      color: colors.ink,
-      fontWeight: '500',
+    expenseText: { flex: 1, color: colors.ink },
+    figure: { fontFamily: FONTS.monoMedium, color: colors.ink },
+    spelled: { color: colors.moss },
+    alertsOff: { color: colors.alert },
+    cardRow: {
+      gap: 4,
+      paddingVertical: 12,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.rule,
     },
-    expenseLink: {
-      color: colors.graphite,
-    },
+    cardRowLine: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+    cardRowText: { flex: 1, gap: 2 },
+    pendingText: { color: colors.ink },
+    pendingWhy: { flex: 1, color: colors.alert },
+    inlineActions: { flexDirection: 'row', gap: 20 },
   });
 }

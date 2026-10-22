@@ -1,10 +1,11 @@
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { clearLogs, recentLogs, type LogEntry } from '@/log';
 import { shortDate, timeLabel } from '@/format';
-import { useTheme } from '@/ThemeContext';
-import { SPACE, type Colors } from '@/theme';
+import { FONTS, useTheme } from '@/expense/theme';
+import { Empty, ListCard, PillButton, Screen, T, TopBar } from '@/expense/ui';
 
 /**
  * What the app has been doing lately.
@@ -15,8 +16,7 @@ import { SPACE, type Colors } from '@/theme';
  * leaves no trace on any screen except a title that stayed as you said it.
  */
 export default function LogsScreen() {
-  const { colors, type } = useTheme();
-  const styles = makeStyles(colors);
+  const { c } = useTheme();
   const router = useRouter();
 
   const [entries, setEntries] = useState<LogEntry[]>([]);
@@ -29,61 +29,75 @@ export default function LogsScreen() {
   const failures = entries.filter((entry) => entry.level === 'fail').length;
 
   return (
-    <ScrollView style={styles.flex} contentContainerStyle={styles.content}>
-      <Text style={type.display}>Activity</Text>
-      <Text style={[type.fine, styles.lead]}>
-        {entries.length === 0
-          ? 'Nothing recorded yet. Saves, backups and name checks show up here.'
-          : failures === 0
-            ? 'The last few things the app did. Nothing has failed.'
-            : `The last few things the app did, including ${failures} that failed.`}
-      </Text>
-
-      {entries.map((entry) => (
-        <View key={entry.id} style={styles.row}>
-          <Text style={[type.stamp, styles.when]}>
-            {shortDate(entry.at).toUpperCase()} {timeLabel(entry.at)}
-          </Text>
-          <Text style={[type.body, entry.level === 'fail' && styles.failed]}>{entry.event}</Text>
-          {entry.detail ? (
-            <Text style={[type.fine, styles.detail]} selectable>
-              {entry.detail}
-            </Text>
-          ) : null}
+    <Screen>
+      <TopBar
+        title="Activity"
+        onBack={() => router.back()}
+        right={
+          entries.length > 0 ? (
+            <PillButton label="Clear" icon="trash-outline" onPress={() => void clearLogs().then(load)} />
+          ) : undefined
+        }
+      />
+      {entries.length === 0 ? (
+        <View style={styles.emptyWrap}>
+          <Empty
+            icon="pulse-outline"
+            title="Nothing here yet"
+            hint="Saves, backups and name checks show up here, newest first — handy when something didn't go through."
+          />
         </View>
-      ))}
-
-      <View style={styles.actions}>
-        {entries.length > 0 ? (
-          <Pressable onPress={() => void clearLogs().then(load)} hitSlop={8}>
-            <Text style={[type.label, styles.clear]}>CLEAR</Text>
-          </Pressable>
-        ) : null}
-        <Pressable onPress={() => router.back()} hitSlop={8}>
-          <Text style={[type.label, styles.close]}>CLOSE</Text>
-        </Pressable>
-      </View>
-    </ScrollView>
+      ) : (
+        <ScrollView contentContainerStyle={styles.content}>
+          <T size={14} sub style={{ marginBottom: 10, lineHeight: 20 }}>
+            {failures === 0
+              ? 'The last few things the app did. Nothing has failed.'
+              : `The last few things the app did, including ${failures} that failed.`}
+          </T>
+          <ListCard>
+            {entries.map((entry, i) => {
+              const failed = entry.level === 'fail';
+              return (
+                <View
+                  key={entry.id}
+                  style={[
+                    styles.row,
+                    {
+                      borderBottomWidth: i === entries.length - 1 ? 0 : StyleSheet.hairlineWidth,
+                      borderBottomColor: c.line,
+                    },
+                  ]}
+                >
+                  <Ionicons
+                    name={failed ? 'alert-circle' : 'checkmark-circle-outline'}
+                    size={20}
+                    color={failed ? c.danger : c.sub}
+                    style={{ marginTop: 1 }}
+                  />
+                  <View style={{ flex: 1, gap: 2 }}>
+                    <T size={15} style={failed ? { color: c.danger } : undefined}>{entry.event}</T>
+                    {entry.detail ? (
+                      <Text selectable style={[styles.detail, { color: c.sub }]}>
+                        {entry.detail}
+                      </Text>
+                    ) : null}
+                    <T size={12} sub tabular>
+                      {shortDate(entry.at)} · {timeLabel(entry.at)}
+                    </T>
+                  </View>
+                </View>
+              );
+            })}
+          </ListCard>
+        </ScrollView>
+      )}
+    </Screen>
   );
 }
 
-function makeStyles(colors: Colors) {
-  return StyleSheet.create({
-    flex: { flex: 1, backgroundColor: colors.paper },
-    content: { padding: SPACE.page, paddingTop: 28, paddingBottom: 48, gap: 14 },
-    lead: { maxWidth: 340, marginTop: -8, marginBottom: 4 },
-    row: {
-      gap: 3,
-      borderLeftWidth: 2,
-      borderLeftColor: colors.rule,
-      paddingLeft: 12,
-      paddingVertical: 2,
-    },
-    when: { color: colors.mist },
-    failed: { color: colors.alert },
-    detail: { color: colors.graphite },
-    actions: { flexDirection: 'row', justifyContent: 'space-between', paddingTop: 16 },
-    clear: { color: colors.mist },
-    close: { color: colors.moss },
-  });
-}
+const styles = StyleSheet.create({
+  content: { padding: 20, paddingTop: 16, paddingBottom: 40 },
+  emptyWrap: { flex: 1, justifyContent: 'center', paddingBottom: 60 },
+  row: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, paddingVertical: 12 },
+  detail: { fontFamily: FONTS.sans, fontSize: 13, lineHeight: 18 },
+});

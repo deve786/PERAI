@@ -1,21 +1,33 @@
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
-import {
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { useState, type ReactNode } from 'react';
+import { KeyboardAvoidingView, Platform, ScrollView, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { logFail, logOk } from '@/log';
 import { getSupabase, isConfigured } from '@/sync/client';
 import { useSync } from '@/sync/useSync';
-import { useTheme } from '@/ThemeContext';
-import { FONTS, SPACE, type Colors } from '@/theme';
 import { timeLabel, shortDate } from '@/format';
+import { useTheme } from '@/expense/theme';
+import { Button, Card, Field, Row, Screen, T, TopBar } from '@/expense/ui';
+
+/** Round tinted icon beside a title and a line or two of explanation. */
+function StatusCard({ icon, tone, title, children }: {
+  icon: keyof typeof Ionicons.glyphMap; tone: string; title: string; children: ReactNode;
+}) {
+  return (
+    <Card style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 14, padding: 18 }}>
+      <View style={{
+        width: 46, height: 46, borderRadius: 23, backgroundColor: `${tone}22`,
+        alignItems: 'center', justifyContent: 'center',
+      }}>
+        <Ionicons name={icon} size={22} color={tone} />
+      </View>
+      <View style={{ flex: 1, gap: 4 }}>
+        <T size={17} weight="700">{title}</T>
+        {children}
+      </View>
+    </Card>
+  );
+}
 
 /**
  * The backup account.
@@ -26,8 +38,7 @@ import { timeLabel, shortDate } from '@/format';
  * up — since sync otherwise happens with nothing to press.
  */
 export default function AccountScreen() {
-  const { colors, type } = useTheme();
-  const styles = makeStyles(colors);
+  const { c } = useTheme();
   const router = useRouter();
 
   const sync = useSync();
@@ -84,137 +95,101 @@ export default function AccountScreen() {
   }
 
   const lastLine = sync.lastAt
-    ? `LAST BACKED UP ${shortDate(sync.lastAt).toUpperCase()}, ${timeLabel(sync.lastAt)}`
-    : 'NOT BACKED UP YET';
+    ? `Last backed up ${shortDate(sync.lastAt)}, ${timeLabel(sync.lastAt)}`
+    : 'Not backed up yet';
 
   return (
-    <KeyboardAvoidingView
-      style={styles.flex}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <Text style={type.display}>Backup</Text>
+    <Screen>
+      <TopBar title="Record backup" onBack={() => router.back()} />
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <ScrollView
+          contentContainerStyle={{ padding: 20, paddingTop: 18, paddingBottom: 40, gap: 16 }}
+          keyboardShouldPersistTaps="handled"
+        >
+          {!isConfigured() ? (
+            <StatusCard icon="phone-portrait-outline" tone={c.warn} title="Stored on this phone only">
+              <T size={14} sub style={{ lineHeight: 20 }}>
+                No backup service is set up in this build, so your record stays on this phone only.
+              </T>
+            </StatusCard>
+          ) : signedIn ? (
+            <>
+              <StatusCard
+                icon={sync.pending === 0 ? 'cloud-done-outline' : 'cloud-upload-outline'}
+                tone={c.accent}
+                title={sync.pending === 0 ? 'Backed up' : 'Backing up'}
+              >
+                <T size={14} sub style={{ lineHeight: 20 }}>
+                  Everything you record is copied to your account, so a lost or wiped phone does not
+                  take your record with it.
+                </T>
+              </StatusCard>
 
-        {!isConfigured() ? (
-          <Text style={[type.body, styles.lead]}>
-            No backup service is set up in this build, so your record stays on
-            this phone only.
-          </Text>
-        ) : signedIn ? (
-          <>
-            <Text style={[type.body, styles.lead]}>
-              Everything you record is copied to your account, so a lost or wiped
-              phone does not take your record with it.
-            </Text>
+              <Card style={{ gap: 10 }}>
+                <Row style={{ justifyContent: 'space-between', gap: 12 }}>
+                  <T size={14} sub>Signed in</T>
+                  <T size={15} weight="600" numberOfLines={1} style={{ flexShrink: 1 }}>{sync.email}</T>
+                </Row>
+                <T size={15}>{lastLine}</T>
+                <T size={14} sub>
+                  {sync.pending === 0
+                    ? 'Everything here has been backed up.'
+                    : `${sync.pending} ${sync.pending === 1 ? 'change is' : 'changes are'} waiting to go up.`}
+                </T>
+              </Card>
 
-            <View style={styles.status}>
-              <Text style={type.label}>SIGNED IN</Text>
-              <Text style={type.body}>{sync.email}</Text>
-            </View>
+              {sync.error ? <T size={14} style={{ color: c.danger, lineHeight: 20 }}>{sync.error}</T> : null}
 
-            <View style={styles.status}>
-              <Text style={type.label}>{lastLine}</Text>
-              <Text style={type.body}>
-                {sync.pending === 0
-                  ? 'Everything here has been backed up.'
-                  : `${sync.pending} ${sync.pending === 1 ? 'change is' : 'changes are'} waiting to go up.`}
-              </Text>
-            </View>
+              <View style={{ gap: 10 }}>
+                <Button
+                  title={sync.state === 'syncing' ? 'Backing up…' : 'Back up now'}
+                  icon="cloud-upload-outline"
+                  onPress={() => void sync.syncNow()}
+                  disabled={busy}
+                />
+                <Button title="Sign out" kind="ghost" onPress={() => void signOut()} disabled={busy} />
+              </View>
+            </>
+          ) : (
+            <>
+              <StatusCard icon="cloud-offline-outline" tone={c.sub} title="Not backed up">
+                <T size={14} sub style={{ lineHeight: 20 }}>
+                  Sign in to keep a copy of your record off this phone. The same email and password
+                  gets you back in after a reinstall.
+                </T>
+              </StatusCard>
 
-            {sync.error ? <Text style={[type.body, styles.problem]}>{sync.error}</Text> : null}
+              <View>
+                <Field
+                  label="Email"
+                  value={email}
+                  onChangeText={setEmail}
+                  placeholder="you@example.com"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="email-address"
+                  textContentType="emailAddress"
+                />
+                <Field
+                  label="Password"
+                  value={password}
+                  onChangeText={setPassword}
+                  placeholder="Password"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  secureTextEntry
+                  containerStyle={{ marginBottom: 0 }}
+                />
+              </View>
 
-            <View style={styles.actions}>
-              <Pressable onPress={() => void sync.syncNow()} disabled={busy} hitSlop={8}>
-                <Text style={[type.label, styles.action]}>
-                  {sync.state === 'syncing' ? 'BACKING UP…' : 'BACK UP NOW'}
-                </Text>
-              </Pressable>
-              <Pressable onPress={() => void signOut()} disabled={busy} hitSlop={8}>
-                <Text style={[type.label, styles.signOut]}>SIGN OUT</Text>
-              </Pressable>
-            </View>
-          </>
-        ) : (
-          <>
-            <Text style={[type.body, styles.lead]}>
-              Sign in to keep a copy of your record off this phone. The same
-              email and password gets you back in after a reinstall.
-            </Text>
+              {notice ? <T size={14} sub style={{ lineHeight: 20 }}>{notice}</T> : null}
+              {problem ? <T size={14} style={{ color: c.danger, lineHeight: 20 }}>{problem}</T> : null}
 
-            <TextInput
-              value={email}
-              onChangeText={setEmail}
-              placeholder="Email"
-              placeholderTextColor={colors.mist}
-              style={styles.input}
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="email-address"
-              textContentType="emailAddress"
-            />
-            <TextInput
-              value={password}
-              onChangeText={setPassword}
-              placeholder="Password"
-              placeholderTextColor={colors.mist}
-              style={styles.input}
-              autoCapitalize="none"
-              autoCorrect={false}
-              secureTextEntry
-            />
-
-            {notice ? <Text style={[type.body, styles.notice]}>{notice}</Text> : null}
-            {problem ? <Text style={[type.body, styles.problem]}>{problem}</Text> : null}
-
-            <Pressable
-              onPress={() => void signIn()}
-              disabled={busy}
-              style={({ pressed }) => [styles.primary, pressed && styles.pressed]}
-            >
-              <Text style={[type.label, styles.primaryText]}>
-                {busy ? 'ONE MOMENT…' : 'SIGN IN'}
-              </Text>
-            </Pressable>
-          </>
-        )}
-
-        <Pressable onPress={() => router.back()} hitSlop={8} style={styles.close}>
-          <Text style={[type.label, styles.signOut]}>CLOSE</Text>
-        </Pressable>
-      </ScrollView>
-    </KeyboardAvoidingView>
+              <Button title={busy ? 'One moment…' : 'Sign in'} onPress={() => void signIn()} disabled={busy} />
+            </>
+          )}
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </Screen>
   );
-}
-
-function makeStyles(colors: Colors) {
-  return StyleSheet.create({
-    flex: { flex: 1, backgroundColor: colors.paper },
-    content: { padding: SPACE.page, paddingTop: 28, paddingBottom: 48, gap: 18 },
-    lead: { maxWidth: 340, marginTop: -6 },
-    input: {
-      fontFamily: FONTS.sans,
-      fontSize: 17,
-      color: colors.ink,
-      paddingVertical: 10,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: colors.rule,
-    },
-    status: { gap: 4, borderLeftWidth: 2, borderLeftColor: colors.moss, paddingLeft: 12 },
-    actions: { flexDirection: 'row', justifyContent: 'space-between', paddingTop: 6 },
-    action: { color: colors.moss },
-    signOut: { color: colors.mist },
-    notice: { color: colors.graphite },
-    problem: { color: colors.alert },
-    primary: {
-      marginTop: 4,
-      paddingVertical: 12,
-      borderRadius: 4,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: colors.moss,
-      alignItems: 'center',
-    },
-    primaryText: { color: colors.moss },
-    pressed: { opacity: 0.5 },
-    close: { alignItems: 'center', paddingTop: 12 },
-  });
 }

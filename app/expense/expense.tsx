@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, TextInput, View } from 'react-native';
+import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
@@ -16,10 +16,13 @@ import {
 } from '@/expense/db';
 import { listAccounts, type AccountItem } from '@/expense/accountsDb';
 import { PlacePicker } from '@/expense/PlacePicker';
-import { fromStr, prettyDate, toStr, todayStr } from '@/expense/dates';
+import { fromStr, monthName, prettyDate, toStr, todayStr } from '@/expense/dates';
 import { noteBudgetCrossing } from '@/expense/budgetAlerts';
-import { numerals, radius, useTheme } from '@/expense/theme';
-import { Button, Chip, ConfirmDialog, Divider, Field, ActionBar, IconDot, Money, Row, Screen, T } from '@/expense/ui';
+import { fmtMoney } from '@/expense/stats';
+import { FONTS, numerals, radius, useTheme } from '@/expense/theme';
+import {
+  ActionBar, Button, Card, Chip, ConfirmDialog, Field, IconDot, Label, ListCard, ListRow, Money, Row, Screen, Section, Segmented, T,
+} from '@/expense/ui';
 import { showDialog } from '@/dialogStore';
 
 type DraftItem = { name: string; qty: string; amount: string };
@@ -28,6 +31,21 @@ type Mode = 'view' | 'edit';
 const parseAmt = (s: string) => parseFloat(s.replace(/,/g, ''));
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const lineTotal = (it: DraftItem) => (parseAmt(it.qty) || 1) * (parseAmt(it.amount) || 0);
+
+const METHOD_OPTIONS = METHODS.map((m): { key: string; label: string } => ({ key: m, label: m }));
+const METHOD_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
+  Cash: 'cash-outline', UPI: 'phone-portrait-outline', Card: 'card-outline', Bank: 'business-outline',
+};
+const YES_NO = [{ key: 'no', label: 'No' }, { key: 'yes', label: 'Yes' }] as const;
+const SAME_DIFFERENT = [{ key: 'same', label: 'Same amount' }, { key: 'different', label: 'Different amount' }] as const;
+
+/** "Today, 22 Oct" / "Yesterday, 21 Oct" / "20 Oct". */
+function longDate(s: string) {
+  const p = prettyDate(s);
+  if (p !== 'Today' && p !== 'Yesterday') return p;
+  const d = fromStr(s);
+  return `${p}, ${d.getDate()} ${monthName(d.getMonth())}`;
+}
 
 /** Keyword -> default category name. First match wins; falls back to "Other" when nothing matches. */
 const CATEGORY_KEYWORDS: [string, string[]][] = [
@@ -90,6 +108,8 @@ export default function ExpenseForm() {
   const [customCat, setCustomCat] = useState('');
   const [aiSuggestedCat, setAiSuggestedCat] = useState(false); // true when customCat was filled by AI
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  // Optional fields fold away; opened by default when editing an expense that already uses them.
+  const [moreOpen, setMoreOpen] = useState(false);
   const [aiGuessing, setAiGuessing] = useState(false);
   const [aiTitleGenerating, setAiTitleGenerating] = useState(false);
   const [ocrScanning, setOcrScanning] = useState(false);
@@ -142,6 +162,9 @@ export default function ExpenseForm() {
           setReimburseAmount(e.reimburse_amount != null ? String(e.reimburse_amount) : '');
           setReimburseAccountId(e.reimburse_account_id ?? null);
           setReimburseSame(e.reimburse_amount != null ? e.reimburse_amount === e.amount : true);
+          if (e.place || e.user_tag || e.notes || e.sub_category || e.people_count != null || e.cancelled === 1 || e.reimbursed === 1) {
+            setMoreOpen(true);
+          }
         }
         const existing = await listExpenseItems(editId);
         setViewItems(existing);
@@ -500,12 +523,58 @@ export default function ExpenseForm() {
     router.back();
   }
 
+
   const itemInputStyle = {
-    backgroundColor: c.card, borderWidth: 1, borderColor: c.line, borderRadius: radius.md,
-    paddingHorizontal: 12, paddingVertical: 11, fontSize: 15, color: c.text,
+    fontFamily: FONTS.sans, backgroundColor: c.card, borderWidth: 1, borderColor: c.border, borderRadius: radius.sm,
+    paddingHorizontal: 12, minHeight: 44, paddingVertical: 10, fontSize: 15, color: c.text,
   };
+  const bankName = (bankId: string | null) => (bankId ? bankAccounts.find((a) => a.id === bankId)?.name ?? '' : '');
+  const otherCat = cats.find((k) => k.name === 'Other');
+  const isTicketCat = cat?.name === 'Ticket';
+
+  /** Bank account chips (or a link to add one), for "From", "Into" and refunds. */
+  const bankChips = (selected: string | null, onSelect: (bankId: string | null) => void, lead?: string) =>
+    bankAccounts.length > 0 ? (
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center' }}>
+        {lead ? <T size={14} sub style={{ marginRight: 10, marginBottom: 8 }}>{lead}</T> : null}
+        {bankAccounts.map((a) => (
+          <Chip
+            key={a.id}
+            label={a.institution ? `${a.name} · ${a.institution}` : a.name}
+            active={selected === a.id}
+            onPress={() => onSelect(selected === a.id ? null : a.id)}
+          />
+        ))}
+      </View>
+    ) : (
+      <Pressable onPress={() => router.push('/expense/net-worth')} hitSlop={8} accessibilityRole="button" style={{ minHeight: 36, justifyContent: 'center' }}>
+        <T size={14} weight="600" style={{ color: c.accent }}>Add a bank account to track balance</T>
+      </Pressable>
+    );
 
   if (mode === 'view') {
+    const details: Detail[] = [
+      { icon: 'calendar-outline', label: 'Date', value: longDate(date) },
+      { icon: METHOD_ICONS[method] ?? 'wallet-outline', label: 'Paid with', value: method === 'UPI' && bankName(accountId) ? `${method} · ${bankName(accountId)}` : method },
+    ];
+    if (place.trim()) details.push({ icon: 'location-outline', label: 'Place', value: place });
+    if (userTag.trim()) details.push({ icon: 'person-outline', label: 'For', value: userTag });
+    if (subCategory.trim()) details.push({ icon: 'ticket-outline', label: 'Ticket type', value: subCategory });
+    if (peopleCount.trim()) details.push({ icon: 'people-outline', label: 'People', value: peopleCount });
+    if (refunded && refundAmount.trim()) {
+      details.push({
+        icon: 'arrow-undo-outline', label: 'Refunded', tone: c.danger,
+        value: `${fmtMoney(parseAmt(refundAmount) || 0, symbol)}${refundPeopleCount.trim() ? ` (${refundPeopleCount} of ${peopleCount})` : ''}${refundAccountId ? ` · ${bankName(refundAccountId)}` : ''}`,
+      });
+    }
+    if (reimbursed && reimburseAmount.trim()) {
+      details.push({
+        icon: 'checkmark-circle-outline', label: `Paid back by ${userTag || 'them'}`, tone: c.good,
+        value: `${fmtMoney(parseAmt(reimburseAmount) || 0, symbol)}${reimburseAccountId ? ` · ${bankName(reimburseAccountId)}` : ''}`,
+      });
+    }
+    if (notes.trim()) details.push({ icon: 'document-text-outline', label: 'Notes', value: notes, block: true });
+
     return (
       <Screen edges={['top', 'bottom']}>
         <ActionBar
@@ -513,98 +582,46 @@ export default function ExpenseForm() {
           onClose={() => router.back()}
           actions={[{ label: 'Edit', onPress: () => setMode('edit') }]}
         />
-        <ScrollView contentContainerStyle={{ padding: 20, paddingTop: 12, paddingBottom: 32 }}>
-          <Row style={{ alignItems: 'center', gap: 10, marginTop: 10 }}>
-            {cat && <IconDot icon={cat.icon} color={cat.color} size={44} />}
-            <View style={{ flex: 1 }}>
-              <T size={15} weight="600">{note || cat?.name || ''}</T>
-              {note ? <T size={13} sub style={{ marginTop: 2 }}>{cat?.name}</T> : null}
-            </View>
-          </Row>
-          <Money value={value} size={40} weight="700" style={{ marginTop: 18, letterSpacing: -1 }} />
+        <ScrollView contentContainerStyle={{ flexGrow: 1, padding: 20, paddingTop: 16, paddingBottom: 24 }}>
+          <Card style={{ alignItems: 'center', paddingVertical: 24, gap: 8 }}>
+            {cat ? <IconDot icon={cat.icon} color={cat.color} size={56} /> : null}
+            <T size={18} weight="600" style={{ textAlign: 'center' }}>{note || cat?.name || ''}</T>
+            {note && cat ? (
+              <View style={{ backgroundColor: c.well, borderRadius: radius.pill, paddingHorizontal: 12, paddingVertical: 4 }}>
+                <T size={13} sub>{cat.name}</T>
+              </View>
+            ) : null}
+            <Money value={value || 0} size={44} weight="600" style={{ marginTop: 6, letterSpacing: -1 }} />
+          </Card>
 
-          <Divider style={{ marginTop: 20, marginBottom: 14 }} />
+          <ListCard style={{ marginTop: 16 }}>
+            {details.map((d, i) => <DetailRow key={d.label} {...d} last={i === details.length - 1} />)}
+          </ListCard>
 
           {viewItems.length > 0 && (
             <>
-              {viewItems.map((it) => (
-                <Row key={it.id} style={{ justifyContent: 'space-between', paddingVertical: 7 }}>
-                  <T size={14} sub style={{ flex: 1 }} numberOfLines={1}>
-                    {it.name || 'Item'}{it.quantity !== 1 ? ` ×${it.quantity}` : ''}
-                  </T>
-                  <Money value={it.quantity * it.amount} size={14} />
-                </Row>
-              ))}
-              <Divider style={{ marginTop: 10, marginBottom: 14 }} />
+              <Section title="Items" />
+              <ListCard>
+                {viewItems.map((it, i) => (
+                  <Row
+                    key={it.id}
+                    style={{
+                      minHeight: 48, gap: 12, justifyContent: 'space-between',
+                      borderBottomWidth: i === viewItems.length - 1 ? 0 : StyleSheet.hairlineWidth, borderBottomColor: c.line,
+                    }}
+                  >
+                    <T size={15} numberOfLines={1} style={{ flex: 1 }}>
+                      {it.name || 'Item'}{it.quantity !== 1 ? <T size={15} sub tabular>{` ×${it.quantity}`}</T> : null}
+                    </T>
+                    <Money value={it.quantity * it.amount} size={15} weight="500" />
+                  </Row>
+                ))}
+              </ListCard>
             </>
           )}
 
-          <Row style={{ justifyContent: 'space-between', paddingVertical: 6 }}>
-            <T size={13.5} sub>Date</T>
-            <T size={13.5}>{prettyDate(date)}</T>
-          </Row>
-          {place.trim().length > 0 && (
-            <Row style={{ justifyContent: 'space-between', paddingVertical: 6 }}>
-              <T size={13.5} sub>Place</T>
-              <Row style={{ gap: 6, alignItems: 'center' }}>
-                <Ionicons name="location-outline" size={16} color={c.sub} />
-                <T size={13.5} weight="600">{place}</T>
-              </Row>
-            </Row>
-          )}
-          {userTag.trim().length > 0 && (
-            <Row style={{ justifyContent: 'space-between', paddingVertical: 6 }}>
-              <T size={13.5} sub>For user</T>
-              <Row style={{ gap: 6, alignItems: 'center' }}>
-                <Ionicons name="person-circle-outline" size={16} color={c.sub} />
-                <T size={13.5} weight="600">{userTag}</T>
-              </Row>
-            </Row>
-          )}
-          {subCategory.trim().length > 0 && (
-            <Row style={{ justifyContent: 'space-between', paddingVertical: 6 }}>
-              <T size={13.5} sub>Ticket type</T>
-              <T size={13.5} weight="600">{subCategory}</T>
-            </Row>
-          )}
-          <Row style={{ justifyContent: 'space-between', paddingVertical: 6 }}>
-            <T size={13.5} sub>Paid with</T>
-            <T size={13.5}>{method}</T>
-          </Row>
-          {peopleCount.trim() && (
-            <Row style={{ justifyContent: 'space-between', paddingVertical: 6 }}>
-              <T size={13.5} sub>People</T>
-              <T size={13.5}>{peopleCount}</T>
-            </Row>
-          )}
-          {refunded && refundAmount.trim() && (
-            <Row style={{ justifyContent: 'space-between', paddingVertical: 6 }}>
-              <T size={13.5} sub style={{ color: c.danger }}>Refunded</T>
-              <T size={13.5} weight="600" style={{ color: c.danger }}>
-                ₹{refundAmount}
-                {refundPeopleCount.trim() ? ` (${refundPeopleCount} of ${peopleCount})` : ''}
-                {refundAccountId ? ` · ${bankAccounts.find((a) => a.id === refundAccountId)?.name ?? ''}` : ''}
-              </T>
-            </Row>
-          )}
-          {reimbursed && reimburseAmount.trim() && (
-            <Row style={{ justifyContent: 'space-between', paddingVertical: 6 }}>
-              <T size={13.5} sub style={{ color: c.good }}>Paid back by {userTag || 'them'}</T>
-              <T size={13.5} weight="600" style={{ color: c.good }}>
-                ₹{reimburseAmount}
-                {reimburseAccountId ? ` · ${bankAccounts.find((a) => a.id === reimburseAccountId)?.name ?? ''}` : ''}
-              </T>
-            </Row>
-          )}
-          {notes.trim().length > 0 && (
-            <View style={{ marginTop: 14 }}>
-              <T size={13} sub style={{ marginBottom: 4 }}>Notes</T>
-              <T size={14.5} style={{ lineHeight: 20 }}>{notes}</T>
-            </View>
-          )}
-
-          <Button title="Edit expense" icon="pencil-outline" kind="ghost" onPress={() => setMode('edit')} style={{ marginTop: 24 }} />
-          <Button title="Delete expense" kind="danger" onPress={() => setConfirmingDelete(true)} style={{ marginTop: 10 }} />
+          <View style={{ flex: 1, minHeight: 24 }} />
+          <Button title="Delete expense" icon="trash-outline" kind="danger" onPress={() => setConfirmingDelete(true)} />
         </ScrollView>
         <ConfirmDialog
           visible={confirmingDelete}
@@ -617,80 +634,78 @@ export default function ExpenseForm() {
     );
   }
 
+  const moreHint = isTicketCat
+    ? 'Ticket type, people, refund, place, person, notes'
+    : hasItems ? 'Place, person, notes' : 'Place, person, notes, split into items';
+
   return (
     <Screen edges={['top', 'bottom']}>
       <ActionBar
         title={editId ? 'Edit expense' : 'New expense'}
-        actions={[
-          { label: 'Cancel', onPress: editId ? () => setMode('view') : () => router.back() },
-          { label: 'Save', onPress: onSave, primary: true, disabled: !valid || saving },
-        ]}
+        onCancel={editId ? () => setMode('view') : () => router.back()}
+        actions={[{ label: saving ? 'Saving…' : 'Save', onPress: onSave, primary: true, disabled: !valid || saving }]}
       />
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <ScrollView contentContainerStyle={{ padding: 20, paddingTop: 12, paddingBottom: 32 }} keyboardShouldPersistTaps="handled">
-          {!editId && (
-            <Pressable
-              onPress={handleScanReceipt}
-              disabled={ocrScanning}
-              style={({ pressed }) => ({
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 8,
-                paddingVertical: 10,
-                paddingHorizontal: 16,
-                borderRadius: radius.md,
-                backgroundColor: c.card,
-                borderWidth: 1,
-                borderColor: c.line,
-                marginTop: 6,
-                marginBottom: 16,
-                opacity: pressed || ocrScanning ? 0.7 : 1,
-              })}
-              accessibilityRole="button"
-              accessibilityLabel="Scan receipt or bill with AI"
-            >
-              {ocrScanning ? (
-                <ActivityIndicator size="small" color={c.accent} />
+        <ScrollView contentContainerStyle={{ padding: 20, paddingTop: 16, paddingBottom: 32 }} keyboardShouldPersistTaps="handled">
+          <Card style={{ alignItems: 'center', paddingVertical: 20 }}>
+            <T size={14} sub>Amount</T>
+            <Row style={{ justifyContent: 'center', gap: 10, marginTop: 4, maxWidth: '100%' }}>
+              <T size={28} sub tabular>{symbol}</T>
+              {hasItems ? (
+                <T size={48} weight="600" tabular numberOfLines={1} style={{ letterSpacing: -1.2 }}>
+                  {itemsTotal % 1 === 0 ? itemsTotal : itemsTotal.toFixed(2)}
+                </T>
               ) : (
-                <Ionicons name="scan-outline" size={18} color={c.accent} />
+                <TextInput
+                  value={amount}
+                  onChangeText={setAmount}
+                  placeholder="0"
+                  placeholderTextColor={c.faint}
+                  keyboardType="decimal-pad"
+                  autoFocus={!editId}
+                  accessibilityLabel="Amount"
+                  style={[{
+                    fontFamily: FONTS.monoMedium, fontSize: 48, color: c.text,
+                    padding: 0, minWidth: 64, maxWidth: 260, textAlign: 'center', letterSpacing: -1.2,
+                  }, numerals]}
+                />
               )}
-              <T size={13.5} weight="600" style={{ color: c.accent }}>
-                {ocrScanning ? 'Scanning receipt with AI…' : 'Scan Receipt / Bill with AI'}
-              </T>
-            </Pressable>
-          )}
-
-          <Row style={{ alignItems: 'center', gap: 6, marginTop: 6, marginBottom: hasItems ? 2 : 22 }}>
-            <T size={34} weight="600" sub>{symbol}</T>
-            {hasItems ? (
-              <T size={44} weight="700" tabular style={{ flex: 1, letterSpacing: -1.2 }}>
-                {itemsTotal % 1 === 0 ? itemsTotal : itemsTotal.toFixed(2)}
-              </T>
-            ) : (
-              <TextInput
-                value={amount}
-                onChangeText={setAmount}
-                placeholder="0"
-                placeholderTextColor={c.faint}
-                keyboardType="decimal-pad"
-                autoFocus={!editId}
-                style={[{
-                  flex: 1, fontSize: 44, fontWeight: '700', color: c.text,
-                  padding: 0, letterSpacing: -1.2,
-                }, numerals]}
-              />
+            </Row>
+            {hasItems ? <T size={13} sub style={{ marginTop: 2 }}>Total of {items.length} item{items.length === 1 ? '' : 's'}</T> : null}
+            {!editId && (
+              <Pressable
+                onPress={handleScanReceipt}
+                disabled={ocrScanning}
+                accessibilityRole="button"
+                accessibilityLabel="Scan receipt or bill with AI"
+                style={({ pressed }) => ({
+                  flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 14,
+                  minHeight: 40, paddingHorizontal: 16, borderRadius: radius.pill, backgroundColor: c.accentSoft,
+                  opacity: pressed || ocrScanning ? 0.7 : 1,
+                })}
+              >
+                {ocrScanning ? (
+                  <ActivityIndicator size="small" color={c.accent} />
+                ) : (
+                  <Ionicons name="camera-outline" size={18} color={c.accent} />
+                )}
+                <T size={14} weight="600" style={{ color: c.accent }}>
+                  {ocrScanning ? 'Reading the bill with AI…' : 'Scan a bill instead'}
+                </T>
+              </Pressable>
             )}
-          </Row>
+          </Card>
 
-          {hasItems ? (
-            <View style={{ marginBottom: 20 }}>
-              <Row style={{ justifyContent: 'space-between', marginBottom: 10, alignItems: 'center' }}>
-                <T size={13} sub>{items.length} item{items.length === 1 ? '' : 's'}</T>
-                <T size={13} sub onPress={clearItems}>Clear</T>
+          {hasItems && (
+            <Card style={{ marginTop: 12 }}>
+              <Row style={{ justifyContent: 'space-between', marginBottom: 10 }}>
+                <T size={14} weight="600">Items</T>
+                <Pressable onPress={clearItems} hitSlop={10} accessibilityRole="button" accessibilityLabel="Clear items">
+                  <T size={14} weight="600" style={{ color: c.accent }}>Clear</T>
+                </Pressable>
               </Row>
               {items.map((it, i) => (
-                <View key={i} style={{ marginBottom: 10 }}>
+                <View key={i} style={{ marginBottom: 12 }}>
                   <Row style={{ gap: 8, marginBottom: 6 }}>
                     <TextInput
                       value={it.name}
@@ -699,7 +714,7 @@ export default function ExpenseForm() {
                       placeholderTextColor={c.faint}
                       style={[itemInputStyle, { flex: 1 }]}
                     />
-                    <Pressable onPress={() => removeItem(i)} hitSlop={10} accessibilityLabel={`Remove item ${i + 1}`}>
+                    <Pressable onPress={() => removeItem(i)} hitSlop={8} accessibilityLabel={`Remove item ${i + 1}`} style={{ width: 36, height: 44, alignItems: 'center', justifyContent: 'center' }}>
                       <Ionicons name="close-circle" size={22} color={c.faint} />
                     </Pressable>
                   </Row>
@@ -710,66 +725,68 @@ export default function ExpenseForm() {
                       placeholder="1"
                       placeholderTextColor={c.faint}
                       keyboardType="decimal-pad"
-                      style={[itemInputStyle, numerals, { width: 56, textAlign: 'center' }]}
+                      accessibilityLabel={`Quantity of item ${i + 1}`}
+                      style={[itemInputStyle, numerals, { fontFamily: FONTS.mono, width: 56, textAlign: 'center' }]}
                     />
-                    <T size={15} sub style={{ alignSelf: 'center' }}>×</T>
+                    <T size={15} sub>×</T>
                     <TextInput
                       value={it.amount}
                       onChangeText={(t) => updateItem(i, { amount: t })}
-                      placeholder="price"
+                      placeholder="Price"
                       placeholderTextColor={c.faint}
                       keyboardType="decimal-pad"
-                      style={[itemInputStyle, numerals, { flex: 1, textAlign: 'right' }]}
+                      accessibilityLabel={`Price of item ${i + 1}`}
+                      style={[itemInputStyle, numerals, { fontFamily: FONTS.mono, flex: 1, textAlign: 'right' }]}
                     />
-                    <T size={14} sub tabular style={{ width: 64, textAlign: 'right', alignSelf: 'center' }}>
+                    <T size={14} sub tabular style={{ width: 72, textAlign: 'right' }}>
                       {lineTotal(it) > 0 ? (lineTotal(it) % 1 === 0 ? lineTotal(it) : lineTotal(it).toFixed(2)) : ''}
                     </T>
                   </Row>
                 </View>
               ))}
-              <Pressable onPress={addItem} hitSlop={8} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
-                <Ionicons name="add-circle-outline" size={16} color={c.sub} />
-                <T size={13.5} sub>Add item</T>
+              <Pressable onPress={addItem} hitSlop={8} accessibilityRole="button" style={{ flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 36 }}>
+                <Ionicons name="add" size={18} color={c.accent} />
+                <T size={14} weight="600" style={{ color: c.accent }}>Add item</T>
               </Pressable>
-            </View>
-          ) : (
-            <Pressable onPress={startItems} hitSlop={8} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 22 }}>
-              <Ionicons name="add-circle-outline" size={16} color={c.sub} />
-              <T size={13.5} sub>Split into items</T>
-            </Pressable>
+            </Card>
           )}
 
-          <Field
-            label="Title (optional)"
-            right={
-              <Pressable
-                hitSlop={8}
-                onPress={runAiTitleGeneration}
-                disabled={aiTitleGenerating}
-                accessibilityLabel="Generate title with AI"
-                style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}
-              >
-                {aiTitleGenerating ? (
-                  <ActivityIndicator size="small" color={c.accent} />
-                ) : (
-                  <Ionicons name="sparkles-outline" size={13} color={c.accent} />
-                )}
-                <T size={13} style={{ color: c.accent, fontWeight: '600' }}>
-                  {aiTitleGenerating ? 'Generating…' : 'AI Title'}
-                </T>
-              </Pressable>
-            }
-            value={note}
-            onChangeText={onChangeNote}
-            placeholder={hasItems ? 'e.g. Walmart run' : 'e.g. Lunch with team'}
-          />
+          <Label style={{ marginTop: 20 }}>Title</Label>
+          <Row style={{ backgroundColor: c.card, borderWidth: 1, borderColor: c.border, borderRadius: radius.sm, minHeight: 50, paddingLeft: 14, paddingRight: 6, gap: 8 }}>
+            <TextInput
+              value={note}
+              onChangeText={onChangeNote}
+              placeholder={hasItems ? 'e.g. Walmart run' : 'e.g. Lunch with team'}
+              placeholderTextColor={c.faint}
+              accessibilityLabel="Title"
+              style={{ flex: 1, fontFamily: FONTS.sans, fontSize: 16, color: c.text, paddingVertical: 12 }}
+            />
+            <Pressable
+              hitSlop={6}
+              onPress={runAiTitleGeneration}
+              disabled={aiTitleGenerating}
+              accessibilityRole="button"
+              accessibilityLabel="Generate title with AI"
+              style={({ pressed }) => ({
+                flexDirection: 'row', alignItems: 'center', gap: 5, minHeight: 38, paddingHorizontal: 12,
+                borderRadius: radius.sm - 2, backgroundColor: c.accentSoft, opacity: pressed ? 0.7 : 1,
+              })}
+            >
+              {aiTitleGenerating ? (
+                <ActivityIndicator size="small" color={c.accent} />
+              ) : (
+                <Ionicons name="sparkles-outline" size={15} color={c.accent} />
+              )}
+              <T size={14} weight="600" style={{ color: c.accent }}>{aiTitleGenerating ? 'Writing…' : 'AI'}</T>
+            </Pressable>
+          </Row>
 
-          <Row style={{ marginBottom: 9, gap: 7 }}>
-            <T size={13} sub>Category</T>
+          <Row style={{ marginTop: 20, marginBottom: 8, gap: 8 }}>
+            <T size={14} weight="600">Category</T>
             {aiGuessing && (
               <Row style={{ gap: 5 }}>
                 <ActivityIndicator size="small" color={c.sub} />
-                <T size={12} sub>Guessing with AI…</T>
+                <T size={13} sub>Guessing with AI…</T>
               </Row>
             )}
           </Row>
@@ -777,134 +794,54 @@ export default function ExpenseForm() {
             {cats.map((k) => (
               <Chip key={k.id} label={k.name} color={k.color} active={catId === k.id} onPress={() => onPickCategory(k.id)} />
             ))}
+            {otherCat && !isOther ? (
+              <Pressable
+                onPress={() => onPickCategory(otherCat.id)}
+                accessibilityRole="button"
+                accessibilityLabel="New category"
+                style={({ pressed }) => ({
+                  minHeight: 36, paddingHorizontal: 14, borderRadius: radius.pill, marginBottom: 8,
+                  borderWidth: 1, borderStyle: 'dashed', borderColor: c.border,
+                  justifyContent: 'center', opacity: pressed ? 0.7 : 1,
+                })}
+              >
+                <T size={14} weight="600" style={{ color: c.accent }}>+ New</T>
+              </Pressable>
+            ) : null}
           </View>
 
           {isOther && (
             <Field
-              label={aiSuggestedCat && customCat ? 'AI suggested category name (edit if needed)' : 'Name the new category (optional)'}
+              label={aiSuggestedCat && customCat ? 'AI suggested a category name (edit if needed)' : 'Name the new category (optional)'}
               value={customCat}
               onChangeText={(v) => { setCustomCat(v); if (aiSuggestedCat && !v) setAiSuggestedCat(false); }}
               placeholder="e.g. Gifts"
               maxLength={30}
-              containerStyle={{ marginTop: 12 }}
+              containerStyle={{ marginTop: 8, marginBottom: 0 }}
             />
           )}
 
-          <PlacePicker value={place} onChange={setPlace} onDraft={setPlaceDraft} />
-
-          <T size={13} sub style={{ marginTop: 16, marginBottom: 9 }}>For user / Tag person (optional)</T>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center' }}>
-            {savedUsers.map((u) => (
-              <Chip
-                key={u.id}
-                label={u.name}
-                icon="person-outline"
-                active={userTag.toLowerCase() === u.name.toLowerCase()}
-                onPress={() => setUserTag(userTag.toLowerCase() === u.name.toLowerCase() ? '' : u.name)}
-              />
-            ))}
-            {!showNewUserInput && (
-              <Chip
-                label="+ Add person"
-                active={false}
-                onPress={() => setShowNewUserInput(true)}
-              />
-            )}
-          </View>
-
-          {showNewUserInput && (
-            <Row style={{ gap: 8, marginTop: 4, marginBottom: 8, alignItems: 'center' }}>
-              <Field
-                value={newUserName}
-                onChangeText={setNewUserName}
-                placeholder="Person name (e.g. Rahul, Mom)"
-                containerStyle={{ flex: 1, marginBottom: 0 }}
-                autoFocus
-              />
-              <Button
-                title="Add"
-                kind="ghost"
-                disabled={!newUserName.trim()}
-                onPress={async () => {
-                  const trimmed = newUserName.trim();
-                  if (!trimmed) return;
-                  await findOrCreateTaggedUser(trimmed);
-                  setUserTag(trimmed);
-                  if (!savedUsers.some((u) => u.name.toLowerCase() === trimmed.toLowerCase())) {
-                    setSavedUsers((prev) => [...prev, { id: trimmed, name: trimmed }].sort((a, b) => a.name.localeCompare(b.name)));
-                  }
-                  setNewUserName('');
-                  setShowNewUserInput(false);
-                }}
-              />
-              <Pressable
-                hitSlop={10}
-                onPress={() => { setShowNewUserInput(false); setNewUserName(''); }}
-                accessibilityLabel="Cancel add person"
-              >
-                <Ionicons name="close-circle" size={22} color={c.faint} />
-              </Pressable>
-            </Row>
-          )}
-
-          {userTag.trim().length > 0 && (
-            <View style={{ marginTop: 16 }}>
-              <T size={13} sub style={{ marginBottom: 9 }}>Did {userTag.trim()} pay you back?</T>
-              <Row style={{ gap: 10 }}>
-                <Chip label="No" active={!reimbursed} onPress={() => setReimbursed(false)} />
-                <Chip label="Yes" active={reimbursed} onPress={() => setReimbursed(true)} />
-              </Row>
-
-              {reimbursed ? (
-                <>
-                  <Row style={{ gap: 10, marginTop: 12 }}>
-                    <Chip label="Same amount" active={reimburseSame} onPress={() => setReimburseSame(true)} />
-                    <Chip label="Different amount" active={!reimburseSame} onPress={() => setReimburseSame(false)} />
-                  </Row>
-
-                  {!reimburseSame && (
-                    <Field
-                      label="Amount they sent"
-                      value={reimburseAmount}
-                      onChangeText={setReimburseAmount}
-                      placeholder={String(round2(value) || 0)}
-                      keyboardType="decimal-pad"
-                      containerStyle={{ marginTop: 12 }}
-                    />
-                  )}
-
-                  <T size={13} sub style={{ marginTop: 12, marginBottom: 9 }}>Into which bank (UPI)</T>
-                  {bankAccounts.length > 0 ? (
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-                      {bankAccounts.map((a) => (
-                        <Chip
-                          key={a.id}
-                          label={a.institution ? `${a.name} · ${a.institution}` : a.name}
-                          active={reimburseAccountId === a.id}
-                          onPress={() => setReimburseAccountId(reimburseAccountId === a.id ? null : a.id)}
-                        />
-                      ))}
-                    </View>
-                  ) : (
-                    <Pressable onPress={() => router.push('/expense/net-worth')}>
-                      <T size={13} style={{ color: c.accent }}>Add a bank account to track balance ›</T>
-                    </Pressable>
-                  )}
-                </>
-              ) : null}
+          <Label style={{ marginTop: 20 }}>Paid with</Label>
+          <Segmented options={METHOD_OPTIONS} value={method} onChange={setMethod} />
+          {method === 'UPI' ? (
+            <View style={{ marginTop: 12 }}>
+              {bankChips(accountId, setAccountId, 'From')}
             </View>
-          )}
+          ) : null}
 
-          <T size={13} sub style={{ marginTop: 16, marginBottom: 9 }}>Date</T>
-          <Pressable
-            onPress={() => setShowPicker((s) => !s)}
-            style={{ backgroundColor: c.card, borderWidth: 1, borderColor: c.line, borderRadius: radius.md, padding: 14, marginBottom: 16 }}
-          >
-            <Row style={{ justifyContent: 'space-between' }}>
-              <T size={15}>{prettyDate(date)}</T>
-              <Ionicons name="calendar-outline" size={18} color={c.sub} />
-            </Row>
-          </Pressable>
+          <ListCard style={{ marginTop: method === 'UPI' ? 8 : 16 }}>
+            <ListRow icon="calendar-outline" iconColor={c.text} label={longDate(date)} onPress={() => setShowPicker((s) => !s)} />
+            <ListRow
+              icon={moreOpen ? 'remove' : 'add'}
+              iconColor={c.text}
+              label="More details"
+              sub={moreHint}
+              onPress={() => setMoreOpen((o) => !o)}
+              chevron={false}
+              right={<Ionicons name={moreOpen ? 'chevron-up' : 'chevron-down'} size={18} color={c.faint} />}
+              last
+            />
+          </ListCard>
           {showPicker && (
             <DateTimePicker
               value={fromStr(date)}
@@ -918,165 +855,210 @@ export default function ExpenseForm() {
             />
           )}
 
-          <Field label="Notes (optional)" value={notes} onChangeText={setNotes} placeholder="Any extra detail" />
+          {moreOpen && (
+            <View>
+              {isTicketCat ? (
+                <View>
+                  <Label style={{ marginTop: 20 }}>Ticket type</Label>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center' }}>
+                    {ticketTypes.map((t) => (
+                      <Chip
+                        key={t.id}
+                        label={t.name}
+                        active={subCategory.toLowerCase() === t.name.toLowerCase()}
+                        onPress={() => setSubCategory(subCategory.toLowerCase() === t.name.toLowerCase() ? '' : t.name)}
+                      />
+                    ))}
+                    {!showNewTicketTypeInput && (
+                      <Chip label="Add type" icon="add" active={false} onPress={() => setShowNewTicketTypeInput(true)} />
+                    )}
+                  </View>
 
-          <T size={13} sub style={{ marginBottom: 9 }}>Paid with</T>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-            {METHODS.map((m) => (
-              <Chip key={m} label={m} active={method === m} onPress={() => setMethod(m)} />
-            ))}
-          </View>
+                  {showNewTicketTypeInput && (
+                    <Row style={{ gap: 8, marginTop: 4, alignItems: 'center' }}>
+                      <Field
+                        value={newTicketTypeName}
+                        onChangeText={setNewTicketTypeName}
+                        placeholder="e.g. Bus, Concert"
+                        containerStyle={{ flex: 1, marginBottom: 0 }}
+                        autoFocus
+                      />
+                      <Button
+                        title="Add"
+                        kind="ghost"
+                        disabled={!newTicketTypeName.trim()}
+                        onPress={async () => {
+                          const trimmed = newTicketTypeName.trim();
+                          if (!trimmed) return;
+                          await findOrCreateTicketType(trimmed);
+                          setSubCategory(trimmed);
+                          if (!ticketTypes.some((t) => t.name.toLowerCase() === trimmed.toLowerCase())) {
+                            setTicketTypes((prev) => [...prev, { id: trimmed, name: trimmed }].sort((a, b) => a.name.localeCompare(b.name)));
+                          }
+                          setNewTicketTypeName('');
+                          setShowNewTicketTypeInput(false);
+                        }}
+                      />
+                      <CloseButton label="Cancel add ticket type" onPress={() => { setShowNewTicketTypeInput(false); setNewTicketTypeName(''); }} />
+                    </Row>
+                  )}
 
-          {method === 'UPI' ? (
-            <View style={{ marginTop: 14 }}>
-              <T size={13} sub style={{ marginBottom: 9 }}>From which bank</T>
-              {bankAccounts.length > 0 ? (
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-                  {bankAccounts.map((a) => (
-                    <Chip
-                      key={a.id}
-                      label={a.institution ? `${a.name} · ${a.institution}` : a.name}
-                      active={accountId === a.id}
-                      onPress={() => setAccountId(accountId === a.id ? null : a.id)}
-                    />
-                  ))}
+                  <Field
+                    label="Number of people"
+                    value={peopleCount}
+                    onChangeText={setPeopleCount}
+                    placeholder="e.g. 5"
+                    keyboardType="number-pad"
+                    containerStyle={{ marginTop: 16, marginBottom: 0 }}
+                  />
+
+                  <Label style={{ marginTop: 20 }}>Refunded?</Label>
+                  <Segmented options={YES_NO} value={refunded ? 'yes' : 'no'} onChange={(k) => setRefunded(k === 'yes')} />
+
+                  {refunded ? (
+                    <>
+                      {parseAmt(peopleCount) > 1 ? (
+                        <Field
+                          label={`People cancelled (of ${peopleCount})`}
+                          value={refundPeopleCount}
+                          onChangeText={(text) => {
+                            setRefundPeopleCount(text);
+                            const total = parseAmt(peopleCount);
+                            const cancelledN = parseAmt(text);
+                            // A per-person share of the total, for however many of
+                            // them were cancelled — still editable below in case
+                            // a fee wasn't refunded along with it.
+                            if (total > 0 && cancelledN > 0) {
+                              setRefundAmount(String(round2((round2(value) / total) * Math.min(cancelledN, total))));
+                            }
+                          }}
+                          placeholder="e.g. 2"
+                          keyboardType="number-pad"
+                          containerStyle={{ marginTop: 14, marginBottom: 0 }}
+                        />
+                      ) : null}
+
+                      <Field
+                        label="Refunded amount"
+                        value={refundAmount}
+                        onChangeText={setRefundAmount}
+                        placeholder={String(round2(value) || 0)}
+                        keyboardType="decimal-pad"
+                        containerStyle={{ marginTop: 14, marginBottom: 0 }}
+                      />
+
+                      <Label style={{ marginTop: 14 }}>Into which bank (UPI)</Label>
+                      {bankChips(refundAccountId, setRefundAccountId)}
+                    </>
+                  ) : null}
                 </View>
-              ) : (
-                <Pressable onPress={() => router.push('/expense/net-worth')}>
-                  <T size={13} style={{ color: c.accent }}>Add a bank account to track balance ›</T>
-                </Pressable>
-              )}
-            </View>
-          ) : null}
+              ) : null}
 
-          {cat?.name === 'Ticket' ? (
-            <View style={{ marginTop: 16 }}>
-              <T size={13} sub style={{ marginBottom: 9 }}>Ticket type (optional)</T>
+              <PlacePicker value={place} onChange={setPlace} onDraft={setPlaceDraft} />
+
+              <Label style={{ marginTop: 20 }}>Person</Label>
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center' }}>
-                {ticketTypes.map((t) => (
+                {savedUsers.map((u) => (
                   <Chip
-                    key={t.id}
-                    label={t.name}
-                    active={subCategory.toLowerCase() === t.name.toLowerCase()}
-                    onPress={() => setSubCategory(subCategory.toLowerCase() === t.name.toLowerCase() ? '' : t.name)}
+                    key={u.id}
+                    label={u.name}
+                    icon="person-outline"
+                    active={userTag.toLowerCase() === u.name.toLowerCase()}
+                    onPress={() => setUserTag(userTag.toLowerCase() === u.name.toLowerCase() ? '' : u.name)}
                   />
                 ))}
-                {!showNewTicketTypeInput && (
-                  <Chip label="+ Add type" active={false} onPress={() => setShowNewTicketTypeInput(true)} />
+                {!showNewUserInput && (
+                  <Chip label="Add person" icon="add" active={false} onPress={() => setShowNewUserInput(true)} />
                 )}
               </View>
 
-              {showNewTicketTypeInput && (
-                <Row style={{ gap: 8, marginTop: 8, alignItems: 'center' }}>
+              {showNewUserInput && (
+                <Row style={{ gap: 8, marginTop: 4, alignItems: 'center' }}>
                   <Field
-                    value={newTicketTypeName}
-                    onChangeText={setNewTicketTypeName}
-                    placeholder="e.g. Bus, Concert"
+                    value={newUserName}
+                    onChangeText={setNewUserName}
+                    placeholder="Person name (e.g. Rahul, Mom)"
                     containerStyle={{ flex: 1, marginBottom: 0 }}
                     autoFocus
                   />
                   <Button
                     title="Add"
                     kind="ghost"
-                    disabled={!newTicketTypeName.trim()}
+                    disabled={!newUserName.trim()}
                     onPress={async () => {
-                      const trimmed = newTicketTypeName.trim();
+                      const trimmed = newUserName.trim();
                       if (!trimmed) return;
-                      await findOrCreateTicketType(trimmed);
-                      setSubCategory(trimmed);
-                      if (!ticketTypes.some((t) => t.name.toLowerCase() === trimmed.toLowerCase())) {
-                        setTicketTypes((prev) => [...prev, { id: trimmed, name: trimmed }].sort((a, b) => a.name.localeCompare(b.name)));
+                      await findOrCreateTaggedUser(trimmed);
+                      setUserTag(trimmed);
+                      if (!savedUsers.some((u) => u.name.toLowerCase() === trimmed.toLowerCase())) {
+                        setSavedUsers((prev) => [...prev, { id: trimmed, name: trimmed }].sort((a, b) => a.name.localeCompare(b.name)));
                       }
-                      setNewTicketTypeName('');
-                      setShowNewTicketTypeInput(false);
+                      setNewUserName('');
+                      setShowNewUserInput(false);
                     }}
                   />
-                  <Pressable
-                    hitSlop={10}
-                    onPress={() => { setShowNewTicketTypeInput(false); setNewTicketTypeName(''); }}
-                    accessibilityLabel="Cancel add ticket type"
-                  >
-                    <Ionicons name="close-circle" size={22} color={c.faint} />
-                  </Pressable>
+                  <CloseButton label="Cancel add person" onPress={() => { setShowNewUserInput(false); setNewUserName(''); }} />
                 </Row>
               )}
 
+              {userTag.trim().length > 0 && (
+                <View>
+                  <Label style={{ marginTop: 20 }}>Did {userTag.trim()} pay you back?</Label>
+                  <Segmented options={YES_NO} value={reimbursed ? 'yes' : 'no'} onChange={(k) => setReimbursed(k === 'yes')} />
+
+                  {reimbursed ? (
+                    <>
+                      <Segmented
+                        options={SAME_DIFFERENT}
+                        value={reimburseSame ? 'same' : 'different'}
+                        onChange={(k) => setReimburseSame(k === 'same')}
+                        style={{ marginTop: 10 }}
+                      />
+
+                      {!reimburseSame && (
+                        <Field
+                          label="Amount they sent"
+                          value={reimburseAmount}
+                          onChangeText={setReimburseAmount}
+                          placeholder={String(round2(value) || 0)}
+                          keyboardType="decimal-pad"
+                          containerStyle={{ marginTop: 14, marginBottom: 0 }}
+                        />
+                      )}
+
+                      <Label style={{ marginTop: 14 }}>Into which bank (UPI)</Label>
+                      {bankChips(reimburseAccountId, setReimburseAccountId)}
+                    </>
+                  ) : null}
+                </View>
+              )}
+
               <Field
-                label="Number of people (optional)"
-                value={peopleCount}
-                onChangeText={setPeopleCount}
-                placeholder="e.g. 5"
-                keyboardType="number-pad"
-                containerStyle={{ marginTop: 14 }}
+                label="Notes"
+                value={notes}
+                onChangeText={setNotes}
+                placeholder="Any extra detail"
+                multiline
+                containerStyle={{ marginTop: 20, marginBottom: 0 }}
               />
 
-              <T size={13} sub style={{ marginTop: 12, marginBottom: 9 }}>Refunded?</T>
-              <Row style={{ gap: 10 }}>
-                <Chip label="No" active={!refunded} onPress={() => setRefunded(false)} />
-                <Chip label="Yes" active={refunded} onPress={() => setRefunded(true)} />
-              </Row>
-
-              {refunded ? (
-                <>
-                  {parseAmt(peopleCount) > 1 ? (
-                    <Field
-                      label={`People cancelled (of ${peopleCount})`}
-                      value={refundPeopleCount}
-                      onChangeText={(text) => {
-                        setRefundPeopleCount(text);
-                        const total = parseAmt(peopleCount);
-                        const cancelledN = parseAmt(text);
-                        // A per-person share of the total, for however many of
-                        // them were cancelled — still editable below in case
-                        // a fee wasn't refunded along with it.
-                        if (total > 0 && cancelledN > 0) {
-                          setRefundAmount(String(round2((round2(value) / total) * Math.min(cancelledN, total))));
-                        }
-                      }}
-                      placeholder="e.g. 2"
-                      keyboardType="number-pad"
-                      containerStyle={{ marginTop: 12 }}
-                    />
-                  ) : null}
-
-                  <Field
-                    label="Refunded amount"
-                    value={refundAmount}
-                    onChangeText={setRefundAmount}
-                    placeholder={String(round2(value) || 0)}
-                    keyboardType="decimal-pad"
-                    containerStyle={{ marginTop: 12 }}
-                  />
-
-                  <T size={13} sub style={{ marginTop: 12, marginBottom: 9 }}>Into which bank (UPI)</T>
-                  {bankAccounts.length > 0 ? (
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-                      {bankAccounts.map((a) => (
-                        <Chip
-                          key={a.id}
-                          label={a.institution ? `${a.name} · ${a.institution}` : a.name}
-                          active={refundAccountId === a.id}
-                          onPress={() => setRefundAccountId(refundAccountId === a.id ? null : a.id)}
-                        />
-                      ))}
-                    </View>
-                  ) : (
-                    <Pressable onPress={() => router.push('/expense/net-worth')}>
-                      <T size={13} style={{ color: c.accent }}>Add a bank account to track balance ›</T>
-                    </Pressable>
-                  )}
-                </>
-              ) : null}
+              {!hasItems && (
+                <Pressable
+                  onPress={startItems}
+                  hitSlop={6}
+                  accessibilityRole="button"
+                  style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 44, marginTop: 12, opacity: pressed ? 0.6 : 1 })}
+                >
+                  <Ionicons name="list-outline" size={18} color={c.accent} />
+                  <T size={15} weight="600" style={{ color: c.accent }}>Split into items</T>
+                </Pressable>
+              )}
             </View>
-          ) : null}
+          )}
 
-          <Button
-            title={saving ? 'Saving…' : editId ? 'Save changes' : 'Add expense'}
-            onPress={onSave}
-            disabled={!valid || saving}
-            style={{ marginTop: 22 }}
-          />
-          {editId ? <Button title="Delete expense" kind="danger" onPress={() => setConfirmingDelete(true)} style={{ marginTop: 10 }} /> : null}
+          {editId ? (
+            <Button title="Delete expense" icon="trash-outline" kind="danger" onPress={() => setConfirmingDelete(true)} style={{ marginTop: 28 }} />
+          ) : null}
         </ScrollView>
       </KeyboardAvoidingView>
       <ConfirmDialog
@@ -1087,5 +1069,47 @@ export default function ExpenseForm() {
         onCancel={() => setConfirmingDelete(false)}
       />
     </Screen>
+  );
+}
+
+type Detail = { icon: keyof typeof Ionicons.glyphMap; label: string; value: string; tone?: string; block?: boolean };
+
+/** A row in the details card: icon, label, value on the right (or below, for notes). */
+function DetailRow({ icon, label, value, tone, block, last }: Detail & { last?: boolean }) {
+  const { c } = useTheme();
+  return (
+    <View style={{
+      flexDirection: 'row', alignItems: block ? 'flex-start' : 'center', gap: 12, minHeight: 52, paddingVertical: 12,
+      borderBottomWidth: last ? 0 : StyleSheet.hairlineWidth, borderBottomColor: c.line,
+    }}>
+      <Ionicons name={icon} size={20} color={tone ?? c.sub} />
+      {block ? (
+        <View style={{ flex: 1 }}>
+          <T size={15} sub>{label}</T>
+          <T size={15} style={{ marginTop: 4, lineHeight: 21 }}>{value}</T>
+        </View>
+      ) : (
+        <>
+          <T size={15} sub style={tone ? { color: tone } : undefined}>{label}</T>
+          <T size={15} weight="500" style={{ flex: 1, textAlign: 'right', color: tone ?? c.text }}>{value}</T>
+        </>
+      )}
+    </View>
+  );
+}
+
+/** Round "×" that closes an inline add row. */
+function CloseButton({ label, onPress }: { label: string; onPress: () => void }) {
+  const { c } = useTheme();
+  return (
+    <Pressable
+      hitSlop={6}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      style={({ pressed }) => ({ width: 40, height: 40, borderRadius: 20, backgroundColor: c.well, alignItems: 'center', justifyContent: 'center', opacity: pressed ? 0.6 : 1 })}
+    >
+      <Ionicons name="close" size={20} color={c.sub} />
+    </Pressable>
   );
 }

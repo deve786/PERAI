@@ -2,20 +2,56 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@/ThemeContext';
-import { FONTS, SPACE, type Colors } from '@/theme';
+import { FONTS, RADIUS, type Colors } from '@/theme';
 import type { Memory } from '@/types';
 import { planDay } from '@/today';
-import { listExpenses, listRecurring, getSetting, type ExpenseRow, type Recurring } from '@/expense/db';
+import { listExpenses, listRecurring, getSetting } from '@/expense/db';
 import { listBorrowLend } from '@/expense/borrowLendDb';
-import { monthRange, todayStr } from '@/expense/dates';
-import { sum, fmtMoney } from '@/expense/stats';
+import { monthName, monthRange, todayStr } from '@/expense/dates';
+import { fmtMoney, sum } from '@/expense/stats';
 
 interface Props {
   memories: Memory[];
   onOpenEntry?: (memory: Memory) => void;
 }
 
-export function DailyBriefing({ memories, onOpenEntry }: Props) {
+/** One small figure in a grey box: "Overdue / 0". Shared with the Calendar's other-day summary. */
+export function StatBox({
+  label,
+  value,
+  tone,
+  mono,
+}: {
+  label: string;
+  value: string;
+  tone?: 'alert' | 'moss';
+  /** Money reads in mono; counts in sans, as in the design. */
+  mono?: boolean;
+}) {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
+  return (
+    <View style={styles.stat}>
+      <Text style={styles.statLabel} numberOfLines={1}>
+        {label}
+      </Text>
+      <Text
+        style={[
+          mono ? styles.statMoney : styles.statCount,
+          tone === 'alert' && styles.alertValue,
+          tone === 'moss' && styles.mossValue,
+        ]}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+      >
+        {value}
+      </Text>
+    </View>
+  );
+}
+
+/** The day at a glance: a greeting, one line about the day, three figures. */
+export function DailyBriefing({ memories }: Props) {
   const { colors, type } = useTheme();
   const styles = makeStyles(colors);
 
@@ -29,7 +65,6 @@ export function DailyBriefing({ memories, onOpenEntry }: Props) {
   const today = todayStr();
   const plan = useMemo(() => planDay(memories), [memories]);
 
-  // Determine greeting based on current local hour
   const greeting = useMemo(() => {
     const hour = new Date().getHours();
     if (hour < 12) return 'Good morning';
@@ -59,7 +94,7 @@ export function DailyBriefing({ memories, onOpenEntry }: Props) {
         setMonthlyBudget(parseFloat(budgetStr) || 0);
         setCurrencySymbol(sym || '₹');
 
-        // Check bills due in the next 7 days
+        // Bills due in the next 7 days
         const dayNow = Number(today.slice(8, 10));
         const daysInMonth = new Date(year, month0 + 1, 0).getDate();
 
@@ -78,7 +113,7 @@ export function DailyBriefing({ memories, onOpenEntry }: Props) {
 
         setUpcomingBills(upcoming);
 
-        // Check active borrow/lend items due soon or overdue
+        // Active borrow/lend items due soon or overdue
         const activeWithDue = blList.filter((b) => b.due_date && (b.type === 'lent' || b.type === 'borrowed'));
         const urgent = activeWithDue.map((b) => {
           const diffMs = new Date(b.due_date! + 'T00:00:00').getTime() - new Date(today + 'T00:00:00').getTime();
@@ -118,105 +153,74 @@ export function DailyBriefing({ memories, onOpenEntry }: Props) {
   const todayCount = plan.today.length;
   const urgentBill = upcomingBills[0];
 
-  // Synthesize concise smart digest
-  const digestProse = useMemo(() => {
-    const parts: string[] = [];
+  // The one line about the day.
+  const headline =
+    overdueCount > 0
+      ? `${overdueCount} overdue ${overdueCount === 1 ? 'task needs' : 'tasks need'} attention.`
+      : todayCount > 0
+        ? `${todayCount} ${todayCount === 1 ? 'thing' : 'things'} planned for today.`
+        : 'Your day is clear.';
 
-    if (overdueCount > 0) {
-      parts.push(`You have ${overdueCount} overdue ${overdueCount === 1 ? 'task' : 'tasks'} requiring attention.`);
-    } else if (todayCount > 0) {
-      parts.push(`${todayCount} scheduled ${todayCount === 1 ? 'item' : 'items'} planned for today.`);
-    } else {
-      parts.push('Your schedule is clear for today.');
-    }
-
+  // A second, quieter line for money that needs noticing: a loan, a bill, the budget.
+  const moneyNote = useMemo(() => {
     if (loanAlert) {
-      parts.push(`${loanAlert.person}'s loan of ${currencySymbol}${loanAlert.amount} is ${loanAlert.dueText}.`);
-    } else if (urgentBill) {
-      const whenStr = urgentBill.dueInDays === 0 ? 'today' : urgentBill.dueInDays === 1 ? 'tomorrow' : `in ${urgentBill.dueInDays} days`;
-      parts.push(`${urgentBill.name} (${currencySymbol}${urgentBill.amount}) is due ${whenStr}.`);
-    } else if (spentThisMonth !== null && monthlyBudget > 0) {
-      const pct = Math.round((spentThisMonth / monthlyBudget) * 100);
-      parts.push(`${pct}% of your ${currencySymbol}${monthlyBudget} monthly budget is spent.`);
+      return `${loanAlert.person}'s loan of ${fmtMoney(loanAlert.amount, currencySymbol)} is ${loanAlert.dueText}.`;
     }
+    if (urgentBill) {
+      const whenStr = urgentBill.dueInDays === 0 ? 'today' : urgentBill.dueInDays === 1 ? 'tomorrow' : `in ${urgentBill.dueInDays} days`;
+      return `${urgentBill.name} (${fmtMoney(urgentBill.amount, currencySymbol)}) is due ${whenStr}.`;
+    }
+    if (spentThisMonth !== null && monthlyBudget > 0) {
+      const pct = Math.round((spentThisMonth / monthlyBudget) * 100);
+      return `${pct}% of your ${fmtMoney(monthlyBudget, currencySymbol)} monthly budget is spent.`;
+    }
+    return null;
+  }, [loanAlert, urgentBill, spentThisMonth, monthlyBudget, currencySymbol]);
 
-    return parts.join(' ');
-  }, [overdueCount, todayCount, urgentBill, spentThisMonth, monthlyBudget, currencySymbol, loanAlert]);
+  const monthShort = monthName(Number(today.slice(5, 7)) - 1);
 
   return (
     <View style={styles.card}>
       <Pressable
         onPress={() => setExpanded((prev) => !prev)}
         style={styles.header}
-        hitSlop={8}
+        accessibilityRole="button"
+        accessibilityState={{ expanded }}
+        accessibilityHint={expanded ? 'Hides the figures' : 'Shows the figures'}
       >
-        <View style={styles.headerLeft}>
-          <Ionicons name="sunny-outline" size={16} color={colors.moss} />
-          <Text style={[type.label, styles.headerTitle]}>
-            {greeting.toUpperCase()} · DAILY BRIEFING
-          </Text>
+        <View style={styles.headerText}>
+          <Text style={type.fine}>{greeting}</Text>
+          <Text style={styles.headline}>{headline}</Text>
         </View>
         <Ionicons
-          name={expanded ? 'chevron-up-outline' : 'chevron-down-outline'}
-          size={16}
+          name={expanded ? 'chevron-up' : 'chevron-down'}
+          size={18}
           color={colors.mist}
         />
       </Pressable>
 
-      {expanded ? (
-        <View style={styles.body}>
-          <Text style={[type.body, styles.digestText]}>
-            {digestProse}
+      {moneyNote ? (
+        <View style={styles.noteRow}>
+          <Ionicons
+            name={loanAlert ? 'people-outline' : urgentBill ? 'repeat-outline' : 'wallet-outline'}
+            size={15}
+            color={loanAlert?.isOverdue ? colors.alert : colors.moss}
+          />
+          <Text style={[type.fine, styles.noteText, loanAlert?.isOverdue && styles.alertValue]}>
+            {moneyNote}
           </Text>
+        </View>
+      ) : null}
 
-          <View style={styles.metricsRow}>
-            <View style={styles.metricItem}>
-              <Text style={[type.stamp, styles.metricLabel]}>OVERDUE</Text>
-              <Text style={[type.figure, overdueCount > 0 ? styles.alertValue : styles.normalValue]}>
-                {overdueCount}
-              </Text>
-            </View>
-
-            <View style={styles.metricDivider} />
-
-            <View style={styles.metricItem}>
-              <Text style={[type.stamp, styles.metricLabel]}>TODAY</Text>
-              <Text style={[type.figure, styles.normalValue]}>
-                {todayCount}
-              </Text>
-            </View>
-
-            <View style={styles.metricDivider} />
-
-            <View style={styles.metricItem}>
-              <Text style={[type.stamp, styles.metricLabel]}>THIS MONTH</Text>
-              <Text style={[type.figure, styles.normalValue]}>
-                {spentThisMonth !== null ? `${currencySymbol}${spentThisMonth}` : '—'}
-              </Text>
-            </View>
-
-            {loanAlert ? (
-              <>
-                <View style={styles.metricDivider} />
-                <View style={styles.metricItem}>
-                  <Text style={[type.stamp, styles.metricLabel]}>LOAN DUE</Text>
-                  <Text style={[type.figure, loanAlert.isOverdue ? styles.alertValue : styles.billValue]} numberOfLines={1}>
-                    {loanAlert.dueText}
-                  </Text>
-                </View>
-              </>
-            ) : urgentBill ? (
-              <>
-                <View style={styles.metricDivider} />
-                <View style={styles.metricItem}>
-                  <Text style={[type.stamp, styles.metricLabel]}>NEXT BILL</Text>
-                  <Text style={[type.figure, styles.billValue]} numberOfLines={1}>
-                    {urgentBill.dueInDays === 0 ? 'Today' : `${urgentBill.dueInDays}d`}
-                  </Text>
-                </View>
-              </>
-            ) : null}
-          </View>
+      {expanded ? (
+        <View style={styles.stats}>
+          <StatBox label="Overdue" value={String(overdueCount)} tone={overdueCount > 0 ? 'alert' : undefined} />
+          <StatBox label="Due today" value={String(todayCount)} />
+          <StatBox
+            label={`Spent in ${monthShort}`}
+            value={spentThisMonth !== null ? fmtMoney(spentThisMonth, currencySymbol) : '—'}
+            mono
+          />
         </View>
       ) : null}
     </View>
@@ -227,69 +231,33 @@ function makeStyles(colors: Colors) {
   return StyleSheet.create({
     card: {
       backgroundColor: colors.surface,
-      borderRadius: 8,
+      borderRadius: RADIUS.card,
       borderWidth: 1,
       borderColor: colors.rule,
       padding: 14,
-      gap: 10,
+      gap: 12,
     },
     header: {
       flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
+      alignItems: 'flex-start',
+      gap: 10,
     },
-    headerLeft: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 7,
-    },
-    headerTitle: {
-      color: colors.moss,
-      fontWeight: '600',
-    },
-    body: {
-      gap: 12,
-      marginTop: 2,
-    },
-    digestText: {
-      color: colors.ink,
-      lineHeight: 22,
-    },
-    metricsRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      paddingTop: 10,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: colors.rule,
-    },
-    metricItem: {
-      alignItems: 'center',
+    headerText: { flex: 1, gap: 2 },
+    headline: { fontFamily: FONTS.sansSemi, fontSize: 16, lineHeight: 22, color: colors.ink },
+    noteRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: -4 },
+    noteText: { flex: 1 },
+    stats: { flexDirection: 'row', gap: 8 },
+    stat: {
       flex: 1,
+      backgroundColor: colors.well,
+      borderRadius: RADIUS.input,
+      padding: 10,
       gap: 2,
     },
-    metricLabel: {
-      color: colors.mist,
-      fontSize: 10,
-    },
-    metricDivider: {
-      width: 1,
-      height: 24,
-      backgroundColor: colors.rule,
-    },
-    normalValue: {
-      color: colors.ink,
-      fontSize: 16,
-    },
-    alertValue: {
-      color: colors.alert,
-      fontSize: 16,
-      fontWeight: '700',
-    },
-    billValue: {
-      color: colors.moss,
-      fontSize: 16,
-      fontWeight: '600',
-    },
+    statLabel: { fontFamily: FONTS.sans, fontSize: 12, color: colors.graphite },
+    statCount: { fontFamily: FONTS.sansSemi, fontSize: 20, lineHeight: 26, color: colors.ink },
+    statMoney: { fontFamily: FONTS.monoMedium, fontSize: 17, lineHeight: 26, color: colors.ink },
+    alertValue: { color: colors.alert },
+    mossValue: { color: colors.moss },
   });
 }
