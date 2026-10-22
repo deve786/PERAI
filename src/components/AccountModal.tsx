@@ -105,6 +105,15 @@ export function AccountModal({
   // With accounts to pick from, one must be picked; with none, it saves
   // without taking money from anywhere (and says so).
   const needsAccount = paying && sources.length > 0 && !fromAccount;
+  // Just the bank's name ("Canara"), like the expense form. Only when two
+  // saved accounts are at the same bank is the account name added to tell
+  // them apart.
+  const bankLabel = (a: AccountItem) => {
+    const bank = (a.institution || '').trim();
+    if (!bank) return a.name;
+    const twins = sources.filter((s) => (s.institution || '').trim().toLowerCase() === bank.toLowerCase());
+    return twins.length > 1 ? `${bank} · ${a.name}` : bank;
+  };
 
   const close = () => {
     setPayChoice(null);
@@ -304,7 +313,7 @@ export function AccountModal({
                             style={[styles.chip, chosen?.id === a.id && styles.chipActive]}
                           >
                             <Text style={[type.label, styles.chipText, chosen?.id === a.id && styles.chipTextActive]}>
-                              {a.institution ? `${a.name} · ${a.institution}` : a.name}
+                              {bankLabel(a)}
                             </Text>
                           </Pressable>
                         ))}
@@ -313,11 +322,11 @@ export function AccountModal({
                         {!chosen
                           ? `Pick the ${sourceType === 'cash' ? 'cash account' : 'bank'} this money came from.`
                           : added > 0
-                          ? `${fmtMoney(added, '₹')} will be taken from ${chosen.name}` +
+                          ? `${fmtMoney(added, '₹')} will be taken from ${bankLabel(chosen)}` +
                             (chosen.balance < added ? ` — it only has ${fmtMoney(chosen.balance, '₹')}` : '')
                           : item
-                          ? `Type an amount in Add money to take it from ${chosen.name}.`
-                          : `The value you type will be taken from ${chosen.name}.`}
+                          ? `Type an amount in Add money to take it from ${bankLabel(chosen)}.`
+                          : `The value you type will be taken from ${bankLabel(chosen)}.`}
                       </Text>
                     </>
                   ) : (
