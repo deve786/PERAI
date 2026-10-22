@@ -15,6 +15,7 @@ import {
   type Category, type ExpenseItem as ExpenseItemRow, type TaggedUser, type TicketType,
 } from '@/expense/db';
 import { listAccounts, type AccountItem } from '@/expense/accountsDb';
+import { PlacePicker } from '@/expense/PlacePicker';
 import { fromStr, prettyDate, toStr, todayStr } from '@/expense/dates';
 import { noteBudgetCrossing } from '@/expense/budgetAlerts';
 import { numerals, radius, useTheme } from '@/expense/theme';
@@ -80,6 +81,8 @@ export default function ExpenseForm() {
   const [reimburseAmount, setReimburseAmount] = useState('');
   const [reimburseAccountId, setReimburseAccountId] = useState<string | null>(null);
   const [userTag, setUserTag] = useState('');
+  const [place, setPlace] = useState('');
+  const [placeDraft, setPlaceDraft] = useState('');
   const [savedUsers, setSavedUsers] = useState<TaggedUser[]>([]);
   const [showNewUserInput, setShowNewUserInput] = useState(false);
   const [newUserName, setNewUserName] = useState('');
@@ -133,6 +136,7 @@ export default function ExpenseForm() {
           setPeopleCount(e.people_count != null ? String(e.people_count) : '');
           setRefundPeopleCount(e.refund_people_count != null ? String(e.refund_people_count) : '');
           if (e.user_tag) setUserTag(e.user_tag);
+          if (e.place) setPlace(e.place);
           if (e.sub_category) setSubCategory(e.sub_category);
           setReimbursed(e.reimbursed === 1);
           setReimburseAmount(e.reimburse_amount != null ? String(e.reimburse_amount) : '');
@@ -354,6 +358,7 @@ export default function ExpenseForm() {
       id: editId, amount: round2(value), category_id: finalCatId, date,
       note: note.trim(), notes: notes.trim(), method,
       user_tag: finalUserTag,
+      place: (place || placeDraft).trim(),
       // Only a UPI payment is tied to the bank it drew from — switching away
       // from UPI drops the link rather than leaving a stale one behind.
       account_id: method === 'UPI' ? accountId : null,
@@ -543,6 +548,15 @@ export default function ExpenseForm() {
             <T size={13.5} sub>Date</T>
             <T size={13.5}>{prettyDate(date)}</T>
           </Row>
+          {place.trim().length > 0 && (
+            <Row style={{ justifyContent: 'space-between', paddingVertical: 6 }}>
+              <T size={13.5} sub>Place</T>
+              <Row style={{ gap: 6, alignItems: 'center' }}>
+                <Ionicons name="location-outline" size={16} color={c.sub} />
+                <T size={13.5} weight="600">{place}</T>
+              </Row>
+            </Row>
+          )}
           {userTag.trim().length > 0 && (
             <Row style={{ justifyContent: 'space-between', paddingVertical: 6 }}>
               <T size={13.5} sub>For user</T>
@@ -778,6 +792,8 @@ export default function ExpenseForm() {
               containerStyle={{ marginTop: 12 }}
             />
           )}
+
+          <PlacePicker value={place} onChange={setPlace} onDraft={setPlaceDraft} />
 
           <T size={13} sub style={{ marginTop: 16, marginBottom: 9 }}>For user / Tag person (optional)</T>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center' }}>

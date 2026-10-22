@@ -5,6 +5,8 @@ import { todayStr, ymKey } from './dates';
 
 export type Category = { id: string; name: string; icon: string; color: string; monthly_budget: number | null };
 export type TaggedUser = { id: string; name: string };
+/** A saved place (a shop, a town) offered as a chip on the next expense or income, like a tagged person. */
+export type TaggedPlace = { id: string; name: string };
 export type TicketType = { id: string; name: string };
 export type Expense = {
   id: string;
@@ -15,6 +17,8 @@ export type Expense = {
   notes: string;
   method: string;
   user_tag?: string;
+  /** Where it was spent — picked from tagged_places or typed fresh. Empty/absent when not set. */
+  place?: string;
   recurring_id: string | null;
   /** The bank account a UPI (or other bank-drawn) payment came from — its balance is kept in step. Null/absent when not linked to one. */
   account_id?: string | null;
@@ -63,6 +67,8 @@ export type Income = {
   notes: string;
   method: string;
   user_tag?: string;
+  /** Where it came from — picked from tagged_places or typed fresh. Empty/absent when not set. */
+  place?: string;
   /** The bank account UPI income landed in — its balance is kept in step. Null/absent when not linked to one. */
   account_id?: string | null;
 };
@@ -183,6 +189,14 @@ const SCHEMA_SQL = `
     deleted INTEGER NOT NULL DEFAULT 0
   );
   CREATE UNIQUE INDEX IF NOT EXISTS idx_tagged_users_name ON tagged_users(name) WHERE deleted = 0;
+  CREATE TABLE IF NOT EXISTS tagged_places (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    dirty INTEGER NOT NULL DEFAULT 1,
+    deleted INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_tagged_places_name ON tagged_places(name) WHERE deleted = 0;
   CREATE TABLE IF NOT EXISTS ticket_types (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -394,6 +408,8 @@ async function init() {
   await addColumnIfMissing(db, 'expenses', 'user_tag', "TEXT NOT NULL DEFAULT ''");
   await addColumnIfMissing(db, 'expenses', 'account_id', 'TEXT');
   await addColumnIfMissing(db, 'income', 'user_tag', "TEXT NOT NULL DEFAULT ''");
+  await addColumnIfMissing(db, 'expenses', 'place', "TEXT NOT NULL DEFAULT ''");
+  await addColumnIfMissing(db, 'income', 'place', "TEXT NOT NULL DEFAULT ''");
   await addColumnIfMissing(db, 'income', 'account_id', 'TEXT');
   await addColumnIfMissing(db, 'expenses', 'cancelled', 'INTEGER NOT NULL DEFAULT 0');
   await addColumnIfMissing(db, 'expenses', 'refund_amount', 'REAL');
@@ -440,6 +456,14 @@ async function init() {
       deleted INTEGER NOT NULL DEFAULT 0
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_tagged_users_name ON tagged_users(name) WHERE deleted = 0;
+    CREATE TABLE IF NOT EXISTS tagged_places (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      dirty INTEGER NOT NULL DEFAULT 1,
+      deleted INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_tagged_places_name ON tagged_places(name) WHERE deleted = 0;
     CREATE TABLE IF NOT EXISTS ticket_types (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -666,6 +690,10 @@ export async function saveExpense(e: Omit<Expense, 'id' | 'recurring_id'> & { id
   if (userTag) {
     await findOrCreateTaggedUser(userTag);
   }
+  const place = (e.place ?? '').trim();
+  if (place) {
+    await findOrCreateTaggedPlace(place);
+  }
   const accountId = e.account_id || null;
   const peopleCount = e.people_count ?? null;
   const subCategory = (e.sub_category ?? '').trim();
@@ -675,8 +703,8 @@ export async function saveExpense(e: Omit<Expense, 'id' | 'recurring_id'> & { id
   if (e.id) {
     const previous = await getExpense(e.id);
     await db.runAsync(
-      'UPDATE expenses SET amount=?, category_id=?, date=?, note=?, notes=?, method=?, user_tag=?, account_id=?, people_count=?, sub_category=?, updated_at=?, dirty=1 WHERE id=?',
-      e.amount, e.category_id, e.date, e.note, e.notes, e.method, userTag, accountId, peopleCount, subCategory, now, e.id
+      'UPDATE expenses SET amount=?, category_id=?, date=?, note=?, notes=?, method=?, user_tag=?, place=?, account_id=?, people_count=?, sub_category=?, updated_at=?, dirty=1 WHERE id=?',
+      e.amount, e.category_id, e.date, e.note, e.notes, e.method, userTag, place, accountId, peopleCount, subCategory, now, e.id
     );
     await reconcileAccountBalance(
       previous ? { account_id: previous.account_id ?? null, amount: previous.amount } : null,
@@ -687,8 +715,8 @@ export async function saveExpense(e: Omit<Expense, 'id' | 'recurring_id'> & { id
   }
   const id = uuid();
   await db.runAsync(
-    'INSERT INTO expenses (id, amount, category_id, date, note, notes, method, user_tag, account_id, people_count, sub_category, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    id, e.amount, e.category_id, e.date, e.note, e.notes, e.method, userTag, accountId, peopleCount, subCategory, now
+    'INSERT INTO expenses (id, amount, category_id, date, note, notes, method, user_tag, place, account_id, people_count, sub_category, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    id, e.amount, e.category_id, e.date, e.note, e.notes, e.method, userTag, place, accountId, peopleCount, subCategory, now
   );
   await reconcileAccountBalance(null, { account_id: accountId, amount: e.amount }, -1);
   return id;
@@ -720,6 +748,34 @@ export async function findOrCreateTaggedUser(name: string): Promise<string> {
 export async function deleteTaggedUser(id: string): Promise<void> {
   const db = await getDb();
   await db.runAsync('UPDATE tagged_users SET deleted = 1, updated_at = ?, dirty = 1 WHERE id = ?', nowIso(), id);
+}
+
+export async function listTaggedPlaces(): Promise<TaggedPlace[]> {
+  const db = await getDb();
+  return db.getAllAsync<TaggedPlace>(
+    'SELECT id, name FROM tagged_places WHERE deleted = 0 ORDER BY LOWER(name) ASC'
+  );
+}
+
+export async function findOrCreateTaggedPlace(name: string): Promise<string> {
+  const db = await getDb();
+  const n = name.trim();
+  if (!n) return '';
+  const existing = await db.getFirstAsync<{ id: string }>(
+    'SELECT id FROM tagged_places WHERE LOWER(name) = LOWER(?) AND deleted = 0', n
+  );
+  if (existing) return existing.id;
+  const id = uuid();
+  await db.runAsync(
+    'INSERT INTO tagged_places (id, name, updated_at) VALUES (?, ?, ?)',
+    id, n, nowIso()
+  );
+  return id;
+}
+
+export async function deleteTaggedPlace(id: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync('UPDATE tagged_places SET deleted = 1, updated_at = ?, dirty = 1 WHERE id = ?', nowIso(), id);
 }
 
 export async function listTicketTypes(): Promise<TicketType[]> {
@@ -1003,12 +1059,16 @@ export async function saveIncome(e: Omit<Income, 'id'> & { id?: string }): Promi
   if (userTag) {
     await findOrCreateTaggedUser(userTag);
   }
+  const place = (e.place ?? '').trim();
+  if (place) {
+    await findOrCreateTaggedPlace(place);
+  }
   const accountId = e.account_id || null;
   if (e.id) {
     const previous = await getIncome(e.id);
     await db.runAsync(
-      'UPDATE income SET amount=?, category_id=?, date=?, note=?, notes=?, method=?, user_tag=?, account_id=?, updated_at=?, dirty=1 WHERE id=?',
-      e.amount, e.category_id, e.date, e.note, e.notes, e.method, userTag, accountId, now, e.id
+      'UPDATE income SET amount=?, category_id=?, date=?, note=?, notes=?, method=?, user_tag=?, place=?, account_id=?, updated_at=?, dirty=1 WHERE id=?',
+      e.amount, e.category_id, e.date, e.note, e.notes, e.method, userTag, place, accountId, now, e.id
     );
     await reconcileAccountBalance(
       previous ? { account_id: previous.account_id ?? null, amount: previous.amount } : null,
@@ -1019,8 +1079,8 @@ export async function saveIncome(e: Omit<Income, 'id'> & { id?: string }): Promi
   }
   const id = uuid();
   await db.runAsync(
-    'INSERT INTO income (id, amount, category_id, date, note, notes, method, user_tag, account_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    id, e.amount, e.category_id, e.date, e.note, e.notes, e.method, userTag, accountId, now
+    'INSERT INTO income (id, amount, category_id, date, note, notes, method, user_tag, place, account_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    id, e.amount, e.category_id, e.date, e.note, e.notes, e.method, userTag, place, accountId, now
   );
   await reconcileAccountBalance(null, { account_id: accountId, amount: e.amount }, 1);
   return id;

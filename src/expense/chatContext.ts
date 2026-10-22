@@ -52,6 +52,7 @@ export async function buildChatContext(currency: string, budget: number) {
     method: r.method,
     bank: r.account_id ? bankName.get(r.account_id) ?? null : null,
     forUser: r.user_tag || null,
+    place: r.place || null,
     peopleCount: r.people_count ?? null,
     itemCount: r.item_count > 1 ? r.item_count : null,
     refunded: r.cancelled === 1,

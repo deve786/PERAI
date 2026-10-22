@@ -17,6 +17,7 @@ export function ExpenseItem({ e, showDate = true, onDeleted, trip }: { e: Expens
     e.note ? e.cat_name.toUpperCase() : null,
     e.sub_category ? e.sub_category.toUpperCase() : null,
     e.user_tag ? `@${e.user_tag.toUpperCase()}` : null,
+    e.place ? e.place.toUpperCase() : null,
     e.method.toUpperCase(),
     showDate ? prettyDate(e.date).toUpperCase() : null,
     e.recurring_id ? 'REPEATS' : null,
