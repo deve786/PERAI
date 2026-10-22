@@ -61,6 +61,7 @@ import {
 } from '../src/expense/tripSpending';
 import { tripSpendQuestion } from '../src/tripQuestion';
 import { stockGain } from '../src/expense/accountsLogic';
+import { monthsWithData, OVERALL, periodLabel, periodRange, previousMonth } from '../src/expense/period';
 import { needsTranslation, normalizeMoney, normalizeQuery } from '../src/manglish';
 import {
   changeLabel,
@@ -1775,6 +1776,20 @@ section('stock profit');
   const old = stockGain({ balance: 7000, invested: null });
   check('an older stock counts its whole value as invested', old.invested === 7000 && old.profit === 0);
   check('no percentage when nothing was invested', stockGain({ balance: 500, invested: 0 }).percent === null);
+}
+
+section('expense page period');
+{
+  const months = monthsWithData(['2026-08-14', '2026-10-02', '2026-08-30', '2025-12-31'], '2026-10');
+  check('months with entries, newest first, no repeats', JSON.stringify(months) === JSON.stringify(['2026-10', '2026-08', '2025-12']));
+  check('the current month is offered even with no entries yet', monthsWithData([], '2026-10').join() === '2026-10');
+  const r = periodRange('2026-02');
+  check('a month runs from its first to its last day', r?.from === '2026-02-01' && r?.to === '2026-02-28');
+  check('Overall has no limit', periodRange(OVERALL) === null);
+  check('a month is labelled with name and year', periodLabel('2026-10') === 'Oct 2026');
+  check('Overall is labelled Overall', periodLabel(OVERALL) === 'Overall');
+  check('the month before January is last December', previousMonth('2026-01') === '2025-12');
+  check('and otherwise just one back', previousMonth('2026-10') === '2026-09');
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

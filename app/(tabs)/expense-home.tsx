@@ -7,7 +7,9 @@ import { categoryBudgetStatus } from '@/expense/budgets';
 import { takeBudgetAlert } from '@/expense/budgetAlerts';
 import { getBorrowLendSummary, type BorrowLendSummary } from '@/expense/borrowLendDb';
 import { getNetWorthSummary, type NetWorthSummary } from '@/expense/accountsDb';
-import { monthName, monthRange, todayStr, addDays } from '@/expense/dates';
+import { todayStr, addDays } from '@/expense/dates';
+import { monthsWithData, OVERALL, periodLabel, periodRange, previousMonth, type Period } from '@/expense/period';
+import { PeriodPicker } from '@/expense/PeriodPicker';
 import { byCategory, fmtMoney, sum } from '@/expense/stats';
 import { budgetTone, radius, useTheme, type Colors } from '@/expense/theme';
 import { Button, Divider, Empty, Meter, Money, Row, Screen, Section, T } from '@/expense/ui';
@@ -41,45 +43,59 @@ export default function Home() {
   // Derived from the date string rather than a Date object: primitives keep the
   // memoised range referentially stable, which the focus effect depends on.
   const today = todayStr();
-  const year = Number(today.slice(0, 4));
-  const month0 = Number(today.slice(5, 7)) - 1;
-  const { from, to } = useMemo(() => monthRange(year, month0), [year, month0]);
+  const currentMonth = today.slice(0, 7);
+  // Null follows the current month, so leaving the app open across midnight
+  // on the 1st rolls over by itself; picking from the drop-down overrides it.
+  const [picked, setPicked] = useState<Period | null>(null);
+  const period: Period = picked ?? currentMonth;
+  const isOverall = period === OVERALL;
+  const isCurrentMonth = period === currentMonth;
+  const [monthOptions, setMonthOptions] = useState<string[]>([]);
+  // The period as plain date strings (empty = no limit), like the old month
+  // range, so the loader's dependencies are primitives.
+  const range = periodRange(period);
+  const prev = range ? periodRange(previousMonth(period)) : null;
+  const from = range?.from ?? '';
+  const to = range?.to ?? '';
+  const prevFrom = prev?.from ?? '';
+  const prevTo = prev?.to ?? '';
 
   const [lastMonthTotal, setLastMonthTotal] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     await refreshRecurring();
-    const prevMonth0 = month0 === 0 ? 11 : month0 - 1;
-    const prevYear = month0 === 0 ? year - 1 : year;
-    const prevRange = monthRange(prevYear, prevMonth0);
     const [monthExpenses, monthIncome, allExpenses, allIncome, prevExpenses, recList, blSummary, nwSummary, catList, perCategory] = await Promise.all([
-      listExpenses(from, to),
-      listIncome(from, to),
+      from ? listExpenses(from, to) : listExpenses(),
+      from ? listIncome(from, to) : listIncome(),
       listExpenses(),
       listIncome(),
-      listExpenses(prevRange.from, prevRange.to),
+      prevFrom ? listExpenses(prevFrom, prevTo) : Promise.resolve([] as ExpenseRow[]),
       listRecurring(),
       getBorrowLendSummary().catch(() => null),
       getNetWorthSummary().catch(() => null),
       listCategories(),
-      categorySpendBetween(from, to),
+      from ? categorySpendBetween(from, to) : Promise.resolve(new Map<string, number>()),
     ]);
     setRows(monthExpenses);
     setIncomeRows(monthIncome);
-    setLastMonthTotal(sum(prevExpenses));
+    setLastMonthTotal(from ? sum(prevExpenses) : null);
     setRecurring(recList);
     setBorrowLend(blSummary);
     setNetWorth(nwSummary);
     setCats(catList);
     setSpentPerCat(perCategory);
+    setMonthOptions(monthsWithData([...allExpenses, ...allIncome].map((r) => r.date), todayStr().slice(0, 7)));
     // Left behind by the expense screen when a budget was just crossed.
     setBudgetAlert(await takeBudgetAlert());
+    // The latest entries within whatever the page is showing.
     const merged: Recent[] = [
       ...allExpenses.map((row): Recent => ({ kind: 'expense', row })),
       ...allIncome.map((row): Recent => ({ kind: 'income', row })),
-    ].sort((a, b) => b.row.date.localeCompare(a.row.date));
+    ]
+      .filter((r) => !from || (r.row.date >= from && r.row.date <= to))
+      .sort((a, b) => b.row.date.localeCompare(a.row.date));
     setRecent(merged.slice(0, 6));
-  }, [from, to, month0, year]);
+  }, [from, to, prevFrom, prevTo]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
@@ -93,7 +109,7 @@ export default function Home() {
   const tone = budgetTone(pct, c);
   // Only categories with a budget, most-used first (src/expense/budgets.ts).
   const catBudgets = useMemo(() => categoryBudgetStatus(cats, spentPerCat), [cats, spentPerCat]);
-  const vsLastMonth = lastMonthTotal !== null && lastMonthTotal > 0
+  const vsLastMonth = !isOverall && lastMonthTotal !== null && lastMonthTotal > 0
     ? Math.round(((total - lastMonthTotal) / lastMonthTotal) * 100)
     : null;
 
@@ -122,7 +138,7 @@ export default function Home() {
         )}
 
         <Row style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-          <T size={14} sub>{monthName(month0)} {year}</T>
+          <PeriodPicker value={period} months={monthOptions.length ? monthOptions : [currentMonth]} currentMonth={currentMonth} onChange={setPicked} />
           <Row style={{ gap: 16, alignItems: 'center' }}>
             <Pressable
               onPress={() => router.push('/expense/net-worth')}
@@ -163,15 +179,15 @@ export default function Home() {
           {fmtMoney(total, symbol)}
         </T>
         <Row style={{ marginTop: 1 }}>
-          <T size={14} sub>spent this month</T>
+          <T size={14} sub>{isOverall ? 'spent overall' : isCurrentMonth ? 'spent this month' : `spent in ${periodLabel(period)}`}</T>
           {vsLastMonth !== null && (
             <T size={13} weight="600" style={{ color: vsLastMonth > 0 ? c.danger : c.good, marginLeft: 8 }}>
-              {vsLastMonth > 0 ? '↑' : vsLastMonth < 0 ? '↓' : ''} {Math.abs(vsLastMonth)}% vs last month
+              {vsLastMonth > 0 ? '↑' : vsLastMonth < 0 ? '↓' : ''} {Math.abs(vsLastMonth)}% vs {isCurrentMonth ? 'last month' : 'month before'}
             </T>
           )}
         </Row>
 
-        {budget > 0 && (
+        {budget > 0 && !isOverall && (
           <View style={{ marginTop: 18 }}>
             <Meter fraction={pct} tone={tone} />
             <Row style={{ justifyContent: 'space-between', marginTop: 8 }}>
@@ -187,7 +203,7 @@ export default function Home() {
 
         {/* Per-category budgets, tightest first. Categories without one are
             left out entirely — not setting a budget is a choice. */}
-        {catBudgets.length > 0 && (
+        {catBudgets.length > 0 && !isOverall && (
           <View style={{ marginTop: budget > 0 ? 16 : 18, gap: 11 }}>
             {catBudgets.map((k) => (
               <View key={k.id}>
@@ -219,6 +235,7 @@ export default function Home() {
           </View>
         </Row>
 
+        {(isCurrentMonth || isOverall) && (
         <Row style={{ marginTop: 20, alignItems: 'stretch' }}>
           <View style={{ flex: 1 }}>
             <T size={13} sub>Today</T>
@@ -230,6 +247,7 @@ export default function Home() {
             <Money value={weekTotal} size={21} weight="700" style={{ marginTop: 3 }} />
           </View>
         </Row>
+        )}
 
         {borrowLend && (borrowLend.totalLentActive > 0 || borrowLend.pendingRequestsCount > 0 || borrowLend.totalBorrowedActive > 0) ? (
           <Pressable
