@@ -14,7 +14,8 @@ import { ChipWrap } from './Chip';
 import { DEFAULT_CURRENCY } from '../constants';
 import { fullDateLabel } from '../format';
 import { useTheme } from '../ThemeContext';
-import { FONTS, SPACE, type Colors } from '../theme';
+import { FONTS, RADIUS, type Colors } from '../theme';
+import { Button } from '../expense/ui';
 import {
   CATEGORIES,
   MEMORY_TYPES,
@@ -43,6 +44,12 @@ function shiftDays(iso: string, days: number): string {
   return date.toISOString();
 }
 
+/** "personal care" → "Personal care". */
+function sentence(text: string) {
+  const lower = text.toLowerCase();
+  return lower.charAt(0).toUpperCase() + lower.slice(1);
+}
+
 export function DraftCard({ draft, index, total, onChange, onSave, onDiscard }: Props) {
   const { colors, type } = useTheme();
   const styles = makeStyles(colors);
@@ -55,9 +62,11 @@ export function DraftCard({ draft, index, total, onChange, onSave, onDiscard }: 
 
   return (
     <View style={styles.card}>
-      <Text style={type.label}>
-        {String(index + 1).padStart(2, '0')} / {String(total).padStart(2, '0')}
-      </Text>
+      {total > 1 ? (
+        <Text style={type.fine}>
+          {index + 1} of {total}
+        </Text>
+      ) : null}
 
       <TextInput
         value={draft.title}
@@ -65,42 +74,43 @@ export function DraftCard({ draft, index, total, onChange, onSave, onDiscard }: 
         style={styles.titleInput}
         placeholder="Untitled"
         placeholderTextColor={colors.mist}
+        accessibilityLabel="Title"
         multiline
       />
 
-      <Pressable onPress={toggle} style={styles.summary} hitSlop={4}>
-        <Text style={[type.stamp, styles.summaryText]}>
-          {[
-            draft.category.toUpperCase(),
-            draft.type.toUpperCase(),
-            fullDateLabel(draft.eventDate).toUpperCase(),
-            draft.amount !== null ? `${draft.currency ?? ''} ${draft.amount}` : null,
-          ]
-            .filter(Boolean)
-            .join('  ·  ')}
-        </Text>
-        <Ionicons
-          name={open ? 'chevron-up' : 'chevron-down'}
-          size={13}
-          color={colors.mist}
-        />
-      </Pressable>
+      <Text style={type.fine}>
+        {[
+          sentence(draft.type),
+          sentence(draft.category),
+          fullDateLabel(draft.eventDate),
+        ]
+          .filter(Boolean)
+          .join(' · ')}
+        {draft.amount !== null ? (
+          <Text style={styles.figure}>
+            {'  '}
+            {draft.currency ?? ''} {draft.amount}
+          </Text>
+        ) : null}
+      </Text>
 
       {draft.dateExpression ? (
-        <Text style={type.fine}>you said “{draft.dateExpression}”</Text>
+        <Text style={[type.fine, styles.said]}>You said “{draft.dateExpression}”</Text>
       ) : null}
+
+      <Pressable
+        onPress={toggle}
+        style={styles.more}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
+      >
+        <Text style={styles.moreText}>More details</Text>
+        <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={18} color={colors.mist} />
+      </Pressable>
 
       {open ? (
         <View style={styles.fields}>
-          <Field label="CATEGORY">
-            <ChipWrap
-              options={CATEGORIES}
-              value={draft.category}
-              onChange={(value) => value && onChange({ category: value })}
-            />
-          </Field>
-
-          <Field label="TYPE">
+          <Field label="Type">
             <ChipWrap
               options={MEMORY_TYPES}
               value={draft.type}
@@ -108,30 +118,40 @@ export function DraftCard({ draft, index, total, onChange, onSave, onDiscard }: 
             />
           </Field>
 
-          <Field label="WHEN">
+          <Field label="Category">
+            <ChipWrap
+              options={CATEGORIES}
+              value={draft.category}
+              onChange={(value) => value && onChange({ category: value })}
+            />
+          </Field>
+
+          <Field label="When">
             <View style={styles.dateRow}>
               <Pressable
                 style={styles.step}
                 hitSlop={6}
+                accessibilityRole="button"
+                accessibilityLabel="A day earlier"
                 onPress={() => onChange({ eventDate: shiftDays(draft.eventDate, -1) })}
               >
-                <Ionicons name="chevron-back" size={14} color={colors.graphite} />
+                <Ionicons name="chevron-back" size={18} color={colors.ink} />
               </Pressable>
-              <Text style={[type.gutter, styles.dateText]}>
-                {fullDateLabel(draft.eventDate)}
-              </Text>
+              <Text style={[type.body, styles.dateText]}>{fullDateLabel(draft.eventDate)}</Text>
               <Pressable
                 style={styles.step}
                 hitSlop={6}
+                accessibilityRole="button"
+                accessibilityLabel="A day later"
                 onPress={() => onChange({ eventDate: shiftDays(draft.eventDate, 1) })}
               >
-                <Ionicons name="chevron-forward" size={14} color={colors.graphite} />
+                <Ionicons name="chevron-forward" size={18} color={colors.ink} />
               </Pressable>
             </View>
           </Field>
 
           <View style={styles.pair}>
-            <Field label="AMOUNT" style={styles.pairItem}>
+            <Field label="Amount" style={styles.pairItem}>
               <TextInput
                 value={draft.amount === null ? '' : String(draft.amount)}
                 onChangeText={(raw) => {
@@ -149,11 +169,11 @@ export function DraftCard({ draft, index, total, onChange, onSave, onDiscard }: 
                 keyboardType="decimal-pad"
                 placeholder="—"
                 placeholderTextColor={colors.mist}
-                style={styles.input}
+                style={[styles.input, styles.mono]}
               />
             </Field>
 
-            <Field label="CURRENCY" style={styles.pairItem}>
+            <Field label="Currency" style={styles.pairItem}>
               <TextInput
                 value={draft.currency ?? ''}
                 onChangeText={(currency) =>
@@ -167,17 +187,17 @@ export function DraftCard({ draft, index, total, onChange, onSave, onDiscard }: 
             </Field>
           </View>
 
-          <Field label="PEOPLE">
+          <Field label="People">
             <TextInput
               value={draft.people ?? ''}
               onChangeText={(people) => onChange({ people: people.trim() ? people : null })}
-              placeholder="comma separated"
+              placeholder="Comma separated"
               placeholderTextColor={colors.mist}
               style={styles.input}
             />
           </Field>
 
-          <Field label="PLACE">
+          <Field label="Place">
             <TextInput
               value={draft.location ?? ''}
               onChangeText={(location) =>
@@ -189,17 +209,17 @@ export function DraftCard({ draft, index, total, onChange, onSave, onDiscard }: 
             />
           </Field>
 
-          <Field label="TAGS">
+          <Field label="Tags">
             <TextInput
               value={draft.tags ?? ''}
               onChangeText={(tags) => onChange({ tags: tags.trim() ? tags : null })}
-              placeholder="comma separated"
+              placeholder="Comma separated"
               placeholderTextColor={colors.mist}
               style={styles.input}
             />
           </Field>
 
-          <Field label="PRIORITY">
+          <Field label="Priority">
             <ChipWrap
               options={PRIORITIES}
               value={(draft.priority ?? '') as Priority}
@@ -212,12 +232,8 @@ export function DraftCard({ draft, index, total, onChange, onSave, onDiscard }: 
       ) : null}
 
       <View style={styles.actions}>
-        <Pressable onPress={onDiscard} hitSlop={6} style={styles.discard}>
-          <Text style={[type.label, styles.discardText]}>DISCARD</Text>
-        </Pressable>
-        <Pressable onPress={onSave} style={styles.save}>
-          <Text style={[type.label, styles.saveText]}>KEEP</Text>
-        </Pressable>
+        <Button title="Discard" kind="ghost" onPress={onDiscard} style={styles.action} />
+        <Button title="Keep" icon="checkmark" onPress={onSave} style={styles.action} />
       </View>
     </View>
   );
@@ -232,84 +248,77 @@ function Field({
   children: React.ReactNode;
   style?: object;
 }) {
-  const { type } = useTheme();
+  const { colors } = useTheme();
   return (
     <View style={[fieldLayout.field, style]}>
-      <Text style={type.label}>{label}</Text>
+      <Text style={[fieldLayout.label, { color: colors.ink }]}>{label}</Text>
       {children}
     </View>
   );
 }
 
-// Layout only — no colours, so this never needs to change with the theme.
+// Layout only — the label colour comes from the theme at render.
 const fieldLayout = StyleSheet.create({
-  field: { gap: 7 },
+  field: { gap: 8 },
+  label: { fontFamily: FONTS.sansSemi, fontSize: 14 },
 });
 
 function makeStyles(colors: Colors) {
   return StyleSheet.create({
     card: {
       backgroundColor: colors.surface,
-      borderRadius: 6,
-      borderWidth: StyleSheet.hairlineWidth,
+      borderRadius: RADIUS.card,
+      borderWidth: 1,
       borderColor: colors.rule,
       padding: 16,
-      gap: 10,
+      gap: 8,
     },
     titleInput: {
-      fontFamily: FONTS.sansMedium,
+      fontFamily: FONTS.sansSemi,
       fontSize: 18,
       lineHeight: 25,
       color: colors.ink,
       padding: 0,
     },
-    summary: {
+    figure: { fontFamily: FONTS.monoMedium, color: colors.ink },
+    said: { color: colors.moss },
+    more: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      gap: 10,
-      paddingTop: 6,
+      minHeight: 44,
+      marginTop: 4,
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: colors.rule,
     },
-    summaryText: { flex: 1, lineHeight: 15 },
-    fields: { gap: 16, paddingTop: 6 },
+    moreText: { fontFamily: FONTS.sans, fontSize: 15, color: colors.ink },
+    fields: { gap: 16, paddingBottom: 4 },
     input: {
       fontFamily: FONTS.sans,
-      fontSize: 15,
+      fontSize: 16,
       color: colors.ink,
-      paddingVertical: 7,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: colors.rule,
+      minHeight: 48,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: RADIUS.input,
     },
-    pair: { flexDirection: 'row', gap: 14 },
+    mono: { fontFamily: FONTS.mono },
+    pair: { flexDirection: 'row', gap: 12 },
     pairItem: { flex: 1 },
     dateRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
     step: {
-      width: 28,
-      height: 28,
+      width: 40,
+      height: 40,
+      borderRadius: 20,
       alignItems: 'center',
       justifyContent: 'center',
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: colors.rule,
-      borderRadius: 4,
+      backgroundColor: colors.well,
     },
-    dateText: { flex: 1, color: colors.ink },
-    actions: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: SPACE.tight,
-      paddingTop: 10,
-    },
-    discard: { paddingVertical: 10, paddingRight: 16 },
-    discardText: { color: colors.mist },
-    save: {
-      marginLeft: 'auto',
-      backgroundColor: colors.moss,
-      paddingVertical: 10,
-      paddingHorizontal: 22,
-      borderRadius: 4,
-    },
-    saveText: { color: colors.onAccent },
+    dateText: { flex: 1, textAlign: 'center', color: colors.ink },
+    actions: { flexDirection: 'row', gap: 10, paddingTop: 8 },
+    action: { flex: 1 },
   });
 }

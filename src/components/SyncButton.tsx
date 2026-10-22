@@ -1,19 +1,19 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text } from 'react-native';
 import { isConfigured } from '../sync/client';
 import { useSync } from '../sync/useSync';
 import { useTheme } from '../ThemeContext';
+import { FONTS } from '../theme';
 
 /**
- * Whether the record is safe off this phone, in one glance.
- *
- * A filled cloud means everything is up; an outline with a count means changes
- * are still waiting, which is also what it looks like when offline. Tapping
- * opens the backup screen.
+ * Whether the record is safe off this phone, in one glance: a small labelled
+ * pill. A done cloud means everything is up; an upload cloud with a count
+ * means changes are still waiting, which is also what offline looks like.
+ * Tapping opens the backup screen.
  */
 export function SyncButton() {
-  const { colors, type } = useTheme();
+  const { colors } = useTheme();
   const router = useRouter();
   const sync = useSync();
 
@@ -30,11 +30,20 @@ export function SyncButton() {
         : 'cloud-done-outline';
 
   const tint = !signedIn || sync.state === 'error' ? colors.graphite : colors.moss;
+  const label = !signedIn
+    ? 'Backup'
+    : waiting
+      ? `${sync.pending > 99 ? '99+' : sync.pending} waiting`
+      : sync.state === 'syncing'
+        ? 'Syncing'
+        : sync.state === 'error'
+          ? 'Not synced'
+          : 'Backed up';
 
   return (
     <Pressable
       onPress={() => router.push('/account')}
-      hitSlop={12}
+      hitSlop={6}
       accessibilityRole="button"
       accessibilityLabel={
         signedIn
@@ -43,20 +52,30 @@ export function SyncButton() {
             : 'Backup: everything is saved'
           : 'Set up backup'
       }
+      style={({ pressed }) => [
+        styles.pill,
+        { backgroundColor: colors.surface, borderColor: colors.border },
+        pressed && styles.pressed,
+      ]}
     >
-      <View style={styles.wrap}>
-        <Ionicons name={icon} size={22} color={tint} />
-        {signedIn && waiting ? (
-          <Text style={[type.stamp, styles.count, { color: colors.graphite }]}>
-            {sync.pending > 99 ? '99+' : sync.pending}
-          </Text>
-        ) : null}
-      </View>
+      <Ionicons name={icon} size={16} color={tint} />
+      <Text style={[styles.label, { color: colors.ink }]} numberOfLines={1}>
+        {label}
+      </Text>
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  count: { fontSize: 10 },
+  pill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    minHeight: 36,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  label: { fontFamily: FONTS.sansSemi, fontSize: 13 },
+  pressed: { opacity: 0.7 },
 });

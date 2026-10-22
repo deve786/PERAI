@@ -160,3 +160,20 @@ export function groupByDay(memories: Memory[], now: Date = new Date()): DaySecti
 
   return sections;
 }
+
+const CAPITALISED = new Set([
+  'jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'sept', 'oct', 'nov', 'dec',
+  'mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun',
+]);
+
+/**
+ * "ADDED 16 OCT, 10:00 AM" → "Added 16 Oct, 10:00 AM". For labels that were
+ * built in capitals for the old mono style: the first letter, month and day
+ * names keep a capital, AM/PM stay upper case, everything else goes lower.
+ */
+export function toSentence(text: string): string {
+  const lower = text.toLowerCase().replace(/\b[a-z]+\b/g, (w) =>
+    w === 'am' || w === 'pm' ? w.toUpperCase() : CAPITALISED.has(w) ? w[0].toUpperCase() + w.slice(1) : w
+  );
+  return lower.charAt(0).toUpperCase() + lower.slice(1);
+}

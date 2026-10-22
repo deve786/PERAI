@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { Pressable, ScrollView, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { categorySpendBetween, listCategories, listExpenses, listIncome, listRecurring, refreshRecurring, type Category, type ExpenseRow, type IncomeRow, type Recurring } from '@/expense/db';
@@ -12,8 +12,8 @@ import { monthsWithData, OVERALL, periodLabel, periodRange, previousMonth, type 
 import { PeriodPicker } from '@/expense/PeriodPicker';
 import { byCategory, fmtMoney, sum } from '@/expense/stats';
 import { budgetTone, radius, useTheme, type Colors } from '@/expense/theme';
-import { Button, Divider, Empty, Meter, Money, Row, Screen, Section, T } from '@/expense/ui';
-import { ExpenseItem } from '@/expense/ExpenseItem';
+import { Divider, Empty, IconTile, Meter, Money, Row, Screen, Section, T, Title } from '@/expense/ui';
+import { dayHeading, ExpenseItem, groupByDate } from '@/expense/ExpenseItem';
 import { IncomeItem } from '@/expense/IncomeItem';
 import { ExpenseSyncButton } from '@/components/ExpenseSyncButton';
 import { UpcomingBills } from '@/components/UpcomingBills';
@@ -27,12 +27,37 @@ function budgetToneColor(tone: 'good' | 'warn' | 'over', c: Colors) {
 
 type Recent = { kind: 'expense'; row: ExpenseRow } | { kind: 'income'; row: IncomeRow };
 
+/** One of the three add buttons under the summary card. */
+function AddButton({ label, icon, onPress, primary, tone, a11y, flex }: {
+  label: string; icon: keyof typeof Ionicons.glyphMap; onPress: () => void;
+  primary?: boolean; tone?: string; a11y: string; flex: number;
+}) {
+  const { c } = useTheme();
+  const fg = primary ? c.inkText : tone ?? c.text;
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={a11y}
+      style={({ pressed }) => ({
+        flex, minHeight: 48, borderRadius: radius.md, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+        backgroundColor: primary ? c.solid : c.card, borderWidth: primary ? 0 : 1, borderColor: c.border,
+        paddingHorizontal: 6, opacity: pressed ? 0.7 : 1,
+      })}
+    >
+      <Ionicons name={icon} size={18} color={fg} />
+      <T size={15} weight="600" numberOfLines={1} style={{ color: fg }}>{label}</T>
+    </Pressable>
+  );
+}
+
 export default function Home() {
   const { c, symbol, budget } = useTheme();
   const router = useRouter();
   const [rows, setRows] = useState<ExpenseRow[]>([]);
   const [incomeRows, setIncomeRows] = useState<IncomeRow[]>([]);
   const [recent, setRecent] = useState<Recent[]>([]);
+  const [entryCount, setEntryCount] = useState<number | null>(null);
   const [recurring, setRecurring] = useState<Recurring[]>([]);
   const [borrowLend, setBorrowLend] = useState<BorrowLendSummary | null>(null);
   const [netWorth, setNetWorth] = useState<NetWorthSummary | null>(null);
@@ -51,8 +76,8 @@ export default function Home() {
   const isOverall = period === OVERALL;
   const isCurrentMonth = period === currentMonth;
   const [monthOptions, setMonthOptions] = useState<string[]>([]);
-  // The period as plain date strings (empty = no limit), like the old month
-  // range, so the loader's dependencies are primitives.
+  // The period as plain date strings (empty = no limit), so the loader's
+  // dependencies are primitives.
   const range = periodRange(period);
   const prev = range ? periodRange(previousMonth(period)) : null;
   const from = range?.from ?? '';
@@ -84,6 +109,7 @@ export default function Home() {
     setNetWorth(nwSummary);
     setCats(catList);
     setSpentPerCat(perCategory);
+    setEntryCount(allExpenses.length + allIncome.length);
     setMonthOptions(monthsWithData([...allExpenses, ...allIncome].map((r) => r.date), todayStr().slice(0, 7)));
     // Left behind by the expense screen when a budget was just crossed.
     setBudgetAlert(await takeBudgetAlert());
@@ -104,6 +130,7 @@ export default function Home() {
   const net = incomeTotal - total;
   const todayTotal = sum(rows.filter((r) => r.date === today));
   const weekTotal = sum(rows.filter((r) => r.date >= addDays(today, -6)));
+  const showToday = isCurrentMonth || isOverall;
   const top = byCategory(rows)[0];
   const pct = budget > 0 ? total / budget : 0;
   const tone = budgetTone(pct, c);
@@ -112,10 +139,27 @@ export default function Home() {
   const vsLastMonth = !isOverall && lastMonthTotal !== null && lastMonthTotal > 0
     ? Math.round(((total - lastMonthTotal) / lastMonthTotal) * 100)
     : null;
+  const recentGroups = groupByDate(recent);
+
+  const borrowLendSub = !borrowLend
+    ? 'Track money owed'
+    : borrowLend.pendingRequestsCount > 0
+      ? `${borrowLend.pendingRequestsCount} new request${borrowLend.pendingRequestsCount > 1 ? 's' : ''}`
+      : borrowLend.totalLentActive > 0
+        ? `${fmtMoney(borrowLend.totalLentActive, symbol)} owed to you`
+        : borrowLend.totalBorrowedActive > 0
+          ? `You owe ${fmtMoney(borrowLend.totalBorrowedActive, symbol)}`
+          : 'Nothing owed';
 
   return (
     <Screen>
-      <ScrollView contentContainerStyle={{ padding: 20, paddingTop: 12, paddingBottom: 40 }}>
+      <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 12, paddingBottom: 40 }}>
+        <Row style={{ justifyContent: 'space-between', gap: 10, marginBottom: 14 }}>
+          <Title style={{ flex: 1 }}>Money</Title>
+          <ExpenseSyncButton />
+          <PeriodPicker value={period} months={monthOptions.length ? monthOptions : [currentMonth]} currentMonth={currentMonth} onChange={setPicked} />
+        </Row>
+
         {/* Left here by the expense screen when a budget was just crossed.
             Tapping it away is the only thing it asks of you. */}
         {budgetAlert !== null && (
@@ -123,314 +167,178 @@ export default function Home() {
             onPress={() => setBudgetAlert(null)}
             accessibilityRole="button"
             accessibilityLabel={`${budgetAlert}. Tap to dismiss.`}
-            style={{
-              marginBottom: 14,
-              paddingVertical: 11,
-              paddingHorizontal: 14,
-              borderRadius: radius.md,
-              borderLeftWidth: 3,
-              borderLeftColor: c.warn,
-              backgroundColor: c.card,
-            }}
-          >
-            <T size={13.5} weight="600">{budgetAlert}</T>
-          </Pressable>
-        )}
-
-        <Row style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-          <PeriodPicker value={period} months={monthOptions.length ? monthOptions : [currentMonth]} currentMonth={currentMonth} onChange={setPicked} />
-          <Row style={{ gap: 16, alignItems: 'center' }}>
-            <Pressable
-              onPress={() => router.push('/expense/net-worth')}
-              hitSlop={10}
-              accessibilityRole="button"
-              accessibilityLabel="Net Worth & Accounts"
-            >
-              <Ionicons name="wallet-outline" size={21} color={c.sub} />
-            </Pressable>
-            <Pressable
-              onPress={() => router.push('/expense/borrow-lend')}
-              hitSlop={10}
-              accessibilityRole="button"
-              accessibilityLabel="Borrow & Lend"
-            >
-              <Ionicons name="people-outline" size={21} color={c.sub} />
-            </Pressable>
-            <Pressable
-              onPress={() => router.push('/expense-history')}
-              hitSlop={10}
-              accessibilityRole="button"
-              accessibilityLabel="Expense history"
-            >
-              <Ionicons name="receipt-outline" size={21} color={c.sub} />
-            </Pressable>
-            <Pressable
-              onPress={() => router.push('/expense-analytics')}
-              hitSlop={10}
-              accessibilityRole="button"
-              accessibilityLabel="Expense analytics"
-            >
-              <Ionicons name="stats-chart-outline" size={21} color={c.sub} />
-            </Pressable>
-            <ExpenseSyncButton />
-          </Row>
-        </Row>
-        <T size={48} weight="700" tabular style={{ marginTop: 2, letterSpacing: -1.6 }}>
-          {fmtMoney(total, symbol)}
-        </T>
-        <Row style={{ marginTop: 1 }}>
-          <T size={14} sub>{isOverall ? 'spent overall' : isCurrentMonth ? 'spent this month' : `spent in ${periodLabel(period)}`}</T>
-          {vsLastMonth !== null && (
-            <T size={13} weight="600" style={{ color: vsLastMonth > 0 ? c.danger : c.good, marginLeft: 8 }}>
-              {vsLastMonth > 0 ? '↑' : vsLastMonth < 0 ? '↓' : ''} {Math.abs(vsLastMonth)}% vs {isCurrentMonth ? 'last month' : 'month before'}
-            </T>
-          )}
-        </Row>
-
-        {budget > 0 && !isOverall && (
-          <View style={{ marginTop: 18 }}>
-            <Meter fraction={pct} tone={tone} />
-            <Row style={{ justifyContent: 'space-between', marginTop: 8 }}>
-              <T size={13} sub tabular>{Math.round(pct * 100)}% of {fmtMoney(budget, symbol)}</T>
-              <T size={13} weight="500" tabular style={{ color: tone }}>
-                {pct >= 1
-                  ? `${fmtMoney(total - budget, symbol)} over`
-                  : `${fmtMoney(budget - total, symbol)} left`}
-              </T>
-            </Row>
-          </View>
-        )}
-
-        {/* Per-category budgets, tightest first. Categories without one are
-            left out entirely — not setting a budget is a choice. */}
-        {catBudgets.length > 0 && !isOverall && (
-          <View style={{ marginTop: budget > 0 ? 16 : 18, gap: 11 }}>
-            {catBudgets.map((k) => (
-              <View key={k.id}>
-                <Row style={{ justifyContent: 'space-between', marginBottom: 5 }}>
-                  <Row style={{ gap: 8, flex: 1 }}>
-                    <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: k.color }} />
-                    <T size={13} weight="600" numberOfLines={1}>{k.name}</T>
-                  </Row>
-                  <T size={12} sub tabular>
-                    {fmtMoney(k.spent, symbol)} / {fmtMoney(k.budget, symbol)}
-                  </T>
-                </Row>
-                <Meter fraction={k.fraction} tone={budgetToneColor(k.tone, c)} />
-              </View>
-            ))}
-          </View>
-        )}
-
-        <Row style={{ marginTop: 20 }}>
-          <View style={{ flex: 1 }}>
-            <T size={13} sub>Income</T>
-            <T size={18} weight="700" tabular style={{ marginTop: 3, color: c.good }}>+{fmtMoney(incomeTotal, symbol)}</T>
-          </View>
-          <View style={{ flex: 1 }}>
-            <T size={13} sub>Net</T>
-            <T size={18} weight="700" tabular style={{ marginTop: 3, color: net >= 0 ? c.good : c.danger }}>
-              {net >= 0 ? '+' : ''}{fmtMoney(net, symbol)}
-            </T>
-          </View>
-        </Row>
-
-        {(isCurrentMonth || isOverall) && (
-        <Row style={{ marginTop: 20, alignItems: 'stretch' }}>
-          <View style={{ flex: 1 }}>
-            <T size={13} sub>Today</T>
-            <Money value={todayTotal} size={21} weight="700" style={{ marginTop: 3 }} />
-          </View>
-          <View style={{ width: 1, backgroundColor: c.line, marginHorizontal: 18 }} />
-          <View style={{ flex: 1 }}>
-            <T size={13} sub>Last 7 days</T>
-            <Money value={weekTotal} size={21} weight="700" style={{ marginTop: 3 }} />
-          </View>
-        </Row>
-        )}
-
-        {borrowLend && (borrowLend.totalLentActive > 0 || borrowLend.pendingRequestsCount > 0 || borrowLend.totalBorrowedActive > 0) ? (
-          <Pressable
-            onPress={() => router.push('/expense/borrow-lend')}
             style={({ pressed }) => ({
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              backgroundColor: c.card,
-              borderRadius: 8,
-              paddingVertical: 12,
-              paddingHorizontal: 14,
-              marginTop: 18,
-              borderWidth: 1,
-              borderColor: c.line,
-              opacity: pressed ? 0.75 : 1,
+              flexDirection: 'row', alignItems: 'center', gap: 10,
+              marginBottom: 14, paddingVertical: 12, paddingHorizontal: 14,
+              borderRadius: radius.lg, borderWidth: 1, borderColor: c.warn,
+              backgroundColor: c.card, opacity: pressed ? 0.7 : 1,
             })}
           >
-            <Row style={{ gap: 12, alignItems: 'center', flex: 1 }}>
-              <View
-                style={{
-                  width: 32,
-                  height: 32,
-                  borderRadius: 16,
-                  backgroundColor: `${c.good}20`,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
-                <Ionicons name="people" size={16} color={c.good} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Row style={{ alignItems: 'center', gap: 6 }}>
-                  <T size={13} weight="600">Borrow & Lend</T>
-                  {borrowLend.pendingRequestsCount > 0 && (
-                    <View style={{ backgroundColor: '#F59E0B25', paddingHorizontal: 6, paddingVertical: 1, borderRadius: 6 }}>
-                      <T size={10} weight="700" style={{ color: '#D97706' }}>
-                        {borrowLend.pendingRequestsCount} new request{borrowLend.pendingRequestsCount > 1 ? 's' : ''}
-                      </T>
-                    </View>
-                  )}
-                </Row>
-                <T size={12} sub numberOfLines={1}>
-                  {borrowLend.totalLentActive > 0
-                    ? `${fmtMoney(borrowLend.totalLentActive, symbol)} owed to you`
-                    : borrowLend.totalBorrowedActive > 0
-                    ? `You owe ${fmtMoney(borrowLend.totalBorrowedActive, symbol)}`
-                    : `${borrowLend.pendingRequestsCount} pending requests`}
-                </T>
-              </View>
-            </Row>
-            <Ionicons name="chevron-forward" size={16} color={c.sub} />
+            <Ionicons name="alert-circle-outline" size={20} color={c.warn} />
+            <T size={14} weight="600" style={{ flex: 1 }}>{budgetAlert}</T>
+            <Ionicons name="close" size={18} color={c.sub} />
           </Pressable>
-        ) : null}
+        )}
 
-        <Pressable
-          onPress={() => router.push('/expense/net-worth')}
-          style={({ pressed }) => ({
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            backgroundColor: c.card,
-            borderRadius: 8,
-            paddingVertical: 12,
-            paddingHorizontal: 14,
-            marginTop: 14,
-            borderWidth: 1,
-            borderColor: c.line,
-            opacity: pressed ? 0.75 : 1,
-          })}
-        >
-          <Row style={{ gap: 12, alignItems: 'center', flex: 1 }}>
-            <View
-              style={{
-                width: 32,
-                height: 32,
-                borderRadius: 16,
-                backgroundColor: '#3B82F620',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <Ionicons name="wallet" size={16} color="#3B82F6" />
+        <View style={[styles.card, { backgroundColor: c.card, borderColor: c.line }]}>
+          <T size={13} sub>{isOverall ? 'Spent overall' : isCurrentMonth ? 'Spent this month' : `Spent in ${periodLabel(period)}`}</T>
+          <Row style={{ alignItems: 'baseline', flexWrap: 'wrap', columnGap: 10, marginTop: 2 }}>
+            <T size={38} weight="600" tabular style={{ letterSpacing: -1.2 }}>{fmtMoney(total, symbol)}</T>
+            {vsLastMonth !== null && (
+              <T size={13} weight="600" style={{ color: vsLastMonth > 0 ? c.danger : c.good }}>
+                {vsLastMonth > 0 ? '↑ ' : vsLastMonth < 0 ? '↓ ' : ''}{Math.abs(vsLastMonth)}% vs {periodLabel(previousMonth(period)).split(' ')[0]}
+              </T>
+            )}
+          </Row>
+
+          {budget > 0 && !isOverall && (
+            <View style={{ marginTop: 12, gap: 6 }}>
+              <Meter fraction={pct} tone={tone} height={8} />
+              <T size={13} sub>
+                {Math.round(pct * 100)}% of {fmtMoney(budget, symbol)} budget ·{' '}
+                <T size={13} weight="600" style={{ color: pct >= 0.8 ? tone : c.sub }}>
+                  {pct >= 1 ? `${fmtMoney(total - budget, symbol)} over` : `${fmtMoney(budget - total, symbol)} left`}
+                </T>
+              </T>
+            </View>
+          )}
+
+          {/* Per-category budgets, tightest first. Categories without one are
+              left out entirely — not setting a budget is a choice. */}
+          {catBudgets.length > 0 && !isOverall && (
+            <View style={{ marginTop: 14, gap: 10 }}>
+              {catBudgets.map((k) => (
+                <View key={k.id}>
+                  <Row style={{ justifyContent: 'space-between', marginBottom: 5, gap: 8 }}>
+                    <Row style={{ gap: 8, flex: 1 }}>
+                      <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: k.color }} />
+                      <T size={13} weight="600" numberOfLines={1}>{k.name}</T>
+                    </Row>
+                    <T size={12} sub tabular>
+                      {fmtMoney(k.spent, symbol)} / {fmtMoney(k.budget, symbol)}
+                    </T>
+                  </Row>
+                  <Meter fraction={k.fraction} tone={budgetToneColor(k.tone, c)} />
+                </View>
+              ))}
+            </View>
+          )}
+
+          <Divider style={{ marginVertical: 14 }} />
+          <Row style={{ alignItems: 'flex-start', gap: 8 }}>
+            <View style={{ flex: 1 }}>
+              <T size={12} sub>Income</T>
+              <T size={15} weight="600" tabular numberOfLines={1} style={{ marginTop: 2, color: c.good }}>+{fmtMoney(incomeTotal, symbol)}</T>
             </View>
             <View style={{ flex: 1 }}>
-              <Row style={{ alignItems: 'center', justifyContent: 'space-between' }}>
-                <T size={13} weight="600">Net Worth & Wealth</T>
-                {netWorth && netWorth.accountsCount > 0 && (
-                  <T size={14} weight="700" tabular style={{ color: c.good }}>
-                    {fmtMoney(netWorth.netWorth, symbol)}
-                  </T>
-                )}
-              </Row>
-              <T size={12} sub numberOfLines={1}>
-                {netWorth && netWorth.accountsCount > 0
-                  ? `Bank: ${fmtMoney(netWorth.bankTotal, symbol)} · Stocks: ${fmtMoney(netWorth.stockTotal, symbol)}${netWorth.totalLent > 0 ? ` · Lent: ${fmtMoney(netWorth.totalLent, symbol)}` : ''}`
-                  : 'Add Bank, Stocks, Cash & track total wealth'}
+              <T size={12} sub>Net</T>
+              <T size={15} weight="600" tabular numberOfLines={1} style={{ marginTop: 2, color: net >= 0 ? c.text : c.danger }}>
+                {net >= 0 ? '+' : ''}{fmtMoney(net, symbol)}
               </T>
             </View>
+            {showToday && (
+              <View style={{ flex: 1 }}>
+                <T size={12} sub>Today</T>
+                <Money value={todayTotal} size={15} weight="600" style={{ marginTop: 2 }} />
+              </View>
+            )}
           </Row>
-          <Ionicons name="chevron-forward" size={16} color={c.sub} style={{ marginLeft: 8 }} />
-        </Pressable>
 
-        {top && (
-          <>
-            <Divider style={{ marginTop: 20 }} />
-            <Row style={{ justifyContent: 'space-between', marginTop: 14 }}>
-              <T size={14} sub>Most spent on</T>
-              <Row style={{ gap: 8 }}>
-                <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: top.color }} />
-                <T size={14} weight="600">{top.name}</T>
-                <Money value={top.total} size={14} weight="600" />
-              </Row>
-            </Row>
-          </>
-        )}
+          {showToday || top ? (
+            <View style={{ marginTop: 12, gap: 6 }}>
+              {showToday && (
+                <Row style={{ justifyContent: 'space-between' }}>
+                  <T size={13} sub>Last 7 days</T>
+                  <Money value={weekTotal} size={13} weight="500" />
+                </Row>
+              )}
+              {top && (
+                <Row style={{ justifyContent: 'space-between', gap: 12 }}>
+                  <T size={13} sub>Most spent on</T>
+                  <Row style={{ gap: 6, flexShrink: 1 }}>
+                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: top.color }} />
+                    <T size={13} weight="600" numberOfLines={1} style={{ flexShrink: 1 }}>{top.name}</T>
+                    <Money value={top.total} size={13} weight="500" />
+                  </Row>
+                </Row>
+              )}
+            </View>
+          ) : null}
+        </View>
 
-        <Row style={{ gap: 10, marginTop: 24, alignItems: 'stretch' }}>
-          <View style={{ flex: 1 }}>
-            <Button title="Add expense" icon="add" onPress={() => router.push('/expense/expense')} />
-          </View>
-          <Pressable
+        <Row style={{ gap: 8, marginTop: 14, alignItems: 'stretch' }}>
+          <AddButton flex={1.3} primary label="Expense" icon="add" a11y="Add expense" onPress={() => router.push('/expense/expense')} />
+          <AddButton flex={1} label="Income" icon="add" tone={c.accent} a11y="Add income" onPress={() => router.push('/expense/income')} />
+          <AddButton
+            flex={1}
+            label="Scan"
+            icon="camera-outline"
+            a11y="Scan receipt or bill with AI"
             onPress={() => router.push({ pathname: '/expense/expense', params: { scan: '1' } })}
-            style={({ pressed }) => ({
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 6,
-              backgroundColor: c.card,
-              borderWidth: 1,
-              borderColor: c.line,
-              borderRadius: 8,
-              paddingHorizontal: 16,
-              opacity: pressed ? 0.7 : 1,
-            })}
-            accessibilityRole="button"
-            accessibilityLabel="Scan receipt or bill with AI"
-          >
-            <Ionicons name="camera-outline" size={18} color={c.accent} />
-            <T size={13.5} weight="600" style={{ color: c.accent }}>Scan Bill</T>
-          </Pressable>
+          />
         </Row>
-        <Row style={{ justifyContent: 'center', alignItems: 'center', gap: 16, marginTop: 14 }}>
-          <Pressable
-            onPress={() => router.push('/expense/income')}
-            hitSlop={8}
-            style={({ pressed }) => ({
-              flexDirection: 'row', alignItems: 'center', gap: 6,
-              opacity: pressed ? 0.6 : 1,
-            })}
-          >
-            <Ionicons name="add-circle-outline" size={16} color={c.good} />
-            <T size={13.5} weight="600" style={{ color: c.good }}>Add income</T>
-          </Pressable>
 
-          <View style={{ width: 1, height: 12, backgroundColor: c.line }} />
-
-          <Pressable
-            onPress={() => router.push('/expense/borrow-lend')}
-            hitSlop={8}
-            style={({ pressed }) => ({
-              flexDirection: 'row', alignItems: 'center', gap: 6,
-              opacity: pressed ? 0.6 : 1,
-            })}
-          >
-            <Ionicons name="people-outline" size={16} color={c.sub} />
-            <T size={13.5} weight="600" style={{ color: c.sub }}>Borrow & Lend</T>
-          </Pressable>
-        </Row>
+        <View style={{ gap: 8, marginTop: 14 }}>
+          <Row style={{ gap: 8 }}>
+            <IconTile
+              wide
+              icon="business-outline"
+              label="Accounts"
+              sub={netWorth && netWorth.accountsCount > 0 ? fmtMoney(netWorth.netWorth, symbol) : 'Add bank, stocks, cash'}
+              onPress={() => router.push('/expense/net-worth')}
+            />
+            <IconTile wide icon="people-outline" label="Borrow & lend" sub={borrowLendSub} onPress={() => router.push('/expense/borrow-lend')} />
+          </Row>
+          <Row style={{ gap: 8 }}>
+            <IconTile
+              wide
+              icon="receipt-outline"
+              label="History"
+              sub={entryCount === null ? undefined : `${entryCount} ${entryCount === 1 ? 'entry' : 'entries'}`}
+              onPress={() => router.push('/expense-history')}
+            />
+            <IconTile
+              wide
+              icon="repeat-outline"
+              label="Recurring"
+              sub={recurring.length ? `${recurring.length} set up` : 'None yet'}
+              onPress={() => router.push('/expense/recurring')}
+            />
+          </Row>
+        </View>
 
         <UpcomingBills recurring={recurring} onBillPaid={load} />
 
-        <Section title="Recent" right={<T size={14} sub onPress={() => router.push('/expense-history')}>See all</T>} />
-        {recent.length === 0 ? (
-          <Empty title="Nothing yet" hint="Add an expense or income entry to start tracking." />
-        ) : (
-          recent.map((r) =>
-            r.kind === 'expense'
-              ? <ExpenseItem key={`e${r.row.id}`} e={r.row} onDeleted={load} />
-              : <IncomeItem key={`i${r.row.id}`} e={r.row} onDeleted={load} />
-          )
-        )}
+        <Section
+          title="Recent"
+          right={
+            <Pressable onPress={() => router.push('/expense-history')} hitSlop={10} accessibilityRole="button">
+              <T size={14} weight="600" style={{ color: c.accent }}>See all</T>
+            </Pressable>
+          }
+        />
+        <View style={[styles.list, { backgroundColor: c.card, borderColor: c.line }]}>
+          {recent.length === 0 ? (
+            <Empty icon="wallet-outline" title="Nothing yet" hint="Add an expense or income entry to start tracking." />
+          ) : (
+            recentGroups.map((g, gi) => (
+              <View key={g.date} style={gi > 0 ? { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: c.line } : undefined}>
+                <T size={12} weight="600" sub style={{ paddingTop: 10 }}>{dayHeading(g.date)}</T>
+                {g.items.map((r, i) =>
+                  r.kind === 'expense'
+                    ? <ExpenseItem key={`e${r.row.id}`} e={r.row} showDate={false} onDeleted={load} last={i === g.items.length - 1} />
+                    : <IncomeItem key={`i${r.row.id}`} e={r.row} showDate={false} onDeleted={load} last={i === g.items.length - 1} />
+                )}
+              </View>
+            ))
+          )}
+        </View>
       </ScrollView>
     </Screen>
   );
 }
+
+const styles = StyleSheet.create({
+  card: { borderRadius: radius.lg, borderWidth: 1, padding: 16 },
+  list: { borderRadius: radius.lg, borderWidth: 1, paddingHorizontal: 14 },
+});

@@ -1,10 +1,12 @@
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useRouter } from 'expo-router';
-import { Section } from '@/components/Section';
-import { NewGroupField } from '@/components/NewGroupField';
+import { addEmptyGroup } from '@/db/queries';
+import { FONTS, radius, useTheme } from '@/expense/theme';
+import { Button, Empty, ListCard, Meter, Screen, T, TopBar } from '@/expense/ui';
 import { fullDateLabel } from '@/format';
-import { useTheme } from '@/ThemeContext';
-import { SPACE, type Colors } from '@/theme';
+import { normalizeGroupName } from '@/groups';
+import { logOk } from '@/log';
 import { useGroups } from '@/useGroups';
 
 /**
@@ -15,82 +17,110 @@ import { useGroups } from '@/useGroups';
  * trip that is over can still be read back.
  */
 export default function GroupsScreen() {
-  const { colors, type } = useTheme();
-  const styles = makeStyles(colors);
+  const { c } = useTheme();
   const router = useRouter();
 
   const { groups, loading } = useGroups();
+  const [name, setName] = useState('');
+
+  const open = (group: string) => router.push(`/group/${encodeURIComponent(group)}`);
+
+  // Made here, filled later: a group can exist before its work does.
+  async function create() {
+    const clean = normalizeGroupName(name);
+    if (!clean) return;
+    setName('');
+    await addEmptyGroup(clean);
+    logOk('Made a group', clean);
+    open(clean);
+  }
 
   return (
-    <ScrollView style={styles.flex} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-      <Text style={type.display}>Groups</Text>
+    <Screen>
+      <TopBar title="Groups" onBack={() => router.back()} />
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <View style={styles.newRow}>
+          <TextInput
+            value={name}
+            onChangeText={setName}
+            onSubmitEditing={() => void create()}
+            placeholder="New group, e.g. Kozhikode trip"
+            placeholderTextColor={c.faint}
+            returnKeyType="done"
+            accessibilityLabel="New group name"
+            style={[styles.input, { backgroundColor: c.card, borderColor: c.border, color: c.text }]}
+          />
+          <Button title="Create" onPress={() => void create()} disabled={!name.trim()} style={styles.create} />
+        </View>
 
-      {/* Made here, filled later: a group can exist before its work does. */}
-      <NewGroupField
-        onCreated={(name) => router.push(`/group/${encodeURIComponent(name)}`)}
-      />
+        {groups.length > 0 ? (
+          <ListCard>
+            {groups.map((group, i) => (
+              <Pressable
+                key={group.name}
+                onPress={() => open(group.name)}
+                accessibilityRole="button"
+                style={({ pressed }) => [
+                  styles.row,
+                  i < groups.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: c.line },
+                  pressed && styles.pressed,
+                ]}
+              >
+                <View style={styles.head}>
+                  <T size={16} weight="600" numberOfLines={1} style={styles.name}>{group.name}</T>
+                  <T size={13} sub tabular>{group.done}/{group.total}</T>
+                </View>
 
-      {groups.length > 0 ? (
-        <Section label={`GROUPS  ·  ${groups.length}`}>
-          {groups.map((group) => (
-            <Pressable
-              key={group.name}
-              style={styles.row}
-              onPress={() => router.push(`/group/${encodeURIComponent(group.name)}`)}
-              hitSlop={4}
-            >
-              <View style={styles.head}>
-                <Text style={[type.body, styles.name]} numberOfLines={1}>
-                  {group.name}
-                </Text>
-                <Text style={[type.stamp, styles.count]}>
-                  {group.done}/{group.total}
-                </Text>
-              </View>
+                <Meter fraction={group.progress} height={4} />
 
-              <View style={styles.track}>
-                <View style={[styles.fill, { width: `${Math.round(group.progress * 100)}%` }]} />
-              </View>
+                <T size={13} sub style={group.overdue > 0 ? { color: c.danger } : undefined}>
+                  {group.total === 0
+                    ? 'Nothing in it yet'
+                    : group.open === 0
+                    ? 'All done'
+                    : group.overdue > 0
+                      ? `${group.overdue} overdue · ${group.open} left`
+                      : group.nextDue
+                        ? `${group.open} left · next ${fullDateLabel(group.nextDue)}`
+                        : `${group.open} left`}
+                </T>
+              </Pressable>
+            ))}
+          </ListCard>
+        ) : null}
 
-              <Text style={[type.fine, group.overdue > 0 && styles.late]}>
-                {group.total === 0
-                  ? 'Nothing in it yet'
-                  : group.open === 0
-                  ? 'All done'
-                  : group.overdue > 0
-                    ? `${group.overdue} overdue · ${group.open} left`
-                    : group.nextDue
-                      ? `${group.open} left · next ${fullDateLabel(group.nextDue)}`
-                      : `${group.open} left`}
-              </Text>
-            </Pressable>
-          ))}
-        </Section>
-      ) : null}
-
-      {!loading && groups.length === 0 ? (
-        <Text style={[type.body, styles.intro]}>
-          Say or type several things at once and name what they are for — &quot;for
-          the Kozhikode trip: book tickets, pack bags, get cash&quot; — and they are
-          kept together here, with a finish line. You can also set a group on any
-          entry from its own screen.
-        </Text>
-      ) : null}
-    </ScrollView>
+        {!loading && groups.length === 0 ? (
+          <View style={styles.empty}>
+            <Empty
+              icon="folder-outline"
+              title="Keep related things together"
+              hint={'Say several things at once and name what they\'re for — "for the Kozhikode trip: book tickets, pack bags, get cash" — and they stay together here with a finish line.'}
+            />
+          </View>
+        ) : null}
+      </ScrollView>
+    </Screen>
   );
 }
 
-function makeStyles(colors: Colors) {
-  return StyleSheet.create({
-    flex: { flex: 1, backgroundColor: colors.paper },
-    content: { padding: SPACE.page, paddingTop: 68, paddingBottom: 48, gap: 26 },
-    row: { paddingVertical: 12, gap: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.rule },
-    head: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 },
-    name: { flex: 1, color: colors.ink },
-    count: { color: colors.mist },
-    track: { height: 2, backgroundColor: colors.rule },
-    fill: { height: 2, backgroundColor: colors.moss },
-    late: { color: colors.alert },
-    intro: { maxWidth: 320, marginTop: 4 },
-  });
-}
+const styles = StyleSheet.create({
+  content: { flexGrow: 1, paddingHorizontal: 20, paddingTop: 16, paddingBottom: 48, gap: 16 },
+  newRow: { flexDirection: 'row', gap: 8 },
+  input: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 48,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontFamily: FONTS.sans,
+    fontSize: 16,
+  },
+  create: { borderRadius: radius.sm },
+  row: { paddingVertical: 14, gap: 8 },
+  pressed: { opacity: 0.6 },
+  head: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 },
+  name: { flex: 1 },
+  empty: { flex: 1, justifyContent: 'center', paddingBottom: 80 },
+});

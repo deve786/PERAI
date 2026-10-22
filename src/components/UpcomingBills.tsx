@@ -1,13 +1,12 @@
 import React, { useMemo } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { Pressable, StyleSheet, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { todayStr } from '@/expense/dates';
 import { fmtMoney, sum } from '@/expense/stats';
 import { saveExpense, type Recurring } from '@/expense/db';
-import { numerals, radius, useTheme } from '@/expense/theme';
-import { Row, T } from '@/expense/ui';
+import { radius, useTheme } from '@/expense/theme';
+import { Row, Section, T } from '@/expense/ui';
 
 interface Props {
   recurring: Recurring[];
@@ -102,27 +101,28 @@ export function UpcomingBills({ recurring, onBillPaid }: Props) {
     return null;
   }
 
+  const shown = scheduled.slice(0, 4);
+
   return (
-    <View style={[styles.card, { backgroundColor: c.card, borderColor: c.line }]}>
-      <Row style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-        <Row style={{ gap: 8, alignItems: 'center' }}>
-          <Ionicons name="calendar-outline" size={17} color={c.accent} />
-          <T size={14} weight="700">Upcoming Bills (Next 30 Days)</T>
+    <View>
+      <Section
+        title="Upcoming bills"
+        right={
+          <Pressable onPress={() => router.push('/expense/recurring')} hitSlop={10} accessibilityRole="button">
+            <T size={14} weight="600" style={{ color: c.accent }}>Manage</T>
+          </Pressable>
+        }
+      />
+      <View style={[styles.card, { backgroundColor: c.card, borderColor: c.line }]}>
+        <Row style={[styles.summary, { borderBottomColor: c.line }]}>
+          <T size={13} sub style={{ flex: 1 }}>
+            {scheduled.length} due in the next 30 days
+          </T>
+          <T size={13} sub>Total </T>
+          <T size={14} weight="600" tabular>{fmtMoney(totalUpcoming, symbol)}</T>
         </Row>
-        <Pressable onPress={() => router.push('/expense/recurring')} hitSlop={8}>
-          <T size={12.5} sub>Manage ›</T>
-        </Pressable>
-      </Row>
 
-      <Row style={{ justifyContent: 'space-between', alignItems: 'baseline', marginTop: 4 }}>
-        <T size={12.5} sub>{scheduled.length} upcoming commitments</T>
-        <T size={14} weight="700" tabular style={{ color: c.accent }}>
-          Total {fmtMoney(totalUpcoming, symbol)}
-        </T>
-      </Row>
-
-      <View style={styles.list}>
-        {scheduled.slice(0, 4).map((bill) => {
+        {shown.map((bill, i) => {
           const isUrgent = bill.dueInDays <= 3;
           const dueLabel =
             bill.dueInDays === 0
@@ -132,44 +132,29 @@ export function UpcomingBills({ recurring, onBillPaid }: Props) {
                 : `Due in ${bill.dueInDays} days`;
 
           return (
-            <Row key={bill.id} style={[styles.billRow, { borderBottomColor: c.line }]}>
-              <View style={{ flex: 1, gap: 2 }}>
-                <Row style={{ gap: 6, alignItems: 'center' }}>
-                  <T size={14} weight="600" numberOfLines={1}>
-                    {bill.note}
-                  </T>
-                  {bill.method ? (
-                    <View style={[styles.methodBadge, { backgroundColor: c.bg }]}>
-                      <T size={10} sub>{bill.method}</T>
-                    </View>
-                  ) : null}
-                </Row>
-                <T
-                  size={12}
-                  weight={isUrgent ? '600' : '400'}
-                  style={{ color: isUrgent ? c.danger : c.sub }}
-                >
-                  {dueLabel} · Day {bill.dueDay}
+            <Row
+              key={bill.id}
+              style={[styles.billRow, { borderBottomColor: c.line, borderBottomWidth: i === shown.length - 1 ? 0 : StyleSheet.hairlineWidth }]}
+            >
+              <View style={{ flex: 1 }}>
+                <T size={15} weight="500" numberOfLines={1}>{bill.note}</T>
+                <T size={13} numberOfLines={1} style={{ marginTop: 1, color: isUrgent ? c.danger : c.sub }}>
+                  {dueLabel} · Day {bill.dueDay}{bill.method ? ` · ${bill.method}` : ''}
                 </T>
               </View>
-
-              <Row style={{ gap: 10, alignItems: 'center' }}>
-                <T size={14} weight="700" tabular>
-                  {fmtMoney(bill.amount, symbol)}
-                </T>
-                <Pressable
-                  onPress={() => void handlePayNow(bill)}
-                  hitSlop={8}
-                  style={({ pressed }) => [
-                    styles.payButton,
-                    { backgroundColor: c.bg, borderColor: c.line },
-                    pressed && { opacity: 0.6 },
-                  ]}
-                  accessibilityLabel={`Mark ${bill.note} paid now`}
-                >
-                  <T size={11} weight="600" style={{ color: c.good }}>Pay</T>
-                </Pressable>
-              </Row>
+              <T size={15} weight="500" tabular>{fmtMoney(bill.amount, symbol)}</T>
+              <Pressable
+                onPress={() => void handlePayNow(bill)}
+                hitSlop={6}
+                accessibilityRole="button"
+                accessibilityLabel={`Mark ${bill.note} paid now`}
+                style={({ pressed }) => [
+                  styles.payButton,
+                  { borderColor: c.border, backgroundColor: c.card, opacity: pressed ? 0.6 : 1 },
+                ]}
+              >
+                <T size={14} weight="600" style={{ color: c.accent }}>Pay</T>
+              </Pressable>
             </Row>
           );
         })}
@@ -182,28 +167,23 @@ const styles = StyleSheet.create({
   card: {
     borderRadius: radius.lg,
     borderWidth: 1,
-    padding: 16,
-    marginTop: 20,
-    gap: 10,
+    paddingHorizontal: 14,
   },
-  list: {
-    marginTop: 6,
-  },
-  billRow: {
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 10,
+  summary: {
+    paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  methodBadge: {
-    paddingHorizontal: 5,
-    paddingVertical: 1,
-    borderRadius: 4,
+  billRow: {
+    gap: 12,
+    minHeight: 60,
+    paddingVertical: 10,
   },
   payButton: {
-    paddingHorizontal: 9,
-    paddingVertical: 4,
-    borderRadius: 6,
+    minHeight: 36,
+    paddingHorizontal: 14,
+    borderRadius: radius.pill,
     borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

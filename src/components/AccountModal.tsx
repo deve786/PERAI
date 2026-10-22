@@ -6,14 +6,11 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Text,
-  TextInput,
   View,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { useTheme } from '@/ThemeContext';
-import { FONTS, SPACE, type Colors } from '@/theme';
+import { FONTS, radius, useTheme } from '@/expense/theme';
+import { ActionBar, Chip, Field, Label, Segmented, T } from '@/expense/ui';
 import {
   adjustAccountBalance,
   saveAccount,
@@ -41,13 +38,18 @@ interface Props {
   onSaved: () => void;
 }
 
-const ACCOUNT_TYPES: { type: AccountType; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
-  { type: 'bank', label: 'Bank', icon: 'business-outline' },
-  { type: 'stock', label: 'Stocks', icon: 'trending-up-outline' },
-  { type: 'cash', label: 'Cash', icon: 'cash-outline' },
-  { type: 'crypto', label: 'Crypto', icon: 'logo-bitcoin' },
-  { type: 'other', label: 'Other', icon: 'cube-outline' },
+const ACCOUNT_TYPES: { key: AccountType; label: string }[] = [
+  { key: 'bank', label: 'Bank' },
+  { key: 'stock', label: 'Stocks' },
+  { key: 'cash', label: 'Cash' },
+  { key: 'crypto', label: 'Crypto' },
+  { key: 'other', label: 'Other' },
 ];
+
+const PROFIT_KINDS = [
+  { key: 'Profit', label: 'Profit' },
+  { key: 'Loss', label: 'Loss' },
+] as const;
 
 export function AccountModal({
   visible,
@@ -56,8 +58,7 @@ export function AccountModal({
   onClose,
   onSaved,
 }: Props) {
-  const { colors, type } = useTheme();
-  const styles = makeStyles(colors);
+  const { c } = useTheme();
 
   const [name, setName] = useState('');
   const [accType, setAccType] = useState<AccountType>(initialType);
@@ -213,152 +214,104 @@ export function AccountModal({
     }
   };
 
+  const canSave = !saving && !!name.trim() && !!balance.trim() && !needsAccount;
+  const hint = (text: string, warn?: boolean) => (
+    <T size={13} style={{ color: warn ? c.danger : c.sub, marginTop: -8, marginBottom: 16, lineHeight: 18 }}>{text}</T>
+  );
+
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={close}>
       <KeyboardAvoidingView
         style={styles.backdrop}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
-          <View style={styles.header}>
-            <Text style={[type.stamp, styles.headerTitle]}>
-              {item ? 'EDIT ASSET / ACCOUNT' : 'ADD ASSET / ACCOUNT'}
-            </Text>
-            <Pressable onPress={close} hitSlop={10}>
-              <Ionicons name="close" size={20} color={colors.graphite} />
-            </Pressable>
-          </View>
+        <Pressable style={[styles.sheet, { backgroundColor: c.bg, borderColor: c.line }]} onPress={(e) => e.stopPropagation()}>
+          <ActionBar
+            title={item ? 'Edit account' : 'Add account'}
+            onCancel={close}
+            actions={[{ label: saving ? 'Saving…' : 'Save', primary: true, onPress: handleSave, disabled: !canSave }]}
+          />
 
           <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-            {/* Account Type Selector */}
-            <View style={styles.typeRow}>
-              {ACCOUNT_TYPES.map((t) => {
-                const isActive = accType === t.type;
-                return (
-                  <Pressable
-                    key={t.type}
-                    onPress={() => setAccType(t.type)}
-                    style={[styles.typeTab, isActive && styles.typeTabActive]}
-                  >
-                    <Ionicons
-                      name={t.icon}
-                      size={14}
-                      color={isActive ? colors.paper : colors.graphite}
-                    />
-                    <Text
-                      style={[
-                        type.label,
-                        styles.typeTabText,
-                        isActive && styles.typeTabTextActive,
-                      ]}
-                    >
-                      {t.label}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
+            <Label>Type</Label>
+            <Segmented options={ACCOUNT_TYPES} value={accType} onChange={setAccType} style={{ marginBottom: 20 }} />
 
-            {/* Account Name */}
-            <View style={styles.field}>
-              <Text style={type.label}>ACCOUNT / ASSET NAME</Text>
-              <TextInput
-                value={name}
-                onChangeText={setName}
-                placeholder={
-                  accType === 'bank'
-                    ? 'e.g. HDFC Salary, SBI Savings'
-                    : accType === 'stock'
-                    ? 'e.g. Zerodha Portfolio, Groww'
-                    : accType === 'cash'
-                    ? 'e.g. Wallet Cash, Home Safe'
-                    : accType === 'crypto'
-                    ? 'e.g. Binance, Hardware Wallet'
-                    : 'e.g. Gold, Fixed Deposit'
-                }
-                placeholderTextColor={colors.mist}
-                style={styles.input}
-              />
-            </View>
+            <Field
+              label="Name"
+              value={name}
+              onChangeText={setName}
+              placeholder={
+                accType === 'bank'
+                  ? 'e.g. HDFC Salary, SBI Savings'
+                  : accType === 'stock'
+                  ? 'e.g. Zerodha Portfolio, Groww'
+                  : accType === 'cash'
+                  ? 'e.g. Wallet Cash, Home Safe'
+                  : accType === 'crypto'
+                  ? 'e.g. Binance, Hardware Wallet'
+                  : 'e.g. Gold, Fixed Deposit'
+              }
+            />
 
-            {/* Current Balance */}
-            <View style={styles.field}>
-              <Text style={type.label}>
-                {!isStock ? 'CURRENT BALANCE / VALUE (₹)' : item ? 'INVESTED SO FAR (₹)' : 'AMOUNT INVESTED (₹)'}
-              </Text>
-              <TextInput
-                value={balance}
-                onChangeText={setBalance}
-                placeholder="0"
-                placeholderTextColor={colors.mist}
-                keyboardType="decimal-pad"
-                style={[styles.input, styles.balanceInput]}
-              />
-              {isStock && item ? (
-                <Text style={[type.fine, styles.hint]}>
-                  Editing this only corrects the number. Put in more? Use Add money below.
-                </Text>
-              ) : null}
-            </View>
+            <Field
+              label={!isStock ? 'Balance or value (₹)' : item ? 'Invested so far (₹)' : 'Amount invested (₹)'}
+              value={balance}
+              onChangeText={setBalance}
+              placeholder="0"
+              keyboardType="decimal-pad"
+              style={styles.money}
+            />
+            {isStock && item
+              ? hint('Editing this only corrects the number. Put in more? Use Add money below.')
+              : null}
 
             {/* Putting more money into a stock you already have */}
             {isStock && item ? (
-              <View style={styles.field}>
-                <Text style={type.label}>ADD MONEY (₹)</Text>
-                <TextInput
+              <>
+                <Field
+                  label="Add money (₹)"
                   value={topUp}
                   onChangeText={setTopUp}
                   placeholder="0"
-                  placeholderTextColor={colors.mist}
                   keyboardType="decimal-pad"
-                  style={styles.input}
+                  style={styles.moneySmall}
                 />
-                <Text style={[type.fine, styles.hint]}>
-                  {added > 0 && !isNaN(parsed)
+                {hint(
+                  added > 0 && !isNaN(parsed)
                     ? `Invested will be ${fmtMoney(investedTotal, '₹')}`
-                    : 'Bought more? Type the amount here — it is taken from the account you pick below.'}
-                </Text>
-              </View>
+                    : 'Bought more? Type the amount here — it is taken from the account you pick below.',
+                )}
+              </>
             ) : null}
 
             {/* Where the money for a stock came from */}
             {isStock ? (
-              <View style={styles.field}>
-                <Text style={type.label}>PAID WITH</Text>
+              <View style={{ marginBottom: 20 }}>
+                <Label>Paid with</Label>
                 <View style={styles.chipRow}>
                   {PAY_METHODS.map((m) => (
-                    <Pressable
-                      key={m.key}
-                      onPress={() => setPayChoice(m.key)}
-                      style={[styles.chip, payMethod === m.key && styles.chipActive]}
-                    >
-                      <Text style={[type.label, styles.chipText, payMethod === m.key && styles.chipTextActive]}>
-                        {m.label}
-                      </Text>
-                    </Pressable>
+                    <Chip key={m.key} label={m.label} active={payMethod === m.key} onPress={() => setPayChoice(m.key)} />
                   ))}
                 </View>
 
                 {payMethod !== 'None' ? (
                   sources.length > 0 ? (
                     <>
-                      <Text style={[type.label, styles.subLabel]}>
-                        {sourceType === 'cash' ? 'FROM WHICH CASH' : 'FROM WHICH BANK'}
-                      </Text>
+                      <Label style={{ marginTop: 8 }}>
+                        {sourceType === 'cash' ? 'From which cash' : 'From which bank'}
+                      </Label>
                       <View style={styles.chipRow}>
                         {sources.map((a) => (
-                          <Pressable
+                          <Chip
                             key={a.id}
+                            label={bankLabel(a)}
+                            icon={sourceType === 'cash' ? 'cash-outline' : 'business-outline'}
+                            active={chosen?.id === a.id}
                             onPress={() => setAccountChoice(a.id)}
-                            style={[styles.chip, chosen?.id === a.id && styles.chipActive]}
-                          >
-                            <Text style={[type.label, styles.chipText, chosen?.id === a.id && styles.chipTextActive]}>
-                              {bankLabel(a)}
-                            </Text>
-                          </Pressable>
+                          />
                         ))}
                       </View>
-                      <Text style={[type.fine, fromAccount && fromAccount.balance < added ? styles.warn : styles.hint]}>
+                      <T size={13} style={{ color: fromAccount && fromAccount.balance < added ? c.danger : c.sub, lineHeight: 18 }}>
                         {!chosen
                           ? `Pick the ${sourceType === 'cash' ? 'cash account' : 'bank'} this money came from.`
                           : added > 0
@@ -367,109 +320,78 @@ export function AccountModal({
                           : item
                           ? `Type an amount in Add money to take it from ${bankLabel(chosen)}.`
                           : `The value you type will be taken from ${bankLabel(chosen)}.`}
-                      </Text>
+                      </T>
                     </>
                   ) : (
-                    <Text style={[type.fine, styles.hint]}>
+                    <T size={13} sub style={{ lineHeight: 18 }}>
                       {sourceType === 'cash'
                         ? 'No cash account saved, so no balance will change. Add one in Net Worth to track it.'
                         : 'No bank account saved, so no balance will change. Add one in Net Worth to track it.'}
-                    </Text>
+                    </T>
                   )
                 ) : (
-                  <Text style={[type.fine, styles.hint]}>
+                  <T size={13} sub style={{ lineHeight: 18 }}>
                     {item
                       ? 'No balance changes — use this when you only update the value.'
                       : 'No balance changes — use this for a holding you already had.'}
-                  </Text>
+                  </T>
                 )}
               </View>
             ) : null}
 
             {/* Profit or loss on a stock — on paper, never moves a bank */}
             {isStock ? (
-              <View style={styles.field}>
-                <Text style={type.label}>PROFIT / LOSS (₹)</Text>
-                <View style={styles.chipRow}>
-                  {(['Profit', 'Loss'] as const).map((k) => (
-                    <Pressable
-                      key={k}
-                      onPress={() => setProfitKind(k)}
-                      style={[styles.chip, profitKind === k && styles.chipActive]}
-                    >
-                      <Text style={[type.label, styles.chipText, profitKind === k && styles.chipTextActive]}>
-                        {k}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </View>
-                <TextInput
+              <View style={{ marginBottom: 20 }}>
+                <Label>Profit or loss (₹)</Label>
+                <Segmented options={PROFIT_KINDS} value={profitKind} onChange={setProfitKind} style={{ marginBottom: 10 }} />
+                <Field
                   value={profitAmt}
                   onChangeText={setProfitAmt}
                   placeholder="0"
-                  placeholderTextColor={colors.mist}
                   keyboardType="decimal-pad"
-                  style={styles.input}
+                  style={styles.moneySmall}
+                  containerStyle={{ marginBottom: 10 }}
                 />
-                <View style={styles.valueBox}>
-                  <Text style={[type.fine, styles.hint]}>CURRENT VALUE</Text>
-                  <Text style={[type.figure, styles.valueFigure]}>{fmtMoney(stockValue, '₹')}</Text>
-                  {profit !== 0 ? (
-                    <Text style={[type.fine, profit > 0 ? styles.gain : styles.warn]}>
-                      {profit > 0 ? '+' : '−'}
-                      {fmtMoney(Math.abs(profit), '₹')}
-                      {profitPct !== null ? ` (${profit > 0 ? '+' : '−'}${Math.abs(profitPct)}%)` : ''}
-                    </Text>
-                  ) : null}
+                <View style={[styles.valueBox, { backgroundColor: c.card, borderColor: c.line }]}>
+                  <T size={13} sub style={{ flex: 1 }}>Current value</T>
+                  <View style={{ alignItems: 'flex-end' }}>
+                    <T size={16} weight="600" tabular>{fmtMoney(stockValue, '₹')}</T>
+                    {profit !== 0 ? (
+                      <T size={13} style={{ color: profit > 0 ? c.accent : c.danger }}>
+                        {profit > 0 ? '+' : '−'}
+                        {fmtMoney(Math.abs(profit), '₹')}
+                        {profitPct !== null ? ` (${profit > 0 ? '+' : '−'}${Math.abs(profitPct)}%)` : ''}
+                      </T>
+                    ) : null}
+                  </View>
                 </View>
               </View>
             ) : null}
 
-            {/* Institution / Broker (Optional) */}
-            <View style={styles.field}>
-              <Text style={type.label}>INSTITUTION / BROKER (OPTIONAL)</Text>
-              <TextInput
-                value={institution}
-                onChangeText={setInstitution}
-                placeholder="e.g. HDFC, Zerodha, Upstox"
-                placeholderTextColor={colors.mist}
-                style={styles.input}
-              />
-            </View>
+            <Field
+              label="Bank or broker (optional)"
+              value={institution}
+              onChangeText={setInstitution}
+              placeholder="e.g. HDFC, Zerodha, Upstox"
+            />
 
-            {/* Notes */}
-            <View style={styles.field}>
-              <Text style={type.label}>NOTES (OPTIONAL)</Text>
-              <TextInput
-                value={notes}
-                onChangeText={setNotes}
-                placeholder="e.g. Emergency fund, long-term stocks"
-                placeholderTextColor={colors.mist}
-                style={styles.input}
-              />
-            </View>
+            <Field
+              label="Notes (optional)"
+              value={notes}
+              onChangeText={setNotes}
+              placeholder="e.g. Emergency fund, long-term stocks"
+            />
 
-            {/* Actions */}
-            <View style={styles.actionRow}>
-              {item ? (
-                <Pressable onPress={handleDelete} style={styles.deleteBtn}>
-                  <Text style={[type.label, styles.deleteBtnText]}>DELETE</Text>
-                </Pressable>
-              ) : null}
-
+            {item ? (
               <Pressable
-                onPress={handleSave}
-                disabled={saving || !name.trim() || !balance.trim() || needsAccount}
-                style={[
-                  styles.saveBtn,
-                  (!name.trim() || !balance.trim() || needsAccount) && styles.saveBtnDisabled,
-                ]}
+                onPress={handleDelete}
+                accessibilityRole="button"
+                hitSlop={6}
+                style={({ pressed }) => [styles.deleteBtn, { opacity: pressed ? 0.6 : 1 }]}
               >
-                <Text style={[type.label, styles.saveBtnText]}>
-                  {saving ? 'SAVING…' : 'SAVE ACCOUNT'}
-                </Text>
+                <T size={16} weight="700" style={{ color: c.danger }}>Delete account</T>
               </Pressable>
-            </View>
+            ) : null}
           </ScrollView>
         </Pressable>
       </KeyboardAvoidingView>
@@ -477,163 +399,49 @@ export function AccountModal({
   );
 }
 
-function makeStyles(colors: Colors) {
-  return StyleSheet.create({
-    backdrop: {
-      flex: 1,
-      backgroundColor: 'rgba(0,0,0,0.45)',
-      justifyContent: 'flex-end',
-    },
-    sheet: {
-      backgroundColor: colors.paper,
-      borderTopLeftRadius: 16,
-      borderTopRightRadius: 16,
-      borderTopWidth: 1,
-      borderColor: colors.rule,
-      padding: 20,
-      maxHeight: '90%',
-    },
-    header: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      marginBottom: 16,
-    },
-    headerTitle: {
-      color: colors.ink,
-      fontWeight: '700',
-      letterSpacing: 0.8,
-    },
-    scroll: {
-      gap: 16,
-    },
-    typeRow: {
-      flexDirection: 'row',
-      backgroundColor: colors.surface,
-      borderRadius: 8,
-      padding: 3,
-      borderWidth: 1,
-      borderColor: colors.rule,
-      marginBottom: 6,
-    },
-    typeTab: {
-      flex: 1,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 4,
-      paddingVertical: 8,
-      borderRadius: 6,
-    },
-    typeTabActive: {
-      backgroundColor: colors.ink,
-    },
-    typeTabText: {
-      color: colors.graphite,
-      fontSize: 10,
-    },
-    typeTabTextActive: {
-      color: colors.paper,
-      fontWeight: '600',
-    },
-    field: {
-      gap: 6,
-    },
-    chipRow: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 8,
-    },
-    chip: {
-      paddingVertical: 8,
-      paddingHorizontal: 12,
-      borderRadius: 6,
-      borderWidth: 1,
-      borderColor: colors.rule,
-      backgroundColor: colors.surface,
-    },
-    chipActive: {
-      backgroundColor: colors.ink,
-      borderColor: colors.ink,
-    },
-    chipText: {
-      color: colors.graphite,
-      fontSize: 10,
-    },
-    chipTextActive: {
-      color: colors.paper,
-      fontWeight: '600',
-    },
-    subLabel: {
-      marginTop: 6,
-    },
-    hint: {
-      color: colors.graphite,
-    },
-    warn: {
-      color: colors.alert,
-    },
-    gain: {
-      color: colors.moss,
-    },
-    valueBox: {
-      flexDirection: 'row',
-      alignItems: 'baseline',
-      flexWrap: 'wrap',
-      gap: 8,
-      marginTop: 2,
-    },
-    valueFigure: {
-      color: colors.ink,
-    },
-    input: {
-      backgroundColor: colors.surface,
-      borderWidth: 1,
-      borderColor: colors.rule,
-      borderRadius: 8,
-      paddingHorizontal: 12,
-      paddingVertical: 10,
-      fontSize: 15,
-      color: colors.ink,
-      fontFamily: FONTS.sans,
-    },
-    balanceInput: {
-      fontFamily: FONTS.mono,
-      fontSize: 22,
-      fontWeight: '700',
-    },
-    actionRow: {
-      flexDirection: 'row',
-      gap: 12,
-      marginTop: 8,
-      marginBottom: 20,
-    },
-    deleteBtn: {
-      flex: 1,
-      paddingVertical: 12,
-      alignItems: 'center',
-      borderRadius: 8,
-      backgroundColor: colors.surface,
-      borderWidth: 1,
-      borderColor: colors.alert,
-    },
-    deleteBtnText: {
-      color: colors.alert,
-      fontWeight: '600',
-    },
-    saveBtn: {
-      flex: 2,
-      paddingVertical: 12,
-      alignItems: 'center',
-      borderRadius: 8,
-      backgroundColor: colors.ink,
-    },
-    saveBtnDisabled: {
-      opacity: 0.5,
-    },
-    saveBtnText: {
-      color: colors.paper,
-      fontWeight: '700',
-    },
-  });
-}
+const styles = StyleSheet.create({
+  backdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'flex-end',
+  },
+  sheet: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderTopWidth: 1,
+    overflow: 'hidden',
+    maxHeight: '92%',
+  },
+  scroll: {
+    padding: 20,
+    paddingBottom: 36,
+  },
+  chipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginBottom: 2,
+  },
+  money: {
+    fontFamily: FONTS.monoMedium,
+    fontSize: 22,
+  },
+  moneySmall: {
+    fontFamily: FONTS.mono,
+    fontSize: 17,
+  },
+  valueBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: radius.sm,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    minHeight: 52,
+  },
+  deleteBtn: {
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 4,
+  },
+});

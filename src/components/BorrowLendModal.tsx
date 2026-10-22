@@ -6,15 +6,12 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Text,
-  TextInput,
   View,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { useTheme } from '@/ThemeContext';
-import { FONTS, SPACE, type Colors } from '@/theme';
+import { FONTS, useTheme } from '@/expense/theme';
+import { ActionBar, Chip, Field, Label, Segmented, T } from '@/expense/ui';
 import { todayStr, addDays, prettyDate, fromStr, toStr } from '@/expense/dates';
 import {
   saveBorrowLend,
@@ -24,6 +21,17 @@ import {
   type BorrowLendStatus,
 } from '@/expense/borrowLendDb';
 import { listTaggedUsers, type TaggedUser } from '@/expense/db';
+
+const TYPES: { key: BorrowLendType; label: string }[] = [
+  { key: 'lent', label: 'I lent' },
+  { key: 'request', label: 'Requested' },
+  { key: 'borrowed', label: 'I borrowed' },
+];
+
+const DUE_OPTIONS = [
+  { key: 'none', label: 'No date' },
+  { key: 'date', label: 'Has a date' },
+] as const;
 
 interface Props {
   visible: boolean;
@@ -40,8 +48,7 @@ export function BorrowLendModal({
   onClose,
   onSaved,
 }: Props) {
-  const { colors, type } = useTheme();
-  const styles = makeStyles(colors);
+  const { c } = useTheme();
 
   const [personName, setPersonName] = useState('');
   const [borrowType, setBorrowType] = useState<BorrowLendType>(initialType);
@@ -131,186 +138,92 @@ export function BorrowLendModal({
     setDueDate(addDays(todayStr(), days));
   };
 
+  const today = todayStr();
+  const yesterday = addDays(today, -1);
+  const canSave = !saving && !!personName.trim() && !!amount.trim();
+
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <KeyboardAvoidingView
         style={styles.backdrop}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
-          <View style={styles.header}>
-            <View style={styles.headerLeft}>
-              <Ionicons
-                name={
-                  borrowType === 'lent'
-                    ? 'arrow-up-circle-outline'
-                    : borrowType === 'borrowed'
-                      ? 'arrow-down-circle-outline'
-                      : 'help-circle-outline'
-                }
-                size={20}
-                color={borrowType === 'lent' ? colors.moss : colors.alert}
-              />
-              <Text style={[type.label, styles.headerTitle]}>
-                {item ? 'EDIT ENTRY' : 'NEW BORROW / LEND'}
-              </Text>
-            </View>
-            <Pressable onPress={onClose} hitSlop={10}>
-              <Ionicons name="close-outline" size={22} color={colors.mist} />
-            </Pressable>
-          </View>
+        <Pressable style={[styles.sheet, { backgroundColor: c.bg, borderColor: c.line }]} onPress={(e) => e.stopPropagation()}>
+          <ActionBar
+            title={item ? 'Edit entry' : 'Record a loan'}
+            onCancel={onClose}
+            actions={[{ label: saving ? 'Saving…' : 'Save', primary: true, onPress: handleSave, disabled: !canSave }]}
+          />
 
-          <ScrollView style={styles.scroll} keyboardShouldPersistTaps="handled">
-            {/* Type Selector Tabs */}
-            <View style={styles.typeRow}>
-              <Pressable
-                onPress={() => setBorrowType('lent')}
-                style={[styles.typeTab, borrowType === 'lent' && styles.typeTabLent]}
+          <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+            <Segmented options={TYPES} value={borrowType} onChange={setBorrowType} style={{ marginBottom: 20 }} />
+
+            <Field
+              label="Person"
+              value={personName}
+              onChangeText={setPersonName}
+              placeholder="e.g. Rahul, Anas, Uncle"
+              containerStyle={{ marginBottom: knownUsers.length > 0 ? 10 : 16 }}
+            />
+            {knownUsers.length > 0 && (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+                style={{ marginBottom: 10 }}
               >
-                <Text
-                  style={[
-                    type.label,
-                    styles.typeTabText,
-                    borrowType === 'lent' && styles.typeTabTextActive,
-                  ]}
-                >
-                  I LENT
-                </Text>
-              </Pressable>
+                {knownUsers.slice(0, 6).map((u) => (
+                  <Chip
+                    key={u.id}
+                    label={u.name}
+                    active={personName.toLowerCase() === u.name.toLowerCase()}
+                    onPress={() => setPersonName(u.name)}
+                  />
+                ))}
+              </ScrollView>
+            )}
 
-              <Pressable
-                onPress={() => setBorrowType('request')}
-                style={[styles.typeTab, borrowType === 'request' && styles.typeTabRequest]}
-              >
-                <Text
-                  style={[
-                    type.label,
-                    styles.typeTabText,
-                    borrowType === 'request' && styles.typeTabTextActive,
-                  ]}
-                >
-                  REQUESTED
-                </Text>
-              </Pressable>
+            <Field
+              label="Amount (₹)"
+              value={amount}
+              onChangeText={setAmount}
+              placeholder="0"
+              keyboardType="decimal-pad"
+              style={styles.money}
+            />
 
-              <Pressable
-                onPress={() => setBorrowType('borrowed')}
-                style={[styles.typeTab, borrowType === 'borrowed' && styles.typeTabBorrowed]}
-              >
-                <Text
-                  style={[
-                    type.label,
-                    styles.typeTabText,
-                    borrowType === 'borrowed' && styles.typeTabTextActive,
-                  ]}
-                >
-                  I BORROWED
-                </Text>
-              </Pressable>
-            </View>
-
-            {/* Person Name */}
-            <View style={styles.field}>
-              <Text style={type.label}>PERSON NAME</Text>
-              <TextInput
-                value={personName}
-                onChangeText={setPersonName}
-                placeholder="e.g. Rahul, Anas, Uncle"
-                placeholderTextColor={colors.mist}
-                style={styles.input}
-              />
-              {knownUsers.length > 0 && (
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipsScroll}>
-                  {knownUsers.slice(0, 6).map((u) => (
-                    <Pressable
-                      key={u.id}
-                      onPress={() => setPersonName(u.name)}
-                      style={[styles.chip, personName.toLowerCase() === u.name.toLowerCase() && styles.chipActive]}
-                    >
-                      <Text style={[type.fine, styles.chipText]}>{u.name}</Text>
-                    </Pressable>
-                  ))}
-                </ScrollView>
-              )}
-            </View>
-
-            {/* Amount */}
-            <View style={styles.field}>
-              <Text style={type.label}>AMOUNT (₹)</Text>
-              <TextInput
-                value={amount}
-                onChangeText={setAmount}
-                placeholder="0"
-                placeholderTextColor={colors.mist}
-                keyboardType="decimal-pad"
-                style={[styles.input, styles.amountInput]}
-              />
-            </View>
-
-            {/* Date Given / Lent / Borrowed / Requested */}
-            <View style={styles.field}>
-              <Text style={type.label}>
+            {/* When the money changed hands */}
+            <View style={{ marginBottom: 12 }}>
+              <Label>
                 {borrowType === 'lent'
-                  ? 'DATE GIVEN / LENT'
+                  ? 'Date given'
                   : borrowType === 'borrowed'
-                  ? 'DATE RECEIVED / BORROWED'
-                  : 'DATE REQUESTED'}
-              </Text>
-              <View style={styles.dateSelectorRow}>
-                <Pressable
+                  ? 'Date borrowed'
+                  : 'Date requested'}
+              </Label>
+              <View style={styles.chipRow}>
+                <Chip
+                  label="Today"
+                  active={date === today}
                   onPress={() => {
                     setDate(todayStr());
                     setShowDatePicker(false);
                   }}
-                  style={[
-                    styles.dateChip,
-                    date === todayStr() && styles.dateChipActive,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      type.fine,
-                      date === todayStr() ? styles.dateChipTextActive : styles.dateChipText,
-                    ]}
-                  >
-                    Today
-                  </Text>
-                </Pressable>
-
-                <Pressable
+                />
+                <Chip
+                  label="Yesterday"
+                  active={date === yesterday}
                   onPress={() => {
                     setDate(addDays(todayStr(), -1));
                     setShowDatePicker(false);
                   }}
-                  style={[
-                    styles.dateChip,
-                    date === addDays(todayStr(), -1) && styles.dateChipActive,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      type.fine,
-                      date === addDays(todayStr(), -1)
-                        ? styles.dateChipTextActive
-                        : styles.dateChipText,
-                    ]}
-                  >
-                    Yesterday
-                  </Text>
-                </Pressable>
-
-                <Pressable
+                />
+                <Chip
+                  label={date !== today && date !== yesterday ? prettyDate(date) : 'Pick a date'}
+                  icon="calendar-outline"
+                  active={date !== today && date !== yesterday}
                   onPress={() => setShowDatePicker((prev) => !prev)}
-                  style={[
-                    styles.datePickerBtn,
-                    date !== todayStr() && date !== addDays(todayStr(), -1) && styles.datePickerBtnActive,
-                  ]}
-                >
-                  <Ionicons name="calendar-outline" size={14} color={colors.moss} />
-                  <Text style={[type.fine, styles.datePickerBtnText]}>
-                    {prettyDate(date)}
-                  </Text>
-                </Pressable>
+                />
               </View>
 
               {showDatePicker && (
@@ -326,48 +239,35 @@ export function BorrowLendModal({
               )}
             </View>
 
-            {/* Due Date Options */}
-            <View style={styles.field}>
-              <View style={styles.dueToggleRow}>
-                <Text style={type.label}>PROMISED RETURN DATE</Text>
-                <Pressable
-                  onPress={() => {
-                    if (hasDueDate) {
-                      setHasDueDate(false);
-                      setDueDate(null);
-                      setShowDueDatePicker(false);
-                    } else {
-                      quickDue(7);
-                    }
-                  }}
-                  hitSlop={6}
-                >
-                  <Text style={[type.label, { color: hasDueDate ? colors.moss : colors.mist }]}>
-                    {hasDueDate ? 'HAS DATE' : 'NO DATE'}
-                  </Text>
-                </Pressable>
-              </View>
+            {/* Promised return date */}
+            <View style={{ marginBottom: 12 }}>
+              <Label>Promised return date</Label>
+              <Segmented
+                options={DUE_OPTIONS}
+                value={hasDueDate ? 'date' : 'none'}
+                onChange={(k) => {
+                  if (k === 'none') {
+                    setHasDueDate(false);
+                    setDueDate(null);
+                    setShowDueDatePicker(false);
+                  } else if (!hasDueDate) {
+                    quickDue(7);
+                  }
+                }}
+                style={{ marginBottom: hasDueDate ? 10 : 8 }}
+              />
 
               {hasDueDate && (
-                <View style={styles.quickDueRow}>
-                  <Pressable onPress={() => quickDue(7)} style={styles.quickDueBtn}>
-                    <Text style={[type.label, styles.quickDueText]}>+7D</Text>
-                  </Pressable>
-                  <Pressable onPress={() => quickDue(14)} style={styles.quickDueBtn}>
-                    <Text style={[type.label, styles.quickDueText]}>+14D</Text>
-                  </Pressable>
-                  <Pressable onPress={() => quickDue(30)} style={styles.quickDueBtn}>
-                    <Text style={[type.label, styles.quickDueText]}>+30D</Text>
-                  </Pressable>
-                  <Pressable
+                <View style={styles.chipRow}>
+                  <Chip label="+7 days" onPress={() => quickDue(7)} />
+                  <Chip label="+14 days" onPress={() => quickDue(14)} />
+                  <Chip label="+30 days" onPress={() => quickDue(30)} />
+                  <Chip
+                    label={dueDate ? prettyDate(dueDate) : 'Pick a date'}
+                    icon="calendar-outline"
+                    active={!!dueDate}
                     onPress={() => setShowDueDatePicker((prev) => !prev)}
-                    style={styles.dueDateBtn}
-                  >
-                    <Ionicons name="calendar-outline" size={14} color={colors.moss} />
-                    <Text style={[type.fine, styles.dueDateBtnText]}>
-                      {dueDate ? prettyDate(dueDate) : 'Pick Date'}
-                    </Text>
-                  </Pressable>
+                  />
                 </View>
               )}
 
@@ -384,39 +284,25 @@ export function BorrowLendModal({
               )}
             </View>
 
-            {/* Notes / Reason */}
-            <View style={styles.field}>
-              <Text style={type.label}>NOTES / REASON</Text>
-              <TextInput
-                value={notes}
-                onChangeText={setNotes}
-                placeholder="e.g. For college fee, hospital, emergency"
-                placeholderTextColor={colors.mist}
-                style={[styles.input, styles.notesInput]}
-                multiline
-              />
-            </View>
+            <Field
+              label="Notes or reason"
+              value={notes}
+              onChangeText={setNotes}
+              placeholder="e.g. For college fee, hospital, emergency"
+              multiline
+              style={styles.notes}
+            />
 
-            <View style={styles.actionRow}>
-              {item ? (
-                <Pressable onPress={handleDelete} style={styles.deleteBtn}>
-                  <Text style={[type.label, styles.deleteBtnText]}>DELETE</Text>
-                </Pressable>
-              ) : null}
-
+            {item ? (
               <Pressable
-                onPress={handleSave}
-                disabled={saving || !personName.trim() || !amount.trim()}
-                style={[
-                  styles.saveBtn,
-                  (!personName.trim() || !amount.trim()) && styles.saveBtnDisabled,
-                ]}
+                onPress={handleDelete}
+                accessibilityRole="button"
+                hitSlop={6}
+                style={({ pressed }) => [styles.deleteBtn, { opacity: pressed ? 0.6 : 1 }]}
               >
-                <Text style={[type.label, styles.saveBtnText]}>
-                  {saving ? 'SAVING…' : 'SAVE ENTRY'}
-                </Text>
+                <T size={16} weight="700" style={{ color: c.danger }}>Delete entry</T>
               </Pressable>
-            </View>
+            ) : null}
           </ScrollView>
         </Pressable>
       </KeyboardAvoidingView>
@@ -424,231 +310,39 @@ export function BorrowLendModal({
   );
 }
 
-function makeStyles(colors: Colors) {
-  return StyleSheet.create({
-    backdrop: {
-      flex: 1,
-      backgroundColor: 'rgba(0,0,0,0.45)',
-      justifyContent: 'flex-end',
-    },
-    sheet: {
-      backgroundColor: colors.paper,
-      borderTopLeftRadius: 16,
-      borderTopRightRadius: 16,
-      borderTopWidth: 1,
-      borderColor: colors.rule,
-      padding: 20,
-      maxHeight: '88%',
-    },
-    header: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      marginBottom: 16,
-    },
-    headerLeft: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
-    },
-    headerTitle: {
-      color: colors.ink,
-      fontWeight: '700',
-    },
-    scroll: {
-      gap: 16,
-    },
-    typeRow: {
-      flexDirection: 'row',
-      backgroundColor: colors.surface,
-      borderRadius: 8,
-      padding: 3,
-      borderWidth: 1,
-      borderColor: colors.rule,
-      marginBottom: 16,
-    },
-    typeTab: {
-      flex: 1,
-      paddingVertical: 8,
-      alignItems: 'center',
-      borderRadius: 6,
-    },
-    typeTabLent: {
-      backgroundColor: colors.moss,
-    },
-    typeTabRequest: {
-      backgroundColor: colors.ink,
-    },
-    typeTabBorrowed: {
-      backgroundColor: colors.alert,
-    },
-    typeTabText: {
-      color: colors.mist,
-      fontSize: 11,
-      fontWeight: '600',
-    },
-    typeTabTextActive: {
-      color: colors.paper,
-    },
-    field: {
-      gap: 6,
-      marginBottom: 16,
-    },
-    input: {
-      backgroundColor: colors.surface,
-      borderWidth: 1,
-      borderColor: colors.rule,
-      borderRadius: 8,
-      paddingHorizontal: 12,
-      paddingVertical: 10,
-      fontSize: 15,
-      color: colors.ink,
-      fontFamily: FONTS.sans,
-    },
-    amountInput: {
-      fontFamily: FONTS.mono,
-      fontSize: 20,
-      fontWeight: '600',
-    },
-    notesInput: {
-      minHeight: 50,
-      textAlignVertical: 'top',
-    },
-    chipsScroll: {
-      marginTop: 4,
-    },
-    chip: {
-      paddingHorizontal: 10,
-      paddingVertical: 5,
-      borderRadius: 14,
-      backgroundColor: colors.surface,
-      borderWidth: 1,
-      borderColor: colors.rule,
-      marginRight: 6,
-    },
-    chipActive: {
-      borderColor: colors.moss,
-      backgroundColor: colors.rule,
-    },
-    chipText: {
-      color: colors.graphite,
-    },
-    dateSelectorRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
-      marginTop: 4,
-    },
-    dateChip: {
-      paddingHorizontal: 12,
-      paddingVertical: 7,
-      borderRadius: 6,
-      backgroundColor: colors.surface,
-      borderWidth: 1,
-      borderColor: colors.rule,
-    },
-    dateChipActive: {
-      borderColor: colors.moss,
-      backgroundColor: colors.surface,
-    },
-    dateChipText: {
-      color: colors.graphite,
-    },
-    dateChipTextActive: {
-      color: colors.moss,
-      fontWeight: '600',
-    },
-    datePickerBtn: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 6,
-      paddingHorizontal: 12,
-      paddingVertical: 7,
-      borderRadius: 6,
-      backgroundColor: colors.surface,
-      borderWidth: 1,
-      borderColor: colors.rule,
-    },
-    datePickerBtnActive: {
-      borderColor: colors.moss,
-    },
-    datePickerBtnText: {
-      color: colors.ink,
-      fontWeight: '500',
-    },
-    dueToggleRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-    },
-    quickDueRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
-      marginTop: 6,
-    },
-    quickDueBtn: {
-      paddingHorizontal: 8,
-      paddingVertical: 6,
-      borderRadius: 6,
-      backgroundColor: colors.surface,
-      borderWidth: 1,
-      borderColor: colors.rule,
-    },
-    quickDueText: {
-      color: colors.graphite,
-      fontSize: 10,
-    },
-    dueDateBtn: {
-      flex: 1,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 6,
-      backgroundColor: colors.surface,
-      borderWidth: 1,
-      borderColor: colors.rule,
-      borderRadius: 6,
-      paddingHorizontal: 8,
-      paddingVertical: 6,
-    },
-    dueDateBtnText: {
-      color: colors.ink,
-      fontWeight: '500',
-      fontSize: 12,
-    },
-    actionRow: {
-      flexDirection: 'row',
-      gap: 12,
-      marginTop: 10,
-      marginBottom: 20,
-    },
-    deleteBtn: {
-      flex: 1,
-      paddingVertical: 12,
-      alignItems: 'center',
-      borderRadius: 8,
-      backgroundColor: colors.surface,
-      borderWidth: 1,
-      borderColor: colors.alert,
-    },
-    deleteBtnText: {
-      color: colors.alert,
-      fontWeight: '600',
-    },
-    saveBtn: {
-      flex: 2,
-      paddingVertical: 12,
-      alignItems: 'center',
-      borderRadius: 8,
-      backgroundColor: colors.ink,
-    },
-    saveBtnDisabled: {
-      opacity: 0.5,
-    },
-    saveBtnText: {
-      color: colors.paper,
-      fontWeight: '700',
-    },
-  });
-}
+const styles = StyleSheet.create({
+  backdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'flex-end',
+  },
+  sheet: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderTopWidth: 1,
+    overflow: 'hidden',
+    maxHeight: '90%',
+  },
+  scroll: {
+    padding: 20,
+    paddingBottom: 36,
+  },
+  chipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  money: {
+    fontFamily: FONTS.monoMedium,
+    fontSize: 20,
+  },
+  notes: {
+    minHeight: 72,
+    textAlignVertical: 'top',
+  },
+  deleteBtn: {
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 4,
+  },
+});

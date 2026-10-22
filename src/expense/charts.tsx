@@ -1,45 +1,63 @@
 import React from 'react';
 import { View } from 'react-native';
-import Svg, { G, Line, Path, Text as SvgText } from 'react-native-svg';
+import Svg, { G, Path, Rect } from 'react-native-svg';
+import { monthName } from './dates';
 import type { CatTotal, DayTotal } from './stats';
 import { useTheme } from './theme';
-import { Meter, Money, Row, T } from './ui';
+import { Meter, Row, T } from './ui';
+import { fmtMoney } from './stats';
 
 /** Bar with a rounded free end and a square end on the baseline. */
 function barPath(x: number, y: number, w: number, h: number) {
-  const r = Math.min(4, w / 2, h);
+  const r = Math.min(3, w / 2, h);
   return `M${x},${y + h} L${x},${y + r} Q${x},${y} ${x + r},${y} L${x + w - r},${y} Q${x + w},${y} ${x + w},${y + r} L${x + w},${y + h} Z`;
 }
 
-export function Bars({ data, width, height = 140 }: { data: DayTotal[]; width: number; height?: number }) {
+/**
+ * Axis label for a bucket: "1 Oct" for days and weeks, "Oct 2026" for a
+ * month bucket (whose label is the two-digit month).
+ */
+function tick(d: DayTotal) {
+  const [y, m, day] = d.date.split('-');
+  if (!y || !m) return d.label;
+  const mi = Number(m) - 1;
+  if (d.label === m) return `${monthName(mi)} ${y}`;
+  return `${Number(day)} ${monthName(mi)}`;
+}
+
+/** Bars over time. Empty slots show as a short grey stub so gaps read as "nothing", not "missing". */
+export function Bars({ data, width, height = 96 }: { data: DayTotal[]; width: number; height?: number }) {
   const { c } = useTheme();
   const max = Math.max(...data.map((d) => d.total), 1);
-  const padB = 18;
-  const chartH = height - padB;
   const n = Math.max(data.length, 1);
+  const gap = n > 60 ? 1 : n > 24 ? 2 : 3;
   const slot = width / n;
-  // 2px of surface between neighbouring bars keeps them readable when dense.
-  const barW = Math.max(Math.min(slot - 2, 26), 1.5);
-  const labelEvery = n > 24 ? 5 : n > 12 ? 2 : 1;
+  const barW = Math.max(Math.min(slot - gap, 26), 1.5);
 
   return (
-    <Svg width={width} height={height}>
-      <Line x1={0} y1={chartH} x2={width} y2={chartH} stroke={c.line} strokeWidth={1} />
-      {data.map((d, i) => {
-        const h = d.total > 0 ? Math.max((d.total / max) * (chartH - 8), 2) : 0;
-        const x = i * slot + (slot - barW) / 2;
-        return (
-          <G key={d.date}>
-            {h > 0 && <Path d={barPath(x, chartH - h, barW, h)} fill={c.text} opacity={0.85} />}
-            {i % labelEvery === 0 && (
-              <SvgText x={x + barW / 2} y={height - 4} fontSize={10} fill={c.faint} textAnchor="middle">
-                {d.label}
-              </SvgText>
-            )}
-          </G>
-        );
-      })}
-    </Svg>
+    <View>
+      <Svg width={width} height={height}>
+        {data.map((d, i) => {
+          const h = d.total > 0 ? Math.max((d.total / max) * (height - 4), 3) : 0;
+          const x = i * slot + (slot - barW) / 2;
+          return (
+            <G key={d.date + i}>
+              {h > 0 ? (
+                <Path d={barPath(x, height - h, barW, h)} fill={c.accent} />
+              ) : (
+                <Rect x={x} y={height - 2} width={barW} height={2} fill={c.line} />
+              )}
+            </G>
+          );
+        })}
+      </Svg>
+      {data.length > 0 ? (
+        <Row style={{ justifyContent: 'space-between', marginTop: 8 }}>
+          <T size={12} sub>{tick(data[0])}</T>
+          {data.length > 1 ? <T size={12} sub>{tick(data[data.length - 1])}</T> : null}
+        </Row>
+      ) : null}
+    </View>
   );
 }
 
@@ -57,31 +75,26 @@ export function RankedCategories({
   /** Monthly budget per category name, for the ones that have one. */
   budgets?: Map<string, number>;
 }) {
-  const { c } = useTheme();
+  const { c, symbol } = useTheme();
   const max = Math.max(...data.map((d) => d.total), 1);
 
   return (
-    <View>
+    <View style={{ gap: 12 }}>
       {data.map((k) => {
         const budget = budgets?.get(k.name);
         // Where the budget falls on the same scale as the bars. Past the end
         // of the track means the budget is larger than the biggest category,
         // and there is nowhere honest to draw it.
         const mark = budget && budget > 0 ? budget / max : null;
+        const pct = total > 0 ? Math.round((k.total / total) * 100) : 0;
         return (
-          <View key={k.name} style={{ paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: c.line }}>
-            <Row style={{ justifyContent: 'space-between', marginBottom: 8 }}>
-              <Row style={{ gap: 9, flex: 1 }}>
-                <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: k.color }} />
-                <T size={15} weight="600" numberOfLines={1}>{k.name}</T>
-              </Row>
-              <Row style={{ gap: 10 }}>
-                <T size={13} sub tabular>{total > 0 ? Math.round((k.total / total) * 100) : 0}%</T>
-                <Money value={k.total} size={15} weight="600" />
-              </Row>
+          <View key={k.name} style={{ gap: 6 }}>
+            <Row style={{ justifyContent: 'space-between', gap: 10 }}>
+              <T size={15} numberOfLines={1} style={{ flex: 1 }}>{k.name}</T>
+              <T size={14} tabular>{fmtMoney(k.total, symbol)} · {pct}%</T>
             </Row>
             <View>
-              <Meter fraction={k.total / max} tone={k.color} height={4} />
+              <Meter fraction={k.total / max} tone={k.color} height={6} />
               {mark !== null && mark <= 1 && (
                 <View
                   pointerEvents="none"
@@ -91,7 +104,8 @@ export function RankedCategories({
                     left: `${mark * 100}%`,
                     top: -2,
                     width: 2,
-                    height: 8,
+                    height: 10,
+                    borderRadius: 1,
                     backgroundColor: c.text,
                   }}
                 />

@@ -61,6 +61,7 @@ import {
 } from '../src/expense/tripSpending';
 import { tripSpendQuestion } from '../src/tripQuestion';
 import { stockGain } from '../src/expense/accountsLogic';
+import { toSentence } from '../src/format';
 import { monthsWithData, OVERALL, periodLabel, periodRange, previousMonth } from '../src/expense/period';
 import { needsTranslation, normalizeMoney, normalizeQuery } from '../src/manglish';
 import {
@@ -1790,6 +1791,14 @@ section('expense page period');
   check('Overall is labelled Overall', periodLabel(OVERALL) === 'Overall');
   check('the month before January is last December', previousMonth('2026-01') === '2025-12');
   check('and otherwise just one back', previousMonth('2026-10') === '2026-09');
+}
+
+section('sentence-case labels');
+{
+  check('added line', toSentence('ADDED 16 OCT, 10:00 AM') === 'Added 16 Oct, 10:00 AM');
+  check('section label with a count', toSentence('TO DO  ·  3') === 'To do  ·  3');
+  check('weekday kept capital', toSentence('REMINDS YOU THU 22 OCT, 10:00') === 'Reminds you Thu 22 Oct, 10:00');
+  check('already fine text is unchanged', toSentence('Still open') === 'Still open');
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

@@ -1,15 +1,29 @@
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useRouter } from 'expo-router';
+import { ScrollView, StyleSheet, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { MemoryRow } from '@/components/MemoryRow';
-import { Section } from '@/components/Section';
 import { completeMemory, reopenMemory } from '@/complete';
 import { deleteMemory } from '@/db/queries';
+import { useTheme } from '@/expense/theme';
+import { Screen, T, TopBar } from '@/expense/ui';
 import { listSections } from '@/lists';
 import { logOk } from '@/log';
 import { showDialog } from '@/dialogStore';
-import { useTheme } from '@/ThemeContext';
-import { SPACE, type Colors } from '@/theme';
-import type { Memory } from '@/types';
+import type { Memory, MemoryType } from '@/types';
 import { useMemories } from '@/useMemories';
+
+/** Each list's mark. Identity colours, like a category's — readable on both themes. */
+const MARKS: Partial<Record<MemoryType, { icon: keyof typeof Ionicons.glyphMap; color: string }>> = {
+  play: { icon: 'game-controller-outline', color: '#7159C4' },
+  watch: { icon: 'tv-outline', color: '#2E7DB8' },
+  wish: { icon: 'bag-handle-outline', color: '#A8831F' },
+};
+
+/** "PLAYLIST" → "Playlist". */
+function sentence(label: string) {
+  const lower = label.toLowerCase();
+  return lower.charAt(0).toUpperCase() + lower.slice(1);
+}
 
 /**
  * What you mean to play, watch and buy.
@@ -20,10 +34,10 @@ import { useMemories } from '@/useMemories';
  * again to undo), long-press to delete it.
  */
 export default function ListsScreen() {
-  const { colors, type } = useTheme();
-  const styles = makeStyles(colors);
+  const { c } = useTheme();
+  const router = useRouter();
 
-  const { memories, loading } = useMemories();
+  const { memories } = useMemories();
   const sections = listSections(memories);
   const anything = sections.some((section) => section.open.length + section.done.length > 0);
 
@@ -51,62 +65,77 @@ export default function ListsScreen() {
   }
 
   return (
-    <ScrollView style={styles.flex} contentContainerStyle={styles.content}>
-      <Text style={type.display}>Lists</Text>
+    <Screen>
+      <TopBar title="Lists" onBack={() => router.back()} />
+      <ScrollView contentContainerStyle={styles.content}>
+        <T size={14} sub style={styles.intro}>
+          Things you want to play, watch or buy — kept here, not on the Timeline.
+        </T>
 
-      {sections.map((section) => (
-        <Section
-          key={section.type}
-          label={
-            section.open.length > 0
-              ? `${section.label}  ·  ${section.open.length}`
-              : section.label
-          }
-        >
-          {section.open.length === 0 && section.done.length === 0 ? (
-            <Text style={[type.fine, styles.empty]}>{section.empty}</Text>
-          ) : null}
+        {sections.map((section) => {
+          const mark = MARKS[section.type] ?? { icon: 'list-outline' as const, color: c.accent };
+          const items = [...section.open, ...section.done];
+          return (
+            <View key={section.type} style={[styles.card, { backgroundColor: c.card, borderColor: c.line }]}>
+              <View style={styles.head}>
+                <View style={[styles.mark, { backgroundColor: `${mark.color}22` }]}>
+                  <Ionicons name={mark.icon} size={22} color={mark.color} />
+                </View>
+                <View style={styles.headText}>
+                  <T size={16} weight="700">{sentence(section.label)}</T>
+                  <T size={13} sub>{section.empty.replace(/\.$/, '')}</T>
+                </View>
+                <T size={14} sub tabular>{section.open.length}</T>
+              </View>
 
-          {section.open.map((memory) => (
-            <MemoryRow
-              key={memory.id}
-              memory={memory}
-              gutter="date"
-              showAdded={false}
-              onPress={() => toggle(memory)}
-              onLongPress={() => confirmDelete(memory)}
-            />
-          ))}
+              {items.length > 0 ? (
+                <View style={[styles.items, { borderTopColor: c.line }]}>
+                  {/* Rows draw a hairline under themselves; this hides the last one. */}
+                  <View style={styles.itemsInner}>
+                    {section.open.map((memory) => (
+                      <MemoryRow
+                        key={memory.id}
+                        memory={memory}
+                        gutter="date"
+                        showAdded={false}
+                        onPress={() => toggle(memory)}
+                        onLongPress={() => confirmDelete(memory)}
+                      />
+                    ))}
+                    {section.done.map((memory) => (
+                      <MemoryRow
+                        key={memory.id}
+                        memory={memory}
+                        gutter="date"
+                        showAdded={false}
+                        struck
+                        onPress={() => toggle(memory)}
+                        onLongPress={() => confirmDelete(memory)}
+                      />
+                    ))}
+                  </View>
+                </View>
+              ) : null}
+            </View>
+          );
+        })}
 
-          {section.done.map((memory) => (
-            <MemoryRow
-              key={memory.id}
-              memory={memory}
-              gutter="date"
-              showAdded={false}
-              struck
-              onPress={() => toggle(memory)}
-              onLongPress={() => confirmDelete(memory)}
-            />
-          ))}
-        </Section>
-      ))}
-
-      {!loading && !anything ? (
-        <Text style={[type.body, styles.intro]}>
-          Anything you say you want to play, watch or buy is kept here instead
-          of the Timeline, because it has not happened yet.
-        </Text>
-      ) : null}
-    </ScrollView>
+        {anything ? (
+          <T size={13} sub style={styles.hint}>Tap to tick off · hold to delete</T>
+        ) : null}
+      </ScrollView>
+    </Screen>
   );
 }
 
-function makeStyles(colors: Colors) {
-  return StyleSheet.create({
-    flex: { flex: 1, backgroundColor: colors.paper },
-    content: { padding: SPACE.page, paddingTop: 68, paddingBottom: 48, gap: 26 },
-    empty: { paddingVertical: 8 },
-    intro: { maxWidth: 320, marginTop: 4 },
-  });
-}
+const styles = StyleSheet.create({
+  content: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 48, gap: 12 },
+  intro: { lineHeight: 20 },
+  card: { borderRadius: 16, borderWidth: 1, paddingHorizontal: 14, overflow: 'hidden' },
+  head: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 14 },
+  mark: { width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  headText: { flex: 1, gap: 2 },
+  items: { borderTopWidth: StyleSheet.hairlineWidth },
+  itemsInner: { marginBottom: -1 },
+  hint: { textAlign: 'center', marginTop: 4 },
+});

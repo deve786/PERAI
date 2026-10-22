@@ -29,7 +29,7 @@ const LIGHT = {
   /** The one accent. */
   moss: '#2F5D45',
   /** Accent wash, for the selected-chip fill and the "you said" block. */
-  mossSoft: '#EDF2EF',
+  mossSoft: '#E3ECE6',
   /** Muted brick — errors state facts, they do not alarm. */
   alert: '#8C2F1F',
   alertSoft: '#FBF2F0',
@@ -41,6 +41,14 @@ const LIGHT = {
    * near-black on a moss button in dark mode.
    */
   onAccent: '#FAFAF8',
+  /** Solid fill behind white text: primary buttons, the mic. */
+  mossFill: '#2F5D45',
+  /** Borders of inputs and outlined buttons — a step stronger than `rule`. */
+  border: '#D9DAD6',
+  /** Recessed wells: segmented-control tracks, round icon buttons. */
+  well: '#EEEEEA',
+  /** The selected segment, lifted out of its well. */
+  raised: '#FFFFFF',
 };
 
 const DARK = {
@@ -65,6 +73,11 @@ const DARK = {
   alertSoft: '#2A1D17',
   /** Same value as light mode — see the comment on the light palette. */
   onAccent: '#FAFAF8',
+  /** Darker than `moss` so white text on it stays readable. */
+  mossFill: '#3E7A5A',
+  border: '#3A3D38',
+  well: '#262824',
+  raised: '#3A3D38',
 };
 
 export const PALETTES: Record<ColorScheme, typeof LIGHT> = { light: LIGHT, dark: DARK };
@@ -94,8 +107,8 @@ function buildType(colors: Colors) {
     /** Screen titles. */
     display: {
       fontFamily: FONTS.sansSemi,
-      fontSize: 26,
-      lineHeight: 32,
+      fontSize: 28,
+      lineHeight: 34,
       color: colors.ink,
       letterSpacing: -0.4,
     } satisfies TextStyle,
@@ -103,8 +116,8 @@ function buildType(colors: Colors) {
     /** The Ask answer — the largest sentence in the app. */
     answer: {
       fontFamily: FONTS.sans,
-      fontSize: 21,
-      lineHeight: 30,
+      fontSize: 20,
+      lineHeight: 29,
       color: colors.ink,
       letterSpacing: -0.2,
     } satisfies TextStyle,
@@ -112,55 +125,55 @@ function buildType(colors: Colors) {
     /** Entry titles in the record. */
     entry: {
       fontFamily: FONTS.sansMedium,
-      fontSize: 15,
-      lineHeight: 21,
+      fontSize: 16,
+      lineHeight: 22,
       color: colors.ink,
     } satisfies TextStyle,
 
     /** Running prose. */
     body: {
       fontFamily: FONTS.sans,
-      fontSize: 14,
-      lineHeight: 20,
+      fontSize: 15,
+      lineHeight: 21,
       color: colors.graphite,
     } satisfies TextStyle,
 
-    /** Small print. */
+    /** Small print — helper lines under a field, metadata under a title. */
     fine: {
       fontFamily: FONTS.sans,
-      fontSize: 12,
-      lineHeight: 17,
-      color: colors.mist,
+      fontSize: 13,
+      lineHeight: 18,
+      color: colors.graphite,
     } satisfies TextStyle,
 
     /** The time/date gutter. */
     gutter: {
       fontFamily: FONTS.mono,
-      fontSize: 12,
-      color: colors.mist,
+      fontSize: 13,
+      color: colors.graphite,
       letterSpacing: 0,
     } satisfies TextStyle,
 
-    /** Section eyebrows: TODAY, FROM YOUR RECORD, TRY. */
+    /** Section headings and field labels, in sentence case: "Today", "Paid with". */
     label: {
-      fontFamily: FONTS.monoMedium,
-      fontSize: 10,
+      fontFamily: FONTS.sansSemi,
+      fontSize: 14,
       color: colors.graphite,
-      letterSpacing: 1.4,
+      letterSpacing: 0,
     } satisfies TextStyle,
 
-    /** Category/type stamps under an entry. */
+    /** Metadata under an entry: "Reminder · 10:00 AM". */
     stamp: {
-      fontFamily: FONTS.mono,
-      fontSize: 10,
-      color: colors.mist,
-      letterSpacing: 0.9,
+      fontFamily: FONTS.sans,
+      fontSize: 13,
+      color: colors.graphite,
+      letterSpacing: 0,
     } satisfies TextStyle,
 
     /** Amounts — mono so digits align down the column. */
     figure: {
       fontFamily: FONTS.monoMedium,
-      fontSize: 13,
+      fontSize: 15,
       color: colors.ink,
     } satisfies TextStyle,
   };
@@ -185,6 +198,9 @@ export const TYPE = TYPE_SCALES.light;
 
 /** Fixed width of the time gutter. Every row aligns to it. */
 export const GUTTER = 62;
+
+/** Corner radii: cards, buttons and inputs, chips and pills. */
+export const RADIUS = { card: 16, button: 14, input: 12, pill: 999 };
 
 export const SPACE = {
   page: 20,

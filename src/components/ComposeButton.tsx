@@ -13,9 +13,9 @@ interface Props {
   onPress: () => void;
   disabled?: boolean;
   accessibilityLabel: string;
+  /** Diameter in px. Record's capture card uses a bigger, 56px mic. */
+  size?: number;
 }
-
-const SIZE = 48;
 
 /**
  * The single primary control on both tabs.
@@ -25,7 +25,7 @@ const SIZE = 48;
  * heard. One button instead of mic-plus-send means there is never a choice to
  * make about what to press next.
  */
-export function ComposeButton({ mode, level = 0, onPress, disabled, accessibilityLabel }: Props) {
+export function ComposeButton({ mode, level = 0, onPress, disabled, accessibilityLabel, size = 48 }: Props) {
   const { colors } = useTheme();
   const ring = useRef(new Animated.Value(0)).current;
 
@@ -38,7 +38,7 @@ export function ComposeButton({ mode, level = 0, onPress, disabled, accessibilit
   }, [mode, level, ring]);
 
   const off = disabled && mode !== 'listening';
-  const styles = makeStyles(colors);
+  const styles = makeStyles(colors, size);
 
   return (
     <View style={styles.wrap}>
@@ -76,8 +76,8 @@ export function ComposeButton({ mode, level = 0, onPress, disabled, accessibilit
             name={
               mode === 'listening' ? 'stop' : mode === 'send' ? 'arrow-up' : 'mic'
             }
-            size={mode === 'listening' ? 18 : 22}
-            color={colors.onAccent}
+            size={Math.round(size * (mode === 'listening' ? 0.38 : 0.46))}
+            color={off ? colors.mist : colors.onAccent}
           />
         )}
       </Pressable>
@@ -85,25 +85,25 @@ export function ComposeButton({ mode, level = 0, onPress, disabled, accessibilit
   );
 }
 
-function makeStyles(colors: Colors) {
+function makeStyles(colors: Colors, size: number) {
   return StyleSheet.create({
-    wrap: { width: SIZE, height: SIZE, alignItems: 'center', justifyContent: 'center' },
+    wrap: { width: size, height: size, alignItems: 'center', justifyContent: 'center' },
     ring: {
       position: 'absolute',
-      width: SIZE,
-      height: SIZE,
-      borderRadius: SIZE / 2,
+      width: size,
+      height: size,
+      borderRadius: size / 2,
       backgroundColor: colors.moss,
     },
     button: {
-      width: SIZE,
-      height: SIZE,
-      borderRadius: SIZE / 2,
-      backgroundColor: colors.moss,
+      width: size,
+      height: size,
+      borderRadius: size / 2,
+      backgroundColor: colors.mossFill,
       alignItems: 'center',
       justifyContent: 'center',
     },
-    off: { backgroundColor: colors.rule },
+    off: { backgroundColor: colors.well },
     pressed: { opacity: 0.8 },
   });
 }

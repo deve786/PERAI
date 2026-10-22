@@ -3,29 +3,55 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { deleteExpense, type ExpenseRow } from './db';
-import { prettyDate } from './dates';
-import { FONTS, useTheme } from './theme';
+import { addDays, fromStr, prettyDate, todayStr } from './dates';
+import { useTheme } from './theme';
 import { ConfirmDialog, IconDot, Money, Row, T } from './ui';
 
-export function ExpenseItem({ e, showDate = true, onDeleted, trip }: { e: ExpenseRow; showDate?: boolean; onDeleted?: () => void; /** Title of the PERAI entry this belongs to, when it belongs to one. */ trip?: string }) {
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+/** Heading for a day of entries: "Today", "Yesterday", "Tue 20 Oct". */
+export function dayHeading(date: string): string {
+  const t = todayStr();
+  if (date === t || date === addDays(t, -1)) return prettyDate(date);
+  return `${WEEKDAYS[fromStr(date).getDay()]} ${prettyDate(date)}`;
+}
+
+/** Entries grouped by date, newest day first; keeps the order within a day. */
+export function groupByDate<T extends { row: { date: string } }>(entries: T[]): { date: string; items: T[] }[] {
+  const groups: { date: string; items: T[] }[] = [];
+  for (const e of entries) {
+    const last = groups[groups.length - 1];
+    if (last && last.date === e.row.date) last.items.push(e);
+    else groups.push({ date: e.row.date, items: [e] });
+  }
+  return groups;
+}
+
+/** One expense row, for use inside a card: category dot, title, one meta line, amount. */
+export function ExpenseItem({ e, showDate = true, onDeleted, trip, last }: {
+  e: ExpenseRow; showDate?: boolean; onDeleted?: () => void;
+  /** Title of the PERAI entry this belongs to, when it belongs to one. */
+  trip?: string;
+  /** Last row in its card — no hairline under it. */
+  last?: boolean;
+}) {
   const { c } = useTheme();
   const router = useRouter();
   const [confirming, setConfirming] = useState(false);
   const meta = [
-    // Already the title when there's no note to show instead — repeating it
-    // here just duplicated the category name on screen.
-    e.note ? e.cat_name.toUpperCase() : null,
-    e.sub_category ? e.sub_category.toUpperCase() : null,
-    e.user_tag ? `@${e.user_tag.toUpperCase()}` : null,
-    e.place ? e.place.toUpperCase() : null,
-    e.method.toUpperCase(),
-    showDate ? prettyDate(e.date).toUpperCase() : null,
-    e.recurring_id ? 'REPEATS' : null,
-    e.item_count > 1 ? `${e.item_count} ITEMS` : null,
-    trip ? trip.toUpperCase() : null,
+    // The category is already the title when there's no note.
+    e.note ? e.cat_name : null,
+    e.sub_category || null,
+    e.user_tag ? `@${e.user_tag}` : null,
+    e.place || null,
+    e.method,
+    showDate ? prettyDate(e.date) : null,
+    e.recurring_id ? 'Repeats' : null,
+    e.item_count > 1 ? `${e.item_count} items` : null,
+    trip || null,
   ]
     .filter(Boolean)
-    .join('  ·  ');
+    .join(' · ');
 
   function onLongPress() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
@@ -45,24 +71,21 @@ export function ExpenseItem({ e, showDate = true, onDeleted, trip }: { e: Expens
         onLongPress={onLongPress}
         accessibilityRole="button"
         style={({ pressed }) => ({
-          opacity: pressed ? 0.45 : 1,
-          paddingVertical: 11,
-          borderBottomWidth: StyleSheet.hairlineWidth,
+          opacity: pressed ? 0.5 : 1,
+          minHeight: 60,
+          paddingVertical: 10,
+          justifyContent: 'center',
+          borderBottomWidth: last ? 0 : StyleSheet.hairlineWidth,
           borderBottomColor: c.line,
-          backgroundColor: c.bg,
         })}
       >
         <Row style={{ gap: 12 }}>
-          <IconDot icon={e.cat_icon} color={e.cat_color} size={32} />
-          <View style={{ flex: 1, gap: 3 }}>
-            <Row style={{ justifyContent: 'space-between', gap: 12 }}>
-              <T size={15} weight="500" numberOfLines={1} style={{ flex: 1 }}>{e.note || e.cat_name}</T>
-              <Money value={e.amount} size={13} weight="500" />
-            </Row>
-            <T size={10} faint tabular style={{ fontFamily: FONTS.mono, letterSpacing: 0.9 }} numberOfLines={1}>
-              {meta}
-            </T>
+          <IconDot icon={e.cat_icon} color={e.cat_color} size={36} />
+          <View style={{ flex: 1 }}>
+            <T size={15} weight="500" numberOfLines={1}>{e.note || e.cat_name}</T>
+            {meta ? <T size={13} sub numberOfLines={1} style={{ marginTop: 1 }}>{meta}</T> : null}
           </View>
+          <Money value={e.amount} size={15} weight="500" />
         </Row>
       </Pressable>
       <ConfirmDialog

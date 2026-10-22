@@ -1,7 +1,7 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '../ThemeContext';
-import { GUTTER, SPACE, type Colors } from '../theme';
-import { addedLabel, formatAmount, hasStatedTime, shortDate, timeLabel } from '../format';
+import { type Colors } from '../theme';
+import { addedLabel, formatAmount, hasStatedTime, shortDate, timeLabel, toSentence } from '../format';
 import { reminderLabel, reminderTime } from '../reminderTime';
 import type { Memory } from '../types';
 
@@ -22,12 +22,10 @@ interface Props {
 }
 
 /**
- * One entry in the record.
- *
- * This is the app's signature form: a fixed-width monospace gutter carrying
- * when it happened, and the language of the entry to its right. The Ask tab
- * renders its evidence with this exact component, so the proof behind an
- * answer is visually continuous with the archive it came from.
+ * One entry in the record: title (and amount) on top, then one quiet line of
+ * what it is and when — "Reminder · Bills · 10:00 AM". The Ask tab renders
+ * its evidence with this same component, so the proof behind an answer looks
+ * like the record it came from.
  */
 export function MemoryRow({
   memory,
@@ -41,16 +39,23 @@ export function MemoryRow({
   const styles = makeStyles(colors);
 
   const amount = formatAmount(memory.amount, memory.currency);
-  // A clock time appears only if the note stated one; otherwise the gutter
-  // holds a dash rather than an invented time.
-  const mark =
+  // A clock time appears only if the note stated one — never an invented time.
+  const when =
     gutter === 'date'
       ? shortDate(memory.eventDate)
       : hasStatedTime(memory.dateExpression)
         ? timeLabel(memory.eventDate)
-        : '—';
-  const added = addedLabel(memory);
+        : null;
+  const added = toSentence(addedLabel(memory));
   const remindsAt = reminderTime(memory);
+  const meta = [
+    memory.type !== 'memory' ? capitalise(memory.type) : null,
+    memory.category ? capitalise(memory.category) : null,
+    memory.location || null,
+    when,
+  ]
+    .filter(Boolean)
+    .join(' · ');
 
   return (
     <Pressable
@@ -62,8 +67,6 @@ export function MemoryRow({
         pressed && onPress ? styles.pressed : null,
       ]}
     >
-      <Text style={[type.gutter, styles.mark]}>{mark}</Text>
-
       <View style={styles.body}>
         <View style={styles.titleLine}>
           <Text style={[type.entry, styles.title, struck && styles.struckTitle]}>
@@ -72,22 +75,13 @@ export function MemoryRow({
           {amount ? <Text style={type.figure}>{amount}</Text> : null}
         </View>
 
-        <Text style={type.stamp}>
-          {[
-            memory.category.toUpperCase(),
-            memory.type !== 'memory' ? memory.type.toUpperCase() : null,
-            memory.location?.toUpperCase(),
-          ]
-            .filter(Boolean)
-            .join('  ·  ')}
-        </Text>
+        {meta ? <Text style={type.stamp}>{meta}</Text> : null}
 
-        {/* Its own line: sharing the category line got it truncated to "ADDED 16 …". */}
-        {showAdded ? <Text style={type.stamp}>{added}</Text> : null}
+        {showAdded ? <Text style={[type.stamp, styles.added]}>{added}</Text> : null}
 
         {remindsAt ? (
           <Text style={[type.stamp, styles.reminds]}>
-            REMINDS YOU {reminderLabel(remindsAt)}
+            Reminds you {toSentence(reminderLabel(remindsAt))}
           </Text>
         ) : null}
       </View>
@@ -95,19 +89,21 @@ export function MemoryRow({
   );
 }
 
+/** "personal care" / "PERSONAL CARE" → "Personal care". */
+function capitalise(text: string) {
+  const lower = text.toLowerCase();
+  return lower.charAt(0).toUpperCase() + lower.slice(1);
+}
+
 function makeStyles(colors: Colors) {
   return StyleSheet.create({
     row: {
-      flexDirection: 'row',
-      paddingVertical: SPACE.tight + 4,
-      gap: 4,
+      paddingVertical: 12,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.rule,
     },
-    pressed: { opacity: 0.45 },
-    mark: {
-      width: GUTTER,
-      paddingTop: 2,
-    },
-    body: { flex: 1, gap: 5 },
+    pressed: { opacity: 0.5 },
+    body: { gap: 3 },
     titleLine: {
       flexDirection: 'row',
       alignItems: 'baseline',
@@ -115,6 +111,7 @@ function makeStyles(colors: Colors) {
       gap: 12,
     },
     title: { flex: 1, color: colors.ink },
+    added: { color: colors.mist },
     struckRow: { opacity: 0.55 },
     struckTitle: { textDecorationLine: 'line-through', color: colors.graphite },
     reminds: { color: colors.moss },

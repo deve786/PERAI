@@ -8,6 +8,12 @@ interface ChipProps {
   onPress: () => void;
 }
 
+/** "PERSONAL CARE" / "personal care" → "Personal care". */
+function sentence(label: string) {
+  const lower = label.toLowerCase();
+  return lower.charAt(0).toUpperCase() + lower.slice(1);
+}
+
 /**
  * Filters read as small monospace stamps, matching the category stamps in the
  * record itself — selecting one is visually "pull the rows carrying this mark".
@@ -23,7 +29,7 @@ export function Chip({ label, selected, onPress }: ChipProps) {
       style={[styles.chip, selected && styles.chipSelected]}
     >
       <Text style={[styles.label, selected && styles.labelSelected]}>
-        {label.toUpperCase()}
+        {sentence(label)}
       </Text>
     </Pressable>
   );
@@ -86,25 +92,27 @@ export function ChipWrap<T extends string>({
 
 // Layout only — no colours, so this never needs to change with the theme.
 const layout = StyleSheet.create({
-  row: { gap: 6, paddingHorizontal: SPACE.page, paddingVertical: 2 },
-  wrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  row: { gap: 8, paddingHorizontal: SPACE.page, paddingVertical: 2 },
+  wrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
 });
 
 function makeChipStyles(colors: Colors) {
   return StyleSheet.create({
     chip: {
-      paddingHorizontal: 10,
-      paddingVertical: 6,
-      borderRadius: 4,
-      backgroundColor: 'transparent',
+      minHeight: 36,
+      justifyContent: 'center',
+      paddingHorizontal: 13,
+      borderRadius: 999,
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
     },
-    chipSelected: { backgroundColor: colors.moss },
+    chipSelected: { backgroundColor: colors.ink, borderColor: colors.ink },
     label: {
-      fontFamily: FONTS.mono,
-      fontSize: 10,
-      letterSpacing: 0.9,
-      color: colors.mist,
+      fontFamily: FONTS.sans,
+      fontSize: 14,
+      color: colors.ink,
     },
-    labelSelected: { color: colors.onAccent },
+    labelSelected: { color: colors.paper, fontFamily: FONTS.sansSemi },
   });
 }

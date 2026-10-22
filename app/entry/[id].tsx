@@ -29,11 +29,11 @@ import { CATEGORIES, MEMORY_TYPES, PRIORITIES, REPEATS, type Memory } from '@/ty
 /** Quick snooze presets covering hours, start-of-day, weekends and next week */
 const SNOOZE_PRESETS: { label: string; calc: () => { date: Date; desc: string } }[] = [
   {
-    label: '+3 HOURS',
+    label: '3 hours later',
     calc: () => ({ date: new Date(Date.now() + 3 * 3600 * 1000), desc: 'in 3 hours' }),
   },
   {
-    label: 'TOMORROW 9AM',
+    label: 'Tomorrow 9 AM',
     calc: () => {
       const d = new Date();
       d.setDate(d.getDate() + 1);
@@ -42,7 +42,7 @@ const SNOOZE_PRESETS: { label: string; calc: () => { date: Date; desc: string } 
     },
   },
   {
-    label: 'WEEKEND',
+    label: 'Weekend',
     calc: () => {
       const d = new Date();
       const diff = (6 - d.getDay() + 7) % 7 || 7;
@@ -52,7 +52,7 @@ const SNOOZE_PRESETS: { label: string; calc: () => { date: Date; desc: string } 
     },
   },
   {
-    label: 'NEXT WEEK',
+    label: 'Next week',
     calc: () => {
       const d = new Date();
       const diff = (1 - d.getDay() + 7) % 7 || 7;
@@ -65,17 +65,38 @@ const SNOOZE_PRESETS: { label: string; calc: () => { date: Date; desc: string } 
 
 /** How long a span runs, counted from the day it starts. */
 const ENDS: { label: string; days: number }[] = [
-  { label: 'SAME DAY', days: 0 },
-  { label: '+2 DAYS', days: 2 },
-  { label: '+1 WEEK', days: 7 },
+  { label: 'Same day', days: 0 },
+  { label: '2 days', days: 2 },
+  { label: 'A week', days: 7 },
 ];
 
-/** Moving an entry on: the handful of answers that cover almost every case. */
+/** Moving an entry by whole days, keeping its clock time. */
 const PUSHES: { label: string; days: number }[] = [
-  { label: '+1 DAY', days: 1 },
-  { label: '+3 DAYS', days: 3 },
-  { label: '+7 DAYS', days: 7 },
+  { label: 'A day earlier', days: -1 },
+  { label: 'A day later', days: 1 },
+  { label: '3 days later', days: 3 },
+  { label: 'A week later', days: 7 },
 ];
+
+const REPEAT_LABEL: Record<Repeat, string> = {
+  daily: 'Every day',
+  weekly: 'Every week',
+  monthly: 'Every month',
+};
+
+/** "personal care" → "Personal care". */
+function sentence(text: string) {
+  const lower = text.toLowerCase();
+  return lower.charAt(0).toUpperCase() + lower.slice(1);
+}
+
+/** "Tomorrow, 10:00" — the time only when the note stated one. */
+function whenLabel(iso: string, dateExpression: string | null) {
+  const day = dayLabel(iso);
+  return hasStatedTime(dateExpression) ? `${day}, ${timeLabel(iso)}` : day;
+}
+
+type Picker = 'group' | 'repeat' | 'priority' | 'type' | 'category';
 
 /**
  * One entry, and everything that can be done to it.

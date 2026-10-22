@@ -1,7 +1,7 @@
 import { StyleSheet, Text, View } from 'react-native';
-import Svg, { Circle, G, Line, Path, Rect, Text as SvgText } from 'react-native-svg';
+import Svg, { Circle, G, Line, Path, Text as SvgText } from 'react-native-svg';
 import { useTheme } from '../ThemeContext';
-import { type Colors } from '../theme';
+import { FONTS, type Colors } from '../theme';
 
 /** Bar with a rounded free end and a square end on the baseline. */
 function barPath(x: number, y: number, w: number, h: number) {
@@ -38,14 +38,7 @@ export function Donut({
     <View style={styles.donutWrap}>
       <View style={{ width: size, height: size }}>
         <Svg width={size} height={size}>
-          <Circle
-            cx={centre}
-            cy={centre}
-            r={radius}
-            stroke={colors.rule}
-            strokeWidth={stroke}
-            fill="none"
-          />
+          <Circle cx={centre} cy={centre} r={radius} stroke={colors.well} strokeWidth={stroke} fill="none" />
           <Circle
             cx={centre}
             cy={centre}
@@ -62,7 +55,7 @@ export function Donut({
           <Text style={[type.figure, styles.donutFigure]}>{figure}</Text>
         </View>
       </View>
-      <Text style={[type.stamp, styles.donutCaption]}>{caption.toUpperCase()}</Text>
+      <Text style={[type.fine, styles.donutCaption]}>{caption}</Text>
     </View>
   );
 }
@@ -75,7 +68,7 @@ export function Donut({
 export function DualBars({
   data,
   width,
-  height = 132,
+  height = 110,
   labels,
 }: {
   data: { label: string; a: number; b: number }[];
@@ -97,10 +90,10 @@ export function DualBars({
   return (
     <View>
       <View style={styles.legend}>
-        {([[labels[0], colors.moss], [labels[1], colors.ink]] as const).map(([label, tone]) => (
+        {([[labels[0], colors.moss], [labels[1], colors.graphite]] as const).map(([label, tone]) => (
           <View key={label} style={styles.legendItem}>
             <View style={[styles.legendSwatch, { backgroundColor: tone }]} />
-            <Text style={[type.stamp, styles.legendText]}>{label.toUpperCase()}</Text>
+            <Text style={[type.fine, styles.legendText]}>{label}</Text>
           </View>
         ))}
       </View>
@@ -113,15 +106,14 @@ export function DualBars({
           return (
             <G key={d.label + i}>
               {hA > 0 && <Path d={barPath(base, chartH - hA, barW, hA)} fill={colors.moss} />}
-              {hB > 0 && (
-                <Path d={barPath(base + barW + 2, chartH - hB, barW, hB)} fill={colors.ink} opacity={0.85} />
-              )}
+              {hB > 0 && <Path d={barPath(base + barW + 2, chartH - hB, barW, hB)} fill={colors.graphite} />}
               {i % labelEvery === 0 && (
                 <SvgText
                   x={base + barW}
                   y={height - 4}
-                  fontSize={10}
-                  fill={colors.mist}
+                  fontSize={11}
+                  fontFamily={FONTS.sans}
+                  fill={colors.graphite}
                   textAnchor="middle"
                 >
                   {d.label}
@@ -155,7 +147,7 @@ export function RankedCounts({
   const max = Math.max(...shown.map((d) => d.count), 1);
 
   return (
-    <View>
+    <View style={styles.rankList}>
       {shown.map((row) => (
         <View key={row.name} style={styles.rankRow}>
           <View style={styles.rankHead}>
@@ -167,10 +159,9 @@ export function RankedCounts({
               {unit ? ` ${unit}` : ''}
             </Text>
           </View>
-          <Svg width="100%" height={4}>
-            <Rect x={0} y={0} width="100%" height={4} fill={colors.rule} />
-            <Rect x={0} y={0} width={`${(row.count / max) * 100}%`} height={4} fill={colors.moss} />
-          </Svg>
+          <View style={styles.track}>
+            <View style={[styles.fill, { width: `${(row.count / max) * 100}%` }]} />
+          </View>
         </View>
       ))}
     </View>
@@ -186,14 +177,17 @@ function makeStyles(colors: Colors) {
       justifyContent: 'center',
     },
     donutFigure: { fontSize: 22, color: colors.ink },
-    donutCaption: { color: colors.mist, textAlign: 'center' },
+    donutCaption: { textAlign: 'center' },
     legend: { flexDirection: 'row', gap: 14, marginBottom: 8 },
-    legendItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-    legendSwatch: { width: 8, height: 8, borderRadius: 2 },
-    legendText: { color: colors.mist },
-    rankRow: { paddingVertical: 9, gap: 7 },
+    legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    legendSwatch: { width: 10, height: 10, borderRadius: 3 },
+    legendText: { color: colors.graphite },
+    rankList: { gap: 12 },
+    rankRow: { gap: 6 },
     rankHead: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 },
     rankName: { flex: 1, color: colors.ink },
     rankCount: { fontSize: 14, color: colors.graphite },
+    track: { height: 6, borderRadius: 3, backgroundColor: colors.well, overflow: 'hidden' },
+    fill: { height: 6, borderRadius: 3, backgroundColor: colors.moss },
   });
 }

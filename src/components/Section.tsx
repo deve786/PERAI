@@ -1,23 +1,27 @@
 import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '../ThemeContext';
-import { GUTTER, type Colors, type TypeScale } from '../theme';
+import { toSentence } from '../format';
+import { type Colors, type TypeScale } from '../theme';
 
 interface Props {
   label: string;
-  /** Optional link at the right of the label, e.g. "ALL". */
+  /** Optional link at the right of the label, e.g. "See all". */
   action?: { label: string; onPress: () => void };
   /** Tint the label for sections about what is ahead. */
   tone?: 'ahead';
-  /** Start the rule at the time column (true) or full width, for rows with no gutter. */
+  /**
+   * true (default): the children are rows, drawn together in one card.
+   * false: free content (charts, totals) laid out by the caller.
+   */
   inset?: boolean;
   children: ReactNode;
 }
 
 /**
- * A labelled group of entries, drawn like a day in the Timeline: mono label,
- * then a hairline that starts at the gutter, then rows. Keeps the Record and
- * Ask tabs visually part of the same record rather than separate widgets.
+ * A labelled group: a sentence-case heading, then its rows in a white card.
+ * Labels written in capitals ("STILL WAITING") are shown in sentence case
+ * ("Still waiting"), so older call sites read right without changes.
  */
 export function Section({ label, action, tone, inset = true, children }: Props) {
   const { colors, type } = useTheme();
@@ -26,36 +30,44 @@ export function Section({ label, action, tone, inset = true, children }: Props) 
   return (
     <View style={styles.section}>
       <View style={styles.head}>
-        <Text style={[type.label, tone === 'ahead' && styles.ahead]}>{label}</Text>
+        <Text style={[styles.label, tone === 'ahead' && styles.ahead]}>{toSentence(label)}</Text>
         {action ? (
-          <Pressable onPress={action.onPress} hitSlop={10}>
-            <Text style={[type.label, styles.action]}>{action.label}</Text>
+          <Pressable onPress={action.onPress} hitSlop={10} accessibilityRole="button">
+            <Text style={styles.action}>{toSentence(action.label)}</Text>
           </Pressable>
         ) : null}
       </View>
-      <View style={[styles.rule, !inset && styles.ruleFull]} />
-      {children}
+      {inset ? (
+        <View style={styles.card}>
+          {/* Rows draw a hairline under themselves; this hides the last one. */}
+          <View style={styles.cardInner}>{children}</View>
+        </View>
+      ) : (
+        children
+      )}
     </View>
   );
 }
 
 function makeStyles(colors: Colors, type: TypeScale) {
   return StyleSheet.create({
-    section: { gap: 4 },
+    section: { gap: 8 },
     head: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      marginBottom: 4,
     },
+    label: { ...type.entry, fontFamily: type.display.fontFamily, color: colors.ink },
     ahead: { color: colors.moss },
-    action: { color: colors.mist },
-    rule: {
-      height: StyleSheet.hairlineWidth,
-      backgroundColor: colors.rule,
-      marginLeft: GUTTER,
-      marginBottom: 2,
+    action: { ...type.label, color: colors.moss },
+    card: {
+      backgroundColor: colors.surface,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: colors.rule,
+      paddingHorizontal: 14,
+      overflow: 'hidden',
     },
-    ruleFull: { marginLeft: 0 },
+    cardInner: { marginBottom: -1 },
   });
 }

@@ -26,6 +26,14 @@ export type Colors = {
   good: string;
   /** Between comfortable and spent — the only amber in the app. */
   warn: string;
+  /** Solid fill behind white text (primary buttons). */
+  solid: string;
+  /** Input and outlined-button borders. */
+  border: string;
+  /** Recessed wells: segmented-control tracks, round icon buttons. */
+  well: string;
+  /** The selected segment, lifted out of its well. */
+  raised: string;
 };
 
 function colorsFor(scheme: 'light' | 'dark'): Colors {
@@ -46,6 +54,10 @@ function colorsFor(scheme: 'light' | 'dark'): Colors {
     // The palette has no amber, and a budget at 80% is neither fine nor over.
     // Readable on both paper and the dark surface.
     warn: scheme === 'dark' ? '#D9A441' : '#B07D1A',
+    solid: p.mossFill,
+    border: p.border,
+    well: p.well,
+    raised: p.raised,
   };
 }
 
@@ -62,8 +74,8 @@ export const FONTS = {
 export const numerals = { fontVariant: ['tabular-nums' as const] };
 
 export const space = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32 };
-/** Kept small and square-ish throughout — PERAI has no rounded "card" boxes. */
-export const radius = { sm: 3, md: 4, lg: 6, pill: 999 };
+/** sm: inputs and tiles · md: buttons · lg: cards · pill: chips. */
+export const radius = { sm: 12, md: 14, lg: 16, pill: 999 };
 
 export type ThemeMode = 'system' | 'light' | 'dark';
 

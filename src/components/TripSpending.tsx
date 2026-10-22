@@ -1,3 +1,4 @@
+import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import {
@@ -18,7 +19,7 @@ import { fmtMoney } from '@/expense/stats';
 import { getSetting } from '@/expense/db';
 import { logFail } from '@/log';
 import { useTheme } from '@/ThemeContext';
-import { SPACE, type Colors } from '@/theme';
+import { FONTS, RADIUS, type Colors } from '@/theme';
 import type { Memory } from '@/types';
 
 const asLinkable = (row: ExpenseRow): LinkableExpense => ({
@@ -113,12 +114,17 @@ export function TripSpending({ memory }: { memory: Memory }) {
 
   return (
     <View style={styles.card}>
-      <Text style={type.label}>SPENDING</Text>
+      <Text style={styles.heading}>Spending</Text>
 
       {totals.length === 0 ? (
         <Text style={type.fine}>Nothing linked to this yet.</Text>
       ) : (
-        <Pressable onPress={() => setShowAll((open) => !open)}>
+        <Pressable
+          onPress={() => setShowAll((open) => !open)}
+          accessibilityRole="button"
+          accessibilityState={{ expanded: showAll }}
+          style={styles.summary}
+        >
           {/* Currencies are never added together — they sit side by side. */}
           {totals.map((total) => (
             <Text key={total.currency} style={[type.figure, styles.total]}>
@@ -129,13 +135,18 @@ export function TripSpending({ memory }: { memory: Memory }) {
               </Text>
             </Text>
           ))}
-          <Text style={[type.fine, styles.breakdown]}>
-            {breakdown
-              .slice(0, 4)
-              .map((slice) => `${slice.name} ${fmtMoney(slice.total, symbol)}`)
-              .join(' · ')}
-          </Text>
-          <Text style={[type.label, styles.more]}>{showAll ? 'HIDE' : 'SHOW EACH'}</Text>
+          {breakdown.length > 0 ? (
+            <Text style={type.fine}>
+              {breakdown
+                .slice(0, 4)
+                .map((slice) => `${slice.name} ${fmtMoney(slice.total, symbol)}`)
+                .join(' · ')}
+            </Text>
+          ) : null}
+          <View style={styles.moreRow}>
+            <Text style={styles.link}>{showAll ? 'Hide' : 'Show each'}</Text>
+            <Ionicons name={showAll ? 'chevron-up' : 'chevron-down'} size={14} color={colors.moss} />
+          </View>
         </Pressable>
       )}
 
@@ -145,9 +156,9 @@ export function TripSpending({ memory }: { memory: Memory }) {
               <Text style={[type.body, styles.rowText]} numberOfLines={1}>
                 {row.note || row.cat_name}
               </Text>
-              <Text style={type.fine}>{fmtMoney(row.amount, symbol)}</Text>
-              <Pressable onPress={() => void unlink(row.id)} hitSlop={8}>
-                <Text style={[type.label, styles.unlink]}>UNLINK</Text>
+              <Text style={styles.amount}>{fmtMoney(row.amount, symbol)}</Text>
+              <Pressable onPress={() => void unlink(row.id)} hitSlop={8} accessibilityRole="button">
+                <Text style={styles.unlink}>Unlink</Text>
               </Pressable>
             </View>
           ))
@@ -155,30 +166,41 @@ export function TripSpending({ memory }: { memory: Memory }) {
 
       {suggested.length > 0 ? (
         <View style={styles.suggestions}>
-          <Text style={[type.label, styles.suggestHead]}>
-            SPENT DURING THESE DAYS · {suggested.length}
-          </Text>
+          <Text style={styles.subheading}>Spent during these days · {suggested.length}</Text>
           {suggested.map((row) => {
             const picked = chosen.has(row.id);
             return (
-              <Pressable key={row.id} onPress={() => toggle(row.id)} style={styles.row}>
-                <Text style={[type.body, styles.tick, !picked && styles.tickOff]}>
-                  {picked ? '◼' : '◻'}
-                </Text>
+              <Pressable
+                key={row.id}
+                onPress={() => toggle(row.id)}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: picked }}
+                style={styles.row}
+              >
+                <Ionicons
+                  name={picked ? 'checkbox' : 'square-outline'}
+                  size={20}
+                  color={picked ? colors.moss : colors.mist}
+                />
                 <Text style={[type.body, styles.rowText]} numberOfLines={1}>
                   {row.note || row.cat_name}
                 </Text>
-                <Text style={type.fine}>{fmtMoney(row.amount, symbol)}</Text>
+                <Text style={styles.amount}>{fmtMoney(row.amount, symbol)}</Text>
               </Pressable>
             );
           })}
           <Pressable
             onPress={() => void linkChosen()}
             disabled={chosen.size === 0 || busy}
-            style={({ pressed }) => [styles.link, pressed && styles.pressed]}
+            accessibilityRole="button"
+            style={({ pressed }) => [
+              styles.linkButton,
+              (chosen.size === 0 || busy) && styles.disabled,
+              pressed && styles.pressed,
+            ]}
           >
-            <Text style={[type.label, styles.linkText]}>
-              {busy ? 'LINKING…' : `LINK ${chosen.size} TO THIS`}
+            <Text style={styles.linkButtonText}>
+              {busy ? 'Linking…' : `Link ${chosen.size} to this`}
             </Text>
           </Pressable>
         </View>
@@ -191,31 +213,40 @@ function makeStyles(colors: Colors) {
   return StyleSheet.create({
     card: {
       gap: 8,
-      borderLeftWidth: 2,
-      borderLeftColor: colors.moss,
-      paddingLeft: 12,
-      paddingVertical: 2,
+      backgroundColor: colors.surface,
+      borderRadius: RADIUS.card,
+      borderWidth: 1,
+      borderColor: colors.rule,
+      padding: 14,
     },
-    total: { color: colors.ink },
-    breakdown: { marginTop: 2 },
-    more: { color: colors.mist, marginTop: 6 },
-    row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 7 },
-    rowText: { flex: 1, color: colors.ink },
-    tick: { color: colors.moss, width: 18 },
-    tickOff: { color: colors.mist },
-    unlink: { color: colors.mist },
-    suggestions: { marginTop: 6, gap: 2 },
-    suggestHead: { color: colors.graphite },
-    link: {
-      marginTop: 8,
-      paddingVertical: 10,
-      borderRadius: 4,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: colors.moss,
+    heading: { fontFamily: FONTS.sansSemi, fontSize: 16, color: colors.ink },
+    subheading: { fontFamily: FONTS.sansSemi, fontSize: 14, color: colors.graphite, marginBottom: 2 },
+    summary: { gap: 4 },
+    total: { color: colors.ink, fontSize: 17 },
+    moreRow: { flexDirection: 'row', alignItems: 'center', gap: 4, minHeight: 32 },
+    link: { fontFamily: FONTS.sansSemi, fontSize: 14, color: colors.moss },
+    row: {
+      flexDirection: 'row',
       alignItems: 'center',
+      gap: 10,
+      minHeight: 44,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: colors.rule,
     },
-    linkText: { color: colors.moss },
-    pressed: { opacity: 0.5 },
-    spacer: { height: SPACE.tight },
+    rowText: { flex: 1, color: colors.ink },
+    amount: { fontFamily: FONTS.monoMedium, fontSize: 14, color: colors.ink },
+    unlink: { fontFamily: FONTS.sansSemi, fontSize: 14, color: colors.graphite },
+    suggestions: { marginTop: 6, gap: 0 },
+    linkButton: {
+      marginTop: 10,
+      minHeight: 48,
+      borderRadius: RADIUS.button,
+      backgroundColor: colors.mossFill,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    linkButtonText: { fontFamily: FONTS.sansSemi, fontSize: 16, color: colors.onAccent },
+    disabled: { opacity: 0.4 },
+    pressed: { opacity: 0.7 },
   });
 }

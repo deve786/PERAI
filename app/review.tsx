@@ -1,13 +1,18 @@
 import { useRouter } from 'expo-router';
 import { useMemo } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, View } from 'react-native';
 import { MemoryRow } from '@/components/MemoryRow';
 import { Section } from '@/components/Section';
+import { useTheme } from '@/expense/theme';
+import { Card, Screen, T, TopBar } from '@/expense/ui';
 import { formatAmount, shortDate } from '@/format';
 import { weekInReview } from '@/review';
-import { useTheme } from '@/ThemeContext';
-import { SPACE, type Colors } from '@/theme';
 import { useMemories } from '@/useMemories';
+
+/** "22 Oct" — shortDate pads the day ("05 Oct"); the range reads better without. */
+function day(date: Date) {
+  return shortDate(date.toISOString()).replace(/^0/, '');
+}
 
 /**
  * The week, counted up.
@@ -17,90 +22,94 @@ import { useMemories } from '@/useMemories';
  * AI call and works with no network — see src/review.ts.
  */
 export default function ReviewScreen() {
-  const { colors, type } = useTheme();
-  const styles = makeStyles(colors);
+  const { c } = useTheme();
   const router = useRouter();
 
-  const { memories } = useMemories();
+  const { memories, loading } = useMemories();
   const week = useMemo(() => weekInReview(memories), [memories]);
 
   const spent = week.spent
     .map(({ currency, total }) => formatAmount(total, currency) ?? String(total))
     .join(' · ');
 
+  const quiet =
+    week.finished.length === 0 &&
+    week.recorded.length === 0 &&
+    week.slipped.length === 0 &&
+    week.ahead.length === 0;
+
+  const stats = [
+    { label: 'Finished', value: week.finished.length, tone: c.accent },
+    { label: 'Recorded', value: week.recorded.length, tone: c.text },
+    { label: 'Slipped', value: week.slipped.length, tone: week.slipped.length > 0 ? c.danger : c.text },
+  ];
+
   return (
-    <ScrollView style={styles.flex} contentContainerStyle={styles.content}>
-      <Text style={type.display}>Your week</Text>
-      <Text style={[type.stamp, styles.range]}>
-        {shortDate(week.from.toISOString()).toUpperCase()} — {shortDate(week.to.toISOString()).toUpperCase()}
-      </Text>
-
-      <View style={styles.figures}>
-        <View style={styles.figure}>
-          <Text style={type.figure}>{week.finished.length}</Text>
-          <Text style={type.fine}>finished</Text>
-        </View>
-        <View style={styles.figure}>
-          <Text style={type.figure}>{week.recorded.length}</Text>
-          <Text style={type.fine}>recorded</Text>
-        </View>
-        <View style={styles.figure}>
-          <Text style={[type.figure, week.slipped.length > 0 && styles.late]}>
-            {week.slipped.length}
-          </Text>
-          <Text style={type.fine}>slipped</Text>
-        </View>
-      </View>
-
-      {spent ? <Text style={[type.body, styles.spent]}>{spent} spent this week.</Text> : null}
-
-      {week.slipped.length > 0 ? (
-        <Section label="STILL WAITING">
-          {week.slipped.slice(0, 8).map((memory) => (
-            <MemoryRow
-              key={memory.id}
-              memory={memory}
-              gutter="date"
-              showAdded={false}
-              onLongPress={() => router.push(`/entry/${memory.id}`)}
-            />
+    <Screen>
+      <TopBar
+        title="Your week"
+        subtitle={`${day(week.from)} – ${day(week.to)}`}
+        onBack={() => router.back()}
+      />
+      <ScrollView contentContainerStyle={styles.content}>
+        <View style={styles.stats}>
+          {stats.map((stat) => (
+            <Card key={stat.label} style={styles.stat}>
+              <T size={28} weight="700" tabular style={{ color: stat.tone }}>{stat.value}</T>
+              <T size={13} sub>{stat.label}</T>
+            </Card>
           ))}
-        </Section>
-      ) : null}
+        </View>
 
-      {week.finished.length > 0 ? (
-        <Section label="DONE THIS WEEK" tone="ahead">
-          {week.finished.slice(0, 8).map((memory) => (
-            <MemoryRow key={memory.id} memory={memory} gutter="date" showAdded={false} struck />
-          ))}
-        </Section>
-      ) : null}
+        {spent ? <T size={15} sub>{spent} spent this week.</T> : null}
 
-      {week.ahead.length > 0 ? (
-        <Text style={[type.fine, styles.ahead]}>
-          {week.ahead.length} {week.ahead.length === 1 ? 'thing is' : 'things are'} already
-          scheduled ahead.
-        </Text>
-      ) : null}
+        {!loading && quiet ? (
+          <Card style={styles.quiet}>
+            <T size={16} weight="700">A quiet week</T>
+            <T size={14} sub style={styles.quietText}>
+              Record what you do and plan this week — next week this page shows what got done and
+              what slipped.
+            </T>
+          </Card>
+        ) : null}
 
-      <Pressable onPress={() => router.back()} hitSlop={8} style={styles.close}>
-        <Text style={[type.label, styles.closeText]}>CLOSE</Text>
-      </Pressable>
-    </ScrollView>
+        {week.slipped.length > 0 ? (
+          <Section label="Still waiting">
+            {week.slipped.slice(0, 8).map((memory) => (
+              <MemoryRow
+                key={memory.id}
+                memory={memory}
+                gutter="date"
+                showAdded={false}
+                onLongPress={() => router.push(`/entry/${memory.id}`)}
+              />
+            ))}
+          </Section>
+        ) : null}
+
+        {week.finished.length > 0 ? (
+          <Section label="Done this week" tone="ahead">
+            {week.finished.slice(0, 8).map((memory) => (
+              <MemoryRow key={memory.id} memory={memory} gutter="date" showAdded={false} struck />
+            ))}
+          </Section>
+        ) : null}
+
+        {week.ahead.length > 0 ? (
+          <T size={13} sub>
+            {week.ahead.length} {week.ahead.length === 1 ? 'thing is' : 'things are'} already
+            scheduled ahead.
+          </T>
+        ) : null}
+      </ScrollView>
+    </Screen>
   );
 }
 
-function makeStyles(colors: Colors) {
-  return StyleSheet.create({
-    flex: { flex: 1, backgroundColor: colors.paper },
-    content: { padding: SPACE.page, paddingTop: 28, paddingBottom: 48, gap: 20 },
-    range: { color: colors.mist, marginTop: -12 },
-    figures: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
-    figure: { gap: 2 },
-    late: { color: colors.alert },
-    spent: { marginTop: -6 },
-    ahead: { marginTop: 4 },
-    close: { alignItems: 'center', paddingTop: 16 },
-    closeText: { color: colors.mist },
-  });
-}
+const styles = StyleSheet.create({
+  content: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 48, gap: 16 },
+  stats: { flexDirection: 'row', gap: 8 },
+  stat: { flex: 1, paddingVertical: 14, paddingHorizontal: 12, gap: 4 },
+  quiet: { gap: 6 },
+  quietText: { lineHeight: 20 },
+});

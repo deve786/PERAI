@@ -3,7 +3,6 @@ import { useEffect, useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -15,12 +14,12 @@ import { insertMemory, rememberSpelling } from '@/db/queries';
 import { recordVoiceExpense } from '@/expense/voiceExpense';
 import { logOk } from '@/log';
 import { clearDrafts, removeDraft, updateDraft, usePendingDrafts } from '@/draftStore';
-import { ChipRow } from '@/components/Chip';
 import { groupNames, normalizeGroupName, sameGroup } from '@/groups';
 import { useGroups } from '@/useGroups';
 import { useMemories } from '@/useMemories';
 import { useTheme } from '@/ThemeContext';
-import { FONTS, SPACE, type Colors } from '@/theme';
+import { FONTS, RADIUS, SPACE, type Colors } from '@/theme';
+import { Button, Chip, Empty, Screen, TopBar } from '@/expense/ui';
 
 export default function PreviewScreen() {
   const { colors, type } = useTheme();
@@ -116,137 +115,140 @@ export default function PreviewScreen() {
     router.back();
   }
 
+  const heading = drafts.length === 1 ? 'One event found' : `${drafts.length} events found`;
+
   if (drafts.length === 0) {
     return (
-      <View style={styles.done}>
-        <Text style={type.label}>
-          {savedCount > 0
-            ? `${savedCount} ${savedCount === 1 ? 'ENTRY' : 'ENTRIES'} KEPT`
-            : 'NOTHING TO CONFIRM'}
-        </Text>
-      </View>
+      <Screen edges={['top', 'bottom']}>
+        <TopBar title="Check before saving" />
+        <Empty
+          icon={savedCount > 0 ? 'checkmark' : 'document-text-outline'}
+          title={
+            savedCount > 0
+              ? `${savedCount} ${savedCount === 1 ? 'entry' : 'entries'} kept`
+              : 'Nothing to confirm'
+          }
+        />
+      </Screen>
     );
   }
 
   return (
-    <KeyboardAvoidingView
-      style={styles.flex}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <ScrollView
-        contentContainerStyle={styles.content}
-        keyboardShouldPersistTaps="handled"
+    <Screen edges={['top', 'bottom']}>
+      <TopBar title={heading} subtitle="Check each one before it goes into your record" />
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <View style={styles.said}>
-          <Text style={type.label}>YOU WROTE</Text>
-          <Text style={[type.body, styles.saidText]}>{rawInput}</Text>
-        </View>
+        <ScrollView
+          contentContainerStyle={styles.content}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={styles.said}>
+            <Text style={type.fine}>You wrote</Text>
+            <Text style={[type.body, styles.saidText]}>{rawInput}</Text>
+          </View>
 
-        <Text style={type.display}>
-          {drafts.length === 1
-            ? 'One event found'
-            : `${drafts.length} events found`}
-        </Text>
-        <Text style={[type.body, styles.lead]}>
-          Check each one before it goes into your record. Edit anything that is
-          wrong.
-        </Text>
-
-        {/* One group for everything in this note: a checklist said in one
-            breath — "for the Kozhikode trip: book tickets, pack bags" — is
-            kept together. Extraction fills this in when the note names one. */}
-        <View style={styles.group}>
-          <Text style={type.label}>GROUP {drafts.length > 1 ? '(ALL OF THEM)' : ''}</Text>
-          {existingGroups.length > 0 ? (
-            <ChipRow
-              options={existingGroups}
-              value={sharedGroup}
-              onChange={(value) => applyGroup(value)}
-              allLabel="None"
+          {/* One group for everything in this note: a checklist said in one
+              breath — "for the Kozhikode trip: book tickets, pack bags" — is
+              kept together. Extraction fills this in when the note names one. */}
+          <View style={styles.card}>
+            <Text style={styles.cardHeading}>
+              {drafts.length > 1 ? 'Group (all of them)' : 'Group'}
+            </Text>
+            {existingGroups.length > 0 ? (
+              <View style={styles.chips}>
+                <Chip
+                  label="None"
+                  active={sharedGroup === null}
+                  onPress={() => applyGroup(null)}
+                />
+                {existingGroups.map((name) => (
+                  <Chip
+                    key={name}
+                    label={name}
+                    active={sharedGroup === name}
+                    onPress={() => applyGroup(sharedGroup === name ? null : name)}
+                  />
+                ))}
+              </View>
+            ) : null}
+            <TextInput
+              value={groupDraft}
+              onChangeText={setGroupDraft}
+              onSubmitEditing={() => {
+                applyGroup(normalizeGroupName(groupDraft));
+                setGroupDraft('');
+              }}
+              placeholder={sharedGroup ? 'Move to another group…' : 'New group…'}
+              placeholderTextColor={colors.mist}
+              returnKeyType="done"
+              accessibilityLabel="Group name"
+              style={styles.groupInput}
             />
-          ) : null}
-          <TextInput
-            value={groupDraft}
-            onChangeText={setGroupDraft}
-            onSubmitEditing={() => {
-              applyGroup(normalizeGroupName(groupDraft));
-              setGroupDraft('');
-            }}
-            placeholder={sharedGroup ? 'Move to another group…' : 'New group…'}
-            placeholderTextColor={colors.mist}
-            returnKeyType="done"
-            style={styles.groupInput}
-          />
-        </View>
+          </View>
 
-        {drafts.map((entry, index) => (
-          <DraftCard
-            key={entry.key}
-            draft={entry.draft}
-            index={index}
-            total={drafts.length}
-            onChange={(patch) => updateDraft(entry.key, patch)}
-            onSave={() => void save(entry.key)}
-            onDiscard={() => removeDraft(entry.key)}
-          />
-        ))}
+          {drafts.map((entry, index) => (
+            <DraftCard
+              key={entry.key}
+              draft={entry.draft}
+              index={index}
+              total={drafts.length}
+              onChange={(patch) => updateDraft(entry.key, patch)}
+              onSave={() => void save(entry.key)}
+              onDiscard={() => removeDraft(entry.key)}
+            />
+          ))}
 
-        <View style={styles.bulk}>
-          <Pressable onPress={discardAll} hitSlop={6} style={styles.bulkGhost}>
-            <Text style={[type.label, styles.bulkGhostText]}>DISCARD ALL</Text>
-          </Pressable>
-          {drafts.length > 1 ? (
-            <Pressable onPress={() => void saveAll()} style={styles.bulkAll}>
-              <Text style={[type.label, styles.bulkAllText]}>
-                KEEP ALL {drafts.length}
-              </Text>
-            </Pressable>
-          ) : null}
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+          <View style={styles.bulk}>
+            {drafts.length > 1 ? (
+              <Button
+                title={`Keep all ${drafts.length}`}
+                icon="checkmark-done"
+                onPress={() => void saveAll()}
+              />
+            ) : null}
+            <Button title="Discard all" kind="danger" onPress={discardAll} />
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </Screen>
   );
 }
 
 function makeStyles(colors: Colors) {
   return StyleSheet.create({
-    flex: { flex: 1, backgroundColor: colors.paper },
-    content: { padding: SPACE.page, paddingTop: 28, paddingBottom: 48, gap: 14 },
+    flex: { flex: 1 },
+    content: { padding: SPACE.page, paddingTop: 16, paddingBottom: 48, gap: 14 },
     said: {
-      gap: 7,
-      borderLeftWidth: 2,
-      borderLeftColor: colors.moss,
-      paddingLeft: 12,
-      marginBottom: 8,
+      gap: 4,
+      backgroundColor: colors.mossSoft,
+      borderRadius: RADIUS.card,
+      padding: 14,
     },
     saidText: { color: colors.ink },
-    lead: { marginTop: -6, marginBottom: 4, maxWidth: 330 },
-    group: { gap: 8, marginBottom: 4 },
+    card: {
+      gap: 10,
+      backgroundColor: colors.surface,
+      borderRadius: RADIUS.card,
+      borderWidth: 1,
+      borderColor: colors.rule,
+      padding: 14,
+    },
+    cardHeading: { fontFamily: FONTS.sansSemi, fontSize: 16, color: colors.ink },
+    chips: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: -8 },
     groupInput: {
       fontFamily: FONTS.sans,
-      fontSize: 15,
+      fontSize: 16,
       color: colors.ink,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: colors.rule,
-      paddingVertical: 6,
-    },
-    bulk: { flexDirection: 'row', alignItems: 'center', paddingTop: 10 },
-    bulkGhost: { paddingVertical: 10, paddingRight: 16 },
-    bulkGhostText: { color: colors.mist },
-    bulkAll: {
-      marginLeft: 'auto',
+      minHeight: 48,
+      paddingHorizontal: 14,
       paddingVertical: 10,
-      paddingHorizontal: 18,
-      borderRadius: 4,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: colors.moss,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: RADIUS.input,
+      backgroundColor: colors.surface,
     },
-    bulkAllText: { color: colors.moss },
-    done: {
-      flex: 1,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: colors.paper,
-    },
+    bulk: { gap: 6, paddingTop: 6 },
   });
 }

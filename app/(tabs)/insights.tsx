@@ -1,15 +1,14 @@
-import { useCallback, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import React, { useCallback, useMemo, useState } from 'react';
+import { Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { useFocusEffect } from 'expo-router';
-import { Chip } from '@/components/Chip';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import { Ionicons } from '@expo/vector-icons';
 import { Donut, DualBars, RankedCounts } from '@/components/InsightCharts';
-import { Section } from '@/components/Section';
 import { memoryInsights } from '@/insights';
 import { useMemories } from '@/useMemories';
-import { useTheme } from '@/ThemeContext';
-import { SPACE, type Colors } from '@/theme';
 import { Bars, RankedCategories } from '@/expense/charts';
 import {
+  listCategories,
   listExpenses,
   listIncome,
   listRecurring,
@@ -18,14 +17,43 @@ import {
   type Recurring,
 } from '@/expense/db';
 import { getBorrowLendSummary, type BorrowLendSummary } from '@/expense/borrowLendDb';
-import { addDays, daysBetween, monthName, monthRange, todayStr } from '@/expense/dates';
+import {
+  addDays,
+  daysBetween,
+  fromStr,
+  monthName,
+  monthRange,
+  prettyDate,
+  prettyRange,
+  toStr,
+  todayStr,
+} from '@/expense/dates';
 import { byCategory, fmtMoney, previousRange, sum, trend } from '@/expense/stats';
-import { useTheme as useExpenseTheme } from '@/expense/theme';
+import { radius, useTheme } from '@/expense/theme';
+import { Card, Chip, Empty, Meter, Row, Screen, Segmented, T, Title } from '@/expense/ui';
 
-const PERIODS = ['month', '90 days', 'year', 'all'] as const;
-type Period = (typeof PERIODS)[number];
+/** '90 days' and 'range' keep their old keys; only the chip labels changed. */
+type Period = 'month' | '90 days' | 'year' | 'all' | 'range';
+
+const PERIOD_CHIPS: { key: Period; label: string }[] = [
+  { key: 'month', label: 'Month' },
+  { key: '90 days', label: '3 months' },
+  { key: 'year', label: 'Year' },
+  { key: 'all', label: 'All' },
+  { key: 'range', label: 'Custom range' },
+];
 
 type Half = 'expense' | 'perai';
+
+const HALVES: { key: Half; label: string }[] = [
+  { key: 'expense', label: 'Money' },
+  { key: 'perai', label: 'Notes' },
+];
+
+const FULL_MONTHS = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
 
 /** Plain-language meaning of every figure on the money side. */
 const MONEY_GLOSSARY: { term: string; meaning: string }[] = [
@@ -37,11 +65,11 @@ const MONEY_GLOSSARY: { term: string; meaning: string }[] = [
   },
   { term: 'Income', meaning: 'Everything recorded on the Add income screen in this period.' },
   { term: 'Saved', meaning: 'The share of your income you did not spend.' },
-  { term: 'Daily avg', meaning: 'What you spent divided by the number of days in the period.' },
+  { term: 'Per day', meaning: 'What you spent divided by the number of days in the period.' },
   { term: 'Avg entry', meaning: 'What you spent divided by the number of expense entries.' },
   {
     term: 'Budget',
-    meaning: 'Your monthly budget from Settings, against what you have spent this month.',
+    meaning: 'Your monthly budget from Settings, against what you spent in that month.',
   },
   {
     term: 'Committed every month',
@@ -53,7 +81,7 @@ const MONEY_GLOSSARY: { term: string; meaning: string }[] = [
   },
 ];
 
-/** Plain-language meaning of every figure on the record side. */
+/** Plain-language meaning of every figure on the notes side. */
 const RECORD_GLOSSARY: { term: string; meaning: string }[] = [
   {
     term: 'Captured',
@@ -86,13 +114,20 @@ const RECORD_GLOSSARY: { term: string; meaning: string }[] = [
   },
 ];
 
-/** The span each period covers, ending today so no empty future days are charted. */
-function rangeFor(period: Period, now: Date) {
+/** The span a period covers. Ranges that include today stop at today, so no empty future days are charted. */
+function rangeFor(
+  period: Period,
+  now: Date,
+  year: number,
+  month0: number,
+  rangeFrom: string,
+  rangeTo: string
+) {
   const today = todayStr();
   switch (period) {
     case 'month': {
-      const { from } = monthRange(now.getFullYear(), now.getMonth());
-      return { from, to: today, label: `${monthName(now.getMonth())} ${now.getFullYear()}` };
+      const { from, to } = monthRange(year, month0);
+      return { from, to: to > today ? today : to, label: `${FULL_MONTHS[month0]} ${year}` };
     }
     case '90 days':
       return { from: addDays(today, -89), to: today, label: 'Last 90 days' };
@@ -100,20 +135,30 @@ function rangeFor(period: Period, now: Date) {
       return { from: `${now.getFullYear()}-01-01`, to: today, label: String(now.getFullYear()) };
     case 'all':
       return { from: '2000-01-01', to: today, label: 'Everything recorded' };
+    case 'range':
+      return { from: rangeFrom, to: rangeTo, label: prettyRange(rangeFrom, rangeTo) };
   }
 }
 
 export default function Insights() {
-  const { colors, type } = useTheme();
-  const { symbol, budget } = useExpenseTheme();
+  const { c, symbol, budget } = useTheme();
   const { width } = useWindowDimensions();
-  const styles = makeStyles(colors);
 
+  const now = useMemo(() => new Date(), []);
   const [period, setPeriod] = useState<Period>('month');
   const [half, setHalf] = useState<Half>('expense');
-  const now = useMemo(() => new Date(), []);
-  const { from, to, label } = useMemo(() => rangeFor(period, now), [period, now]);
+  const [year, setYear] = useState(now.getFullYear());
+  const [month0, setMonth0] = useState(now.getMonth());
+  const [rangeFrom, setRangeFrom] = useState(addDays(todayStr(), -29));
+  const [rangeTo, setRangeTo] = useState(todayStr());
+  const [picking, setPicking] = useState<'from' | 'to' | null>(null);
+
+  const { from, to, label } = useMemo(
+    () => rangeFor(period, now, year, month0, rangeFrom, rangeTo),
+    [period, now, year, month0, rangeFrom, rangeTo]
+  );
   const { from: prevFrom, to: prevTo } = useMemo(() => previousRange(from, to), [from, to]);
+  const isCurrentMonth = year === now.getFullYear() && month0 === now.getMonth();
 
   const { memories } = useMemories();
 
@@ -122,21 +167,31 @@ export default function Insights() {
   const [income, setIncome] = useState<IncomeRow[]>([]);
   const [recurring, setRecurring] = useState<Recurring[]>([]);
   const [loans, setLoans] = useState<BorrowLendSummary | null>(null);
+  const [catBudgets, setCatBudgets] = useState<Map<string, number>>(new Map());
 
   const load = useCallback(async () => {
     try {
-      const [rows, prevRows, incomeRows, recurringRows, loanSummary] = await Promise.all([
+      const [rows, prevRows, incomeRows, recurringRows, loanSummary, cats] = await Promise.all([
         listExpenses(from, to),
         listExpenses(prevFrom, prevTo),
         listIncome(from, to),
         listRecurring(),
         getBorrowLendSummary().catch(() => null),
+        listCategories().catch(() => []),
       ]);
       setExpenses(rows);
       setPrevExpenses(prevRows);
       setIncome(incomeRows);
       setRecurring(recurringRows);
       setLoans(loanSummary);
+      // Budget markers on the category bars; categories without one have no mark.
+      setCatBudgets(
+        new Map(
+          cats
+            .filter((k) => k.monthly_budget !== null && k.monthly_budget > 0)
+            .map((k) => [k.name, k.monthly_budget as number])
+        )
+      );
     } catch (err) {
       console.warn('Could not load insights:', err);
     }
@@ -159,7 +214,8 @@ export default function Insights() {
   const earned = sum(income);
   const net = earned - spent;
   const span = daysBetween(from, to);
-  const chartWidth = width - SPACE.page * 2;
+  // Page padding 20 + card padding 16 + card border, each side.
+  const chartWidth = width - 74;
 
   const categories = useMemo(() => byCategory(expenses), [expenses]);
   const spendSeries = useMemo(() => trend(expenses, from, to), [expenses, from, to]);
@@ -188,6 +244,9 @@ export default function Insights() {
   const spendDelta = prevSpent > 0 ? ((spent - prevSpent) / prevSpent) * 100 : null;
   const savingsRate = earned > 0 ? net / earned : null;
   const budgetUsed = budget > 0 ? spent / budget : null;
+  const compareTo =
+    period === 'month' ? monthName(new Date(year, month0 - 1, 1).getMonth()) : 'previous period';
+  const trendTitle = span <= 45 ? 'Day by day' : span <= 190 ? 'Week by week' : 'Month by month';
 
   const typeRows = record.byType.map((row) => ({
     name: row.name.charAt(0).toUpperCase() + row.name.slice(1),
@@ -197,486 +256,477 @@ export default function Insights() {
   const noMoney = expenses.length === 0 && income.length === 0;
   const noRecord = record.captured === 0;
 
+  function shiftMonth(delta: number) {
+    const d = new Date(year, month0 + delta, 1);
+    setYear(d.getFullYear());
+    setMonth0(d.getMonth());
+  }
+
   return (
-    <ScrollView style={styles.flex} contentContainerStyle={styles.content}>
-      <View>
-        <Text style={type.display}>Insights</Text>
-        <Text style={[type.stamp, styles.subtitle]}>{label.toUpperCase()}</Text>
-      </View>
+    <Screen>
+      <ScrollView contentContainerStyle={styles.content}>
+        <Title>Insights</Title>
 
-      <View style={styles.chips}>
-        {PERIODS.map((option) => (
-          <Chip
-            key={option}
-            label={option}
-            selected={period === option}
-            onPress={() => setPeriod(option)}
-          />
-        ))}
-      </View>
+        {/* Two halves of one app, read one at a time — the money, or the notes. */}
+        <Segmented options={HALVES} value={half} onChange={setHalf} />
 
-      {/* Two halves of one app, read one at a time — the money, or the record. */}
-      <View style={styles.halfBar}>
-        {(
-          [
-            ['expense', 'EXPENSE'],
-            ['perai', 'PERAI'],
-          ] as const
-        ).map(([key, text]) => (
-          <Pressable
-            key={key}
-            onPress={() => setHalf(key)}
-            style={[styles.halfTab, half === key && styles.halfTabActive]}
-            accessibilityRole="button"
-          >
-            <Text style={[type.label, half === key ? styles.halfTextActive : styles.halfText]}>
-              {text}
-            </Text>
-          </Pressable>
-        ))}
-      </View>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.chipScroller}
+          contentContainerStyle={styles.chipRow}
+        >
+          {PERIOD_CHIPS.map((option) => (
+            <Chip
+              key={option.key}
+              label={option.label}
+              icon={option.key === 'range' ? 'calendar-outline' : undefined}
+              active={period === option.key}
+              onPress={() => setPeriod(option.key)}
+            />
+          ))}
+        </ScrollView>
 
-      {/* ======================== EXPENSE ======================== */}
-      {half === 'expense' ? (
-        noMoney ? (
-          <Text style={[type.body, styles.quiet]}>
-            No expenses or income recorded in this period yet.
-          </Text>
+        {period === 'month' ? (
+          <Row style={{ justifyContent: 'space-between' }}>
+            <Pressable
+              onPress={() => shiftMonth(-1)}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Previous month"
+              style={styles.navButton}
+            >
+              <Ionicons name="chevron-back" size={20} color={c.sub} />
+            </Pressable>
+            <T size={16} weight="600">{label}</T>
+            <Pressable
+              onPress={() => shiftMonth(1)}
+              hitSlop={8}
+              disabled={isCurrentMonth}
+              accessibilityRole="button"
+              accessibilityLabel="Next month"
+              style={[styles.navButton, { opacity: isCurrentMonth ? 0.35 : 1 }]}
+            >
+              <Ionicons name="chevron-forward" size={20} color={c.sub} />
+            </Pressable>
+          </Row>
+        ) : period === 'range' ? (
+          <View>
+            <Row style={{ gap: 10 }}>
+              {(['from', 'to'] as const).map((k) => (
+                <Pressable
+                  key={k}
+                  onPress={() => setPicking(picking === k ? null : k)}
+                  accessibilityRole="button"
+                  style={{
+                    flex: 1, backgroundColor: c.card, borderWidth: 1,
+                    borderColor: picking === k ? c.text : c.border, borderRadius: radius.sm,
+                    paddingHorizontal: 14, paddingVertical: 10,
+                  }}
+                >
+                  <T size={13} sub>{k === 'from' ? 'From' : 'To'}</T>
+                  <T size={15} weight="600" tabular style={{ marginTop: 2 }}>
+                    {prettyDate(k === 'from' ? rangeFrom : rangeTo)}
+                  </T>
+                </Pressable>
+              ))}
+            </Row>
+            {picking && (
+              <DateTimePicker
+                value={fromStr(picking === 'from' ? rangeFrom : rangeTo)}
+                mode="date"
+                maximumDate={new Date()}
+                display={Platform.OS === 'ios' ? 'inline' : 'default'}
+                onChange={(_, d) => {
+                  const which = picking;
+                  if (Platform.OS !== 'ios') setPicking(null);
+                  if (!d || !which) return;
+                  const s = toStr(d);
+                  if (which === 'from') {
+                    setRangeFrom(s);
+                    if (s > rangeTo) setRangeTo(s);
+                  } else {
+                    setRangeTo(s);
+                    if (s < rangeFrom) setRangeFrom(s);
+                  }
+                }}
+              />
+            )}
+            <T size={13} sub style={{ marginTop: 8 }}>{label} · {span} days</T>
+          </View>
         ) : (
-          <>
-            <View style={styles.tiles}>
-              <Tile
-                colors={colors}
-                label="SPENT"
-                value={fmtMoney(spent, symbol)}
-                hint="Expenses in this period"
-              />
-              <Tile
-                colors={colors}
-                label="INCOME"
-                value={fmtMoney(earned, symbol)}
-                hint="Income in this period"
-              />
-              <Tile
-                colors={colors}
-                label="NET"
-                value={fmtMoney(net, symbol)}
-                hint="Income minus spending"
-                tone={net < 0 ? colors.alert : colors.moss}
-              />
-              <Tile
-                colors={colors}
-                label="ENTRIES"
-                value={String(expenses.length)}
-                hint="Expenses recorded"
-              />
-            </View>
+          <T size={16} weight="600" style={{ textAlign: 'center', paddingVertical: 8 }}>{label}</T>
+        )}
 
-            <Section label="SPENDING" inset={false}>
-              <View style={styles.headlineBlock}>
-                <Text style={[type.figure, styles.headline]}>{fmtMoney(spent, symbol)}</Text>
-                {spendDelta !== null ? (
-                  <Text style={[type.fine, { color: spendDelta > 0 ? colors.alert : colors.moss }]}>
-                    {spendDelta > 0 ? 'Up' : 'Down'} {Math.abs(Math.round(spendDelta))}% on the
-                    previous {span} days ({fmtMoney(prevSpent, symbol)})
-                  </Text>
-                ) : (
-                  <Text style={[type.fine, styles.quiet]}>
-                    Nothing spent in the previous period
-                  </Text>
-                )}
-              </View>
+        {/* ======================== MONEY ======================== */}
+        {half === 'expense' ? (
+          noMoney ? (
+            <Card>
+              <Empty
+                icon="stats-chart-outline"
+                title="Nothing in this period"
+                hint="No expenses or income recorded here yet. Pick another period or add an expense."
+              />
+            </Card>
+          ) : (
+            <>
+              <Card style={{ gap: 12 }}>
+                <Row style={{ alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+                  <T size={30} weight="600" tabular style={{ letterSpacing: -1 }}>
+                    {fmtMoney(spent, symbol)}
+                  </T>
+                  {spendDelta !== null ? (
+                    <T size={13} weight="600" style={{ color: spendDelta > 0 ? c.danger : c.good }}>
+                      {spendDelta > 0 ? '↑' : '↓'} {Math.abs(Math.round(spendDelta))}% vs {compareTo}
+                    </T>
+                  ) : (
+                    <T size={13} sub>Nothing spent the {period === 'month' ? 'month' : 'period'} before</T>
+                  )}
+                </Row>
+                <Row style={{ alignItems: 'flex-start', gap: 8 }}>
+                  <Stat label="Income" value={`+${fmtMoney(earned, symbol)}`} tone={c.good} />
+                  <Stat label="Net" value={`${net >= 0 ? '+' : ''}${fmtMoney(net, symbol)}`} tone={net < 0 ? c.danger : undefined} />
+                  <Stat label="Per day" value={fmtMoney(span > 0 ? spent / span : 0, symbol)} />
+                </Row>
+                <View style={[styles.hairline, { backgroundColor: c.line }]} />
+                <Row style={{ alignItems: 'flex-start', gap: 8 }}>
+                  <Stat label="Entries" value={String(expenses.length)} />
+                  <Stat label="Avg entry" value={fmtMoney(expenses.length ? spent / expenses.length : 0, symbol)} />
+                  <Stat label="Before" value={fmtMoney(prevSpent, symbol)} />
+                </Row>
+              </Card>
 
-              <View style={styles.statRow}>
-                <Stat
-                  colors={colors}
-                  label="Daily avg"
-                  value={fmtMoney(span > 0 ? spent / span : 0, symbol)}
-                />
-                <Stat colors={colors} label="Entries" value={String(expenses.length)} />
-                <Stat
-                  colors={colors}
-                  label="Avg entry"
-                  value={fmtMoney(expenses.length ? spent / expenses.length : 0, symbol)}
-                />
-              </View>
-            </Section>
+              {categories.length > 0 ? (
+                <Block title="Where it went">
+                  <RankedCategories data={categories} total={spent} budgets={catBudgets} />
+                </Block>
+              ) : null}
 
-            {budgetUsed !== null && period === 'month' ? (
-              <Section label="BUDGET" inset={false}>
-                <View style={styles.budgetHead}>
-                  <Text style={type.body}>
+              {expenses.length > 0 ? (
+                <Block title={trendTitle}>
+                  <Bars data={spendSeries} width={chartWidth} />
+                </Block>
+              ) : null}
+
+              {biggest.length > 0 ? (
+                <Block title="Largest">
+                  <View>
+                    {biggest.map((row, i) => (
+                      <Line
+                        key={row.id}
+                        title={row.note || row.cat_name}
+                        sub={row.note ? `${row.cat_name} · ${prettyDate(row.date)}` : prettyDate(row.date)}
+                        value={fmtMoney(row.amount, symbol)}
+                        last={i === biggest.length - 1}
+                      />
+                    ))}
+                  </View>
+                </Block>
+              ) : null}
+
+              {methods.length > 0 ? (
+                <Block title="How it was paid">
+                  <View>
+                    {methods.map(([method, total], i) => (
+                      <Line
+                        key={method}
+                        title={method}
+                        value={fmtMoney(total, symbol)}
+                        last={i === methods.length - 1}
+                      />
+                    ))}
+                  </View>
+                </Block>
+              ) : null}
+
+              {income.length > 0 ? (
+                <Block title="In and out">
+                  <DualBars data={inOutSeries} width={chartWidth} labels={['Income', 'Spending']} />
+                  <Row style={{ alignItems: 'flex-start', gap: 8 }}>
+                    <Stat label="Income" value={fmtMoney(earned, symbol)} />
+                    <Stat label="Spent" value={fmtMoney(spent, symbol)} />
+                    <Stat
+                      label="Saved"
+                      value={savingsRate !== null ? `${Math.round(savingsRate * 100)}%` : '—'}
+                    />
+                  </Row>
+                </Block>
+              ) : null}
+
+              {budgetUsed !== null && period === 'month' ? (
+                <Block
+                  title="Budget"
+                  right={
+                    <T size={15} weight="600" tabular style={budgetUsed > 1 ? { color: c.danger } : undefined}>
+                      {Math.round(budgetUsed * 100)}%
+                    </T>
+                  }
+                >
+                  <T size={15}>
                     {fmtMoney(spent, symbol)} of {fmtMoney(budget, symbol)}
-                  </Text>
-                  <Text
-                    style={[type.figure, styles.budgetPct, budgetUsed > 1 ? { color: colors.alert } : null]}
-                  >
-                    {Math.round(budgetUsed * 100)}%
-                  </Text>
-                </View>
-                <View style={styles.meterTrack}>
-                  <View
-                    style={[
-                      styles.meterFill,
-                      {
-                        width: `${Math.min(budgetUsed, 1) * 100}%`,
-                        backgroundColor: budgetUsed > 1 ? colors.alert : colors.moss,
-                      },
-                    ]}
+                  </T>
+                  <Meter
+                    fraction={Math.min(budgetUsed, 1)}
+                    tone={budgetUsed > 1 ? c.danger : budgetUsed > 0.8 ? c.warn : c.accent}
+                    height={8}
                   />
-                </View>
-                <Text style={[type.fine, styles.quiet]}>
-                  {budgetUsed > 1
-                    ? `${fmtMoney(spent - budget, symbol)} over budget.`
-                    : `${fmtMoney(budget - spent, symbol)} left this month.`}
-                </Text>
-              </Section>
-            ) : null}
+                  <T size={13} sub>
+                    {budgetUsed > 1
+                      ? `${fmtMoney(spent - budget, symbol)} over budget.`
+                      : isCurrentMonth
+                        ? `${fmtMoney(budget - spent, symbol)} left this month.`
+                        : `${fmtMoney(budget - spent, symbol)} under budget.`}
+                  </T>
+                </Block>
+              ) : null}
 
-            {expenses.length > 0 ? (
-              <Section
-                label={span <= 45 ? 'DAY BY DAY' : span <= 190 ? 'WEEK BY WEEK' : 'MONTH BY MONTH'}
-                inset={false}
-              >
-                <Bars data={spendSeries} width={chartWidth} />
-              </Section>
-            ) : null}
+              {recurring.length > 0 ? (
+                <Block title="Committed every month">
+                  <Row style={{ alignItems: 'flex-start', gap: 8 }}>
+                    <Stat label="Bills" value={String(recurring.length)} />
+                    <Stat label="Per month" value={fmtMoney(monthlyCommitment, symbol)} />
+                    <Stat label="Per year" value={fmtMoney(monthlyCommitment * 12, symbol)} />
+                  </Row>
+                </Block>
+              ) : null}
 
-            {income.length > 0 ? (
-              <Section label="IN AND OUT" inset={false}>
-                <DualBars data={inOutSeries} width={chartWidth} labels={['Income', 'Spending']} />
-                <View style={styles.statRow}>
-                  <Stat colors={colors} label="Income" value={fmtMoney(earned, symbol)} />
-                  <Stat colors={colors} label="Spent" value={fmtMoney(spent, symbol)} />
+              {loans && (loans.totalLentActive > 0 || loans.totalBorrowedActive > 0) ? (
+                <Block title="Lent and borrowed">
+                  <Row style={{ alignItems: 'flex-start', gap: 8 }}>
+                    <Stat label="Owed to you" value={fmtMoney(loans.totalLentActive, symbol)} />
+                    <Stat label="You owe" value={fmtMoney(loans.totalBorrowedActive, symbol)} />
+                    <Stat
+                      label="Net"
+                      value={fmtMoney(loans.totalLentActive - loans.totalBorrowedActive, symbol)}
+                    />
+                  </Row>
+                </Block>
+              ) : null}
+
+              <Glossary entries={MONEY_GLOSSARY} />
+            </>
+          )
+        ) : null}
+
+        {/* ========================= NOTES ========================= */}
+        {half === 'perai' ? (
+          noRecord ? (
+            <Card>
+              <Empty
+                icon="mic-outline"
+                title="Nothing captured in this period"
+                hint="Record something on the Record tab and it shows up here."
+              />
+            </Card>
+          ) : (
+            <>
+              <Card style={{ gap: 12 }}>
+                <Row style={{ alignItems: 'flex-start', gap: 8 }}>
+                  <Stat label="Captured" value={String(record.captured)} big />
+                  <Stat label="Done" value={String(record.done)} big />
+                </Row>
+                <View style={[styles.hairline, { backgroundColor: c.line }]} />
+                <Row style={{ alignItems: 'flex-start', gap: 8 }}>
+                  <Stat label="Still open" value={String(record.open)} big />
                   <Stat
-                    colors={colors}
-                    label="Saved"
-                    value={savingsRate !== null ? `${Math.round(savingsRate * 100)}%` : '—'}
+                    label="Overdue"
+                    value={String(record.overdue)}
+                    tone={record.overdue > 0 ? c.danger : undefined}
+                    big
                   />
-                </View>
-              </Section>
-            ) : null}
+                </Row>
+              </Card>
 
-            {categories.length > 0 ? (
-              <Section label="WHERE IT WENT" inset={false}>
-                <RankedCategories data={categories} total={spent} />
-              </Section>
-            ) : null}
-
-            {biggest.length > 0 ? (
-              <Section label="LARGEST" inset={false}>
-                {biggest.map((row) => (
-                  <View key={row.id} style={styles.lineRow}>
-                    <View style={styles.lineMain}>
-                      <Text style={type.body} numberOfLines={1}>
-                        {row.note || row.cat_name}
-                      </Text>
-                      <Text style={[type.stamp, styles.quiet]}>
-                        {row.note ? `${row.cat_name.toUpperCase()} · ${row.date}` : row.date}
-                      </Text>
-                    </View>
-                    <Text style={[type.figure, styles.lineFigure]}>
-                      {fmtMoney(row.amount, symbol)}
-                    </Text>
+              <Block title="How you are doing">
+                <Row style={{ gap: 20 }}>
+                  {record.completionRate !== null ? (
+                    <Donut
+                      fraction={record.completionRate}
+                      figure={`${Math.round(record.completionRate * 100)}%`}
+                      caption={`${record.done} of ${record.done + record.open} done`}
+                    />
+                  ) : null}
+                  <View style={{ flex: 1, gap: 12 }}>
+                    <Stat label="Captured" value={String(record.captured)} />
+                    <Stat label="Still open" value={String(record.open)} />
+                    <Stat label="Day streak" value={record.streak > 0 ? `${record.streak}` : '—'} />
                   </View>
-                ))}
-              </Section>
-            ) : null}
+                </Row>
+                <T size={13} sub style={{ lineHeight: 18 }}>
+                  The ring is the share of tasks, reminders and appointments captured in this period
+                  that you have since ticked off.
+                </T>
+              </Block>
 
-            {methods.length > 0 ? (
-              <Section label="HOW IT WAS PAID" inset={false}>
-                {methods.map(([method, total]) => (
-                  <View key={method} style={styles.lineRow}>
-                    <Text style={[type.body, styles.lineMain]}>{method}</Text>
-                    <Text style={[type.figure, styles.lineFigure]}>{fmtMoney(total, symbol)}</Text>
-                  </View>
-                ))}
-              </Section>
-            ) : null}
+              <Block title="What you captured">
+                <Bars data={record.perDay} width={chartWidth} />
+              </Block>
 
-            {recurring.length > 0 ? (
-              <Section label="COMMITTED EVERY MONTH" inset={false}>
-                <View style={styles.statRow}>
-                  <Stat colors={colors} label="Bills" value={String(recurring.length)} />
-                  <Stat
-                    colors={colors}
-                    label="Per month"
-                    value={fmtMoney(monthlyCommitment, symbol)}
-                  />
-                  <Stat
-                    colors={colors}
-                    label="Per year"
-                    value={fmtMoney(monthlyCommitment * 12, symbol)}
-                  />
-                </View>
-              </Section>
-            ) : null}
+              {typeRows.length > 0 ? (
+                <Block title="By kind">
+                  <RankedCounts data={typeRows} />
+                </Block>
+              ) : null}
 
-            {loans && (loans.totalLentActive > 0 || loans.totalBorrowedActive > 0) ? (
-              <Section label="LENT AND BORROWED" inset={false}>
-                <View style={styles.statRow}>
-                  <Stat
-                    colors={colors}
-                    label="Owed to you"
-                    value={fmtMoney(loans.totalLentActive, symbol)}
-                  />
-                  <Stat
-                    colors={colors}
-                    label="You owe"
-                    value={fmtMoney(loans.totalBorrowedActive, symbol)}
-                  />
-                  <Stat
-                    colors={colors}
-                    label="Net"
-                    value={fmtMoney(loans.totalLentActive - loans.totalBorrowedActive, symbol)}
-                  />
-                </View>
-              </Section>
-            ) : null}
+              {record.byCategory.length > 0 ? (
+                <Block title="By category">
+                  <RankedCounts data={record.byCategory} />
+                </Block>
+              ) : null}
 
-            <Section label="AGAINST THE PERIOD BEFORE" inset={false}>
-              <Compare
-                colors={colors}
-                label="Spending"
-                now={fmtMoney(spent, symbol)}
-                before={fmtMoney(prevSpent, symbol)}
-                delta={spendDelta}
-                lowerIsBetter
-              />
-            </Section>
+              {record.topPeople.length > 0 ? (
+                <Block title="Who comes up most">
+                  <RankedCounts data={record.topPeople} unit="times" />
+                </Block>
+              ) : null}
 
-            <Glossary colors={colors} entries={MONEY_GLOSSARY} />
-          </>
-        )
-      ) : null}
+              {record.busiestWeekday ? (
+                <Block title="When you record">
+                  <Line title="Busiest day" value={record.busiestWeekday.name} last />
+                </Block>
+              ) : null}
 
-      {/* ========================= PERAI ========================= */}
-      {half === 'perai' ? (
-        noRecord ? (
-          <Text style={[type.body, styles.quiet]}>
-            Nothing captured in this period yet. Record something on the Record tab and it shows
-            up here.
-          </Text>
-        ) : (
-          <>
-            <View style={styles.tiles}>
-              <Tile
-                colors={colors}
-                label="CAPTURED"
-                value={String(record.captured)}
-                hint="Entries you recorded"
-              />
-              <Tile
-                colors={colors}
-                label="DONE"
-                value={String(record.done)}
-                hint="Ticked off, of those captured"
-              />
-              <Tile
-                colors={colors}
-                label="STILL OPEN"
-                value={String(record.open)}
-                hint="Captured but not done yet"
-              />
-              <Tile
-                colors={colors}
-                label="OVERDUE"
-                value={String(record.overdue)}
-                hint="Open and past its date, all time"
-                tone={record.overdue > 0 ? colors.alert : undefined}
-              />
-            </View>
+              {record.wishlistOpen > 0 || record.wishlistDone > 0 ? (
+                <Block title="Lists">
+                  <Row style={{ alignItems: 'flex-start', gap: 8 }}>
+                    <Stat label="Still to do" value={String(record.wishlistOpen)} />
+                    <Stat label="Ticked off" value={String(record.wishlistDone)} />
+                    <Stat
+                      label="Done"
+                      value={`${Math.round(
+                        (record.wishlistDone / (record.wishlistOpen + record.wishlistDone)) * 100
+                      )}%`}
+                    />
+                  </Row>
+                </Block>
+              ) : null}
 
-            <Section label="HOW YOU ARE DOING" inset={false}>
-              <View style={styles.donutRow}>
-                {record.completionRate !== null ? (
-                  <Donut
-                    fraction={record.completionRate}
-                    figure={`${Math.round(record.completionRate * 100)}%`}
-                    caption={`${record.done} of ${record.done + record.open} done`}
-                  />
-                ) : null}
-                <View style={styles.donutStats}>
-                  <Stat colors={colors} label="Captured" value={String(record.captured)} />
-                  <Stat colors={colors} label="Still open" value={String(record.open)} />
-                  <Stat
-                    colors={colors}
-                    label="Day streak"
-                    value={record.streak > 0 ? `${record.streak}` : '—'}
-                  />
-                </View>
-              </View>
-              <Text style={[type.fine, styles.quiet]}>
-                The ring is the share of tasks, reminders and appointments captured in this period
-                that you have since ticked off.
-              </Text>
-            </Section>
-
-            <Section label="WHAT YOU CAPTURED" inset={false}>
-              <Bars data={record.perDay} width={chartWidth} />
-            </Section>
-
-            {typeRows.length > 0 ? (
-              <Section label="BY KIND" inset={false}>
-                <RankedCounts data={typeRows} />
-              </Section>
-            ) : null}
-
-            {record.byCategory.length > 0 ? (
-              <Section label="BY CATEGORY" inset={false}>
-                <RankedCounts data={record.byCategory} />
-              </Section>
-            ) : null}
-
-            {record.topPeople.length > 0 ? (
-              <Section label="WHO COMES UP MOST" inset={false}>
-                <RankedCounts data={record.topPeople} unit="times" />
-              </Section>
-            ) : null}
-
-            {record.busiestWeekday ? (
-              <Section label="WHEN YOU RECORD" inset={false}>
-                <View style={styles.lineRow}>
-                  <Text style={[type.body, styles.lineMain]}>Busiest day</Text>
-                  <Text style={[type.figure, styles.lineFigure]}>{record.busiestWeekday.name}</Text>
-                </View>
-              </Section>
-            ) : null}
-
-            {record.wishlistOpen > 0 || record.wishlistDone > 0 ? (
-              <Section label="LISTS" inset={false}>
-                <View style={styles.statRow}>
-                  <Stat colors={colors} label="Still to do" value={String(record.wishlistOpen)} />
-                  <Stat colors={colors} label="Ticked off" value={String(record.wishlistDone)} />
-                  <Stat
-                    colors={colors}
-                    label="Done"
-                    value={
-                      record.wishlistOpen + record.wishlistDone > 0
-                        ? `${Math.round(
-                            (record.wishlistDone /
-                              (record.wishlistOpen + record.wishlistDone)) *
-                              100
-                          )}%`
-                        : '—'
+              <Block title="Against the period before">
+                <View>
+                  <Compare
+                    label="Captured"
+                    now={`${record.captured}`}
+                    before={`${prevRecord.captured}`}
+                    delta={
+                      prevRecord.captured > 0
+                        ? ((record.captured - prevRecord.captured) / prevRecord.captured) * 100
+                        : null
                     }
                   />
+                  <Compare
+                    label="Completed"
+                    now={
+                      record.completionRate !== null
+                        ? `${Math.round(record.completionRate * 100)}%`
+                        : '—'
+                    }
+                    before={
+                      prevRecord.completionRate !== null
+                        ? `${Math.round(prevRecord.completionRate * 100)}%`
+                        : '—'
+                    }
+                    delta={
+                      record.completionRate !== null && prevRecord.completionRate !== null
+                        ? (record.completionRate - prevRecord.completionRate) * 100
+                        : null
+                    }
+                    last
+                  />
                 </View>
-              </Section>
-            ) : null}
+              </Block>
 
-            <Section label="AGAINST THE PERIOD BEFORE" inset={false}>
-              <Compare
-                colors={colors}
-                label="Captured"
-                now={`${record.captured}`}
-                before={`${prevRecord.captured}`}
-                delta={
-                  prevRecord.captured > 0
-                    ? ((record.captured - prevRecord.captured) / prevRecord.captured) * 100
-                    : null
-                }
-              />
-              <Compare
-                colors={colors}
-                label="Completed"
-                now={
-                  record.completionRate !== null
-                    ? `${Math.round(record.completionRate * 100)}%`
-                    : '—'
-                }
-                before={
-                  prevRecord.completionRate !== null
-                    ? `${Math.round(prevRecord.completionRate * 100)}%`
-                    : '—'
-                }
-                delta={
-                  record.completionRate !== null && prevRecord.completionRate !== null
-                    ? (record.completionRate - prevRecord.completionRate) * 100
-                    : null
-                }
-              />
-            </Section>
-
-            <Glossary colors={colors} entries={RECORD_GLOSSARY} />
-          </>
-        )
-      ) : null}
-    </ScrollView>
+              <Glossary entries={RECORD_GLOSSARY} />
+            </>
+          )
+        ) : null}
+      </ScrollView>
+    </Screen>
   );
 }
 
-function Tile({
-  colors,
-  label,
-  value,
-  hint,
-  tone,
-}: {
-  colors: Colors;
-  label: string;
-  value: string;
-  hint?: string;
-  tone?: string;
-}) {
-  const { type } = useTheme();
-  const styles = makeStyles(colors);
+/** A white card with a 16 bold heading. */
+function Block({ title, right, children }: { title: string; right?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <View style={styles.tile}>
-      <Text style={[type.stamp, styles.quiet]}>{label}</Text>
-      <Text style={[type.figure, styles.tileValue, tone ? { color: tone } : null]}>{value}</Text>
-      {hint ? <Text style={[type.fine, styles.tileHint]}>{hint}</Text> : null}
+    <Card style={{ gap: 12 }}>
+      <Row style={{ justifyContent: 'space-between', gap: 10 }}>
+        <T size={16} weight="700" style={{ flex: 1 }}>{title}</T>
+        {right}
+      </Row>
+      {children}
+    </Card>
+  );
+}
+
+function Stat({ label, value, tone, big }: { label: string; value: string; tone?: string; big?: boolean }) {
+  return (
+    <View style={{ flex: 1, gap: 2 }}>
+      <T size={13} sub>{label}</T>
+      <T size={big ? 20 : 15} weight="600" tabular numberOfLines={1} style={tone ? { color: tone } : undefined}>
+        {value}
+      </T>
     </View>
   );
 }
 
-function Stat({ colors, label, value }: { colors: Colors; label: string; value: string }) {
-  const { type } = useTheme();
-  const styles = makeStyles(colors);
+/** One row inside a card: text (+ meta line) left, figure right, hairline under all but the last. */
+function Line({ title, sub, value, last }: { title: string; sub?: string; value: string; last?: boolean }) {
+  const { c } = useTheme();
   return (
-    <View style={styles.stat}>
-      <Text style={[type.stamp, styles.quiet]}>{label.toUpperCase()}</Text>
-      <Text style={[type.figure, styles.statValue]}>{value}</Text>
-    </View>
+    <Row
+      style={{
+        gap: 12, minHeight: 48, paddingVertical: 10,
+        borderBottomWidth: last ? 0 : StyleSheet.hairlineWidth, borderBottomColor: c.line,
+      }}
+    >
+      <View style={{ flex: 1, gap: 2 }}>
+        <T size={15} numberOfLines={1}>{title}</T>
+        {sub ? <T size={13} sub numberOfLines={1}>{sub}</T> : null}
+      </View>
+      <T size={15} weight="600" tabular>{value}</T>
+    </Row>
   );
 }
 
-/** One line of this-period against last, with the direction coloured. */
+/** One line of this period against the last, with the direction coloured. */
 function Compare({
-  colors,
   label,
   now,
   before,
   delta,
   lowerIsBetter = false,
+  last,
 }: {
-  colors: Colors;
   label: string;
   now: string;
   before: string;
   delta: number | null;
   lowerIsBetter?: boolean;
+  last?: boolean;
 }) {
-  const { type } = useTheme();
-  const styles = makeStyles(colors);
+  const { c } = useTheme();
   const good = delta === null ? null : lowerIsBetter ? delta <= 0 : delta >= 0;
 
   return (
-    <View style={styles.lineRow}>
-      <View style={styles.lineMain}>
-        <Text style={type.body}>{label}</Text>
-        <Text style={[type.stamp, styles.quiet]}>WAS {before.toUpperCase()}</Text>
+    <Row
+      style={{
+        gap: 12, minHeight: 52, paddingVertical: 10,
+        borderBottomWidth: last ? 0 : StyleSheet.hairlineWidth, borderBottomColor: c.line,
+      }}
+    >
+      <View style={{ flex: 1, gap: 2 }}>
+        <T size={15}>{label}</T>
+        <T size={13} sub>Was {before}</T>
       </View>
-      <View style={styles.compareRight}>
-        <Text style={[type.figure, styles.lineFigure]}>{now}</Text>
+      <View style={{ alignItems: 'flex-end', gap: 2 }}>
+        <T size={15} weight="600" tabular>{now}</T>
         {delta !== null ? (
-          <Text style={[type.stamp, { color: good ? colors.moss : colors.alert }]}>
+          <T size={13} tabular style={{ color: good ? c.good : c.danger }}>
             {delta > 0 ? '+' : ''}
             {Math.round(delta)}%
-          </Text>
+          </T>
         ) : null}
       </View>
-    </View>
+    </Row>
   );
 }
 
@@ -684,102 +734,42 @@ function Compare({
  * What every figure above actually counts. Folded away by default — it is
  * there to be read once, not to sit between you and the numbers.
  */
-function Glossary({
-  colors,
-  entries,
-}: {
-  colors: Colors;
-  entries: { term: string; meaning: string }[];
-}) {
-  const { type } = useTheme();
-  const styles = makeStyles(colors);
+function Glossary({ entries }: { entries: { term: string; meaning: string }[] }) {
+  const { c } = useTheme();
   const [open, setOpen] = useState(false);
 
   return (
-    <View style={styles.glossary}>
-      <Pressable onPress={() => setOpen((current) => !current)} hitSlop={8}>
-        <Text style={[type.label, styles.glossaryToggle]}>
-          {open ? 'HIDE WHAT THESE MEAN' : 'WHAT DO THESE MEAN?'}
-        </Text>
+    <Card style={{ paddingVertical: 0 }}>
+      <Pressable
+        onPress={() => setOpen((current) => !current)}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
+        style={({ pressed }) => ({
+          minHeight: 52, flexDirection: 'row', alignItems: 'center', gap: 12, opacity: pressed ? 0.6 : 1,
+        })}
+      >
+        <Ionicons name="help-circle-outline" size={20} color={c.sub} />
+        <T size={15} style={{ flex: 1 }}>{open ? 'Hide what these mean' : 'What do these mean?'}</T>
+        <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={18} color={c.faint} />
       </Pressable>
-      {open
-        ? entries.map((entry) => (
-            <View key={entry.term} style={styles.glossaryRow}>
-              <Text style={[type.body, styles.glossaryTerm]}>{entry.term}</Text>
-              <Text style={[type.fine, styles.quiet]}>{entry.meaning}</Text>
+      {open ? (
+        <View style={{ gap: 12, paddingBottom: 16 }}>
+          {entries.map((entry) => (
+            <View key={entry.term} style={{ gap: 2 }}>
+              <T size={15} weight="600">{entry.term}</T>
+              <T size={13} sub style={{ lineHeight: 18 }}>{entry.meaning}</T>
             </View>
-          ))
-        : null}
-    </View>
+          ))}
+        </View>
+      ) : null}
+    </Card>
   );
 }
 
-function makeStyles(colors: Colors) {
-  return StyleSheet.create({
-    flex: { flex: 1, backgroundColor: colors.paper },
-    content: {
-      padding: SPACE.page,
-      paddingTop: 52,
-      paddingBottom: 48,
-      gap: 22,
-    },
-    subtitle: { color: colors.mist, marginTop: 3 },
-    chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-    quiet: { color: colors.mist },
-    halfBar: { flexDirection: 'row', marginTop: -6 },
-    halfTab: {
-      flex: 1,
-      alignItems: 'center',
-      paddingVertical: 10,
-      borderBottomWidth: 2,
-      borderBottomColor: colors.rule,
-    },
-    halfTabActive: { borderBottomColor: colors.moss },
-    halfText: { color: colors.mist },
-    halfTextActive: { color: colors.ink },
-    tiles: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
-    tile: {
-      flexGrow: 1,
-      flexBasis: '44%',
-      gap: 3,
-      paddingVertical: 10,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: colors.rule,
-    },
-    tileValue: { fontSize: 21, color: colors.ink },
-    tileHint: { color: colors.mist, marginTop: 1 },
-    headlineBlock: { gap: 3, paddingVertical: 4 },
-    headline: { fontSize: 30, color: colors.ink },
-    statRow: { flexDirection: 'row', gap: 16, paddingVertical: 10 },
-    stat: { flex: 1, gap: 3 },
-    statValue: { fontSize: 15, color: colors.ink },
-    budgetHead: {
-      flexDirection: 'row',
-      alignItems: 'baseline',
-      justifyContent: 'space-between',
-      paddingTop: 4,
-      paddingBottom: 8,
-    },
-    budgetPct: { fontSize: 18, color: colors.ink },
-    meterTrack: { height: 5, backgroundColor: colors.rule, overflow: 'hidden' },
-    meterFill: { height: 5 },
-    lineRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: 12,
-      paddingVertical: 11,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: colors.rule,
-    },
-    lineMain: { flex: 1, gap: 2 },
-    lineFigure: { fontSize: 15, color: colors.ink },
-    compareRight: { alignItems: 'flex-end', gap: 2 },
-    donutRow: { flexDirection: 'row', alignItems: 'center', gap: 20, paddingVertical: 8 },
-    donutStats: { flex: 1, gap: 12 },
-    glossary: { gap: 10, paddingTop: 4 },
-    glossaryToggle: { color: colors.mist },
-    glossaryRow: { gap: 2 },
-    glossaryTerm: { color: colors.ink },
-  });
-}
+const styles = StyleSheet.create({
+  content: { padding: 20, paddingTop: 12, paddingBottom: 40, gap: 12 },
+  chipScroller: { marginHorizontal: -20 },
+  chipRow: { paddingHorizontal: 20, paddingTop: 4 },
+  navButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  hairline: { height: StyleSheet.hairlineWidth },
+});

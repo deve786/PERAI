@@ -5,20 +5,24 @@ import * as Haptics from 'expo-haptics';
 import { deleteIncome, type IncomeRow } from './db';
 import { prettyDate } from './dates';
 import { fmtMoney } from './stats';
-import { FONTS, useTheme } from './theme';
+import { useTheme } from './theme';
 import { ConfirmDialog, IconDot, Row, T } from './ui';
 
-export function IncomeItem({ e, showDate = true, onDeleted }: { e: IncomeRow; showDate?: boolean; onDeleted?: () => void }) {
+/** One income row, for use inside a card. The amount is moss with a "+". */
+export function IncomeItem({ e, showDate = true, onDeleted, last }: {
+  e: IncomeRow; showDate?: boolean; onDeleted?: () => void;
+  /** Last row in its card — no hairline under it. */
+  last?: boolean;
+}) {
   const { c, symbol } = useTheme();
   const router = useRouter();
   const [confirming, setConfirming] = useState(false);
   const meta = [
-    // Already the title when there's no note to show instead — repeating it
-    // here just duplicated the category name on screen.
-    e.note ? e.cat_name.toUpperCase() : null,
-    e.method.toUpperCase(),
-    showDate ? prettyDate(e.date).toUpperCase() : null,
-  ].filter(Boolean).join('  ·  ');
+    // The category is already the title when there's no note.
+    e.note ? e.cat_name : null,
+    e.method,
+    showDate ? prettyDate(e.date) : null,
+  ].filter(Boolean).join(' · ');
 
   function onLongPress() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
@@ -38,24 +42,21 @@ export function IncomeItem({ e, showDate = true, onDeleted }: { e: IncomeRow; sh
         onLongPress={onLongPress}
         accessibilityRole="button"
         style={({ pressed }) => ({
-          opacity: pressed ? 0.45 : 1,
-          paddingVertical: 11,
-          borderBottomWidth: StyleSheet.hairlineWidth,
+          opacity: pressed ? 0.5 : 1,
+          minHeight: 60,
+          paddingVertical: 10,
+          justifyContent: 'center',
+          borderBottomWidth: last ? 0 : StyleSheet.hairlineWidth,
           borderBottomColor: c.line,
-          backgroundColor: c.bg,
         })}
       >
         <Row style={{ gap: 12 }}>
-          <IconDot icon={e.cat_icon} color={e.cat_color} size={32} />
-          <View style={{ flex: 1, gap: 3 }}>
-            <Row style={{ justifyContent: 'space-between', gap: 12 }}>
-              <T size={15} weight="500" numberOfLines={1} style={{ flex: 1 }}>{e.note || e.cat_name}</T>
-              <T size={13} weight="500" tabular style={{ color: c.good }}>+{fmtMoney(e.amount, symbol)}</T>
-            </Row>
-            <T size={10} faint tabular style={{ fontFamily: FONTS.mono, letterSpacing: 0.9 }} numberOfLines={1}>
-              {meta}
-            </T>
+          <IconDot icon={e.cat_icon} color={e.cat_color} size={36} />
+          <View style={{ flex: 1 }}>
+            <T size={15} weight="500" numberOfLines={1}>{e.note || e.cat_name}</T>
+            {meta ? <T size={13} sub numberOfLines={1} style={{ marginTop: 1 }}>{meta}</T> : null}
           </View>
+          <T size={15} weight="500" tabular style={{ color: c.good }}>+{fmtMoney(e.amount, symbol)}</T>
         </Row>
       </Pressable>
       <ConfirmDialog

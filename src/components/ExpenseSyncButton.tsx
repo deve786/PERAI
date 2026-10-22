@@ -3,14 +3,14 @@ import { useRouter } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { isConfigured } from '@/expense/sync/client';
 import { useSync } from '@/expense/sync/useSync';
-import { useTheme } from '@/expense/theme';
+import { FONTS, useTheme } from '@/expense/theme';
 
 /**
- * Whether expense data is safe off this phone, in one glance.
- * Matches the Record tab's SyncButton:
- * - A filled/done cloud means everything is backed up
- * - An outline with a count means changes are waiting
- * - An offline outline means not signed in or offline
+ * Whether expense data is safe off this phone, in one glance — a small round
+ * button in the Money title row:
+ * - A done cloud means everything is backed up
+ * - An upload cloud with a count means changes are waiting
+ * - An offline cloud means not signed in, or the last sync failed
  * Tapping opens the Expense backup screen (/expense/account).
  */
 export function ExpenseSyncButton() {
@@ -35,7 +35,7 @@ export function ExpenseSyncButton() {
   return (
     <Pressable
       onPress={() => router.push('/expense/account')}
-      hitSlop={12}
+      hitSlop={6}
       accessibilityRole="button"
       accessibilityLabel={
         signedIn
@@ -44,20 +44,25 @@ export function ExpenseSyncButton() {
             : 'Expense backup: everything is saved'
           : 'Set up expense backup'
       }
+      style={({ pressed }) => [styles.wrap, { backgroundColor: c.well, opacity: pressed ? 0.6 : 1 }]}
     >
-      <View style={styles.wrap}>
-        <Ionicons name={icon} size={22} color={tint} />
-        {signedIn && waiting ? (
-          <Text style={[styles.count, { color: c.sub }]}>
+      <Ionicons name={icon} size={20} color={tint} />
+      {signedIn && waiting ? (
+        <View style={[styles.badge, { backgroundColor: c.solid, borderColor: c.bg }]}>
+          <Text style={[styles.count, { color: c.inkText }]}>
             {sync.pending > 99 ? '99+' : sync.pending}
           </Text>
-        ) : null}
-      </View>
+        </View>
+      ) : null}
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  count: { fontSize: 10, fontWeight: '600' },
+  wrap: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  badge: {
+    position: 'absolute', top: -4, right: -6, minWidth: 20, height: 20, borderRadius: 10,
+    paddingHorizontal: 4, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5,
+  },
+  count: { fontSize: 12, fontFamily: FONTS.monoMedium },
 });
