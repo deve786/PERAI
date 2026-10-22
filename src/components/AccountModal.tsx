@@ -15,11 +15,23 @@ import * as Haptics from 'expo-haptics';
 import { useTheme } from '@/ThemeContext';
 import { FONTS, SPACE, type Colors } from '@/theme';
 import {
+  adjustAccountBalance,
   saveAccount,
   deleteAccount,
+  listAccounts,
   type AccountItem,
   type AccountType,
 } from '@/expense/accountsDb';
+import { fmtMoney } from '@/expense/stats';
+
+type PayMethod = 'UPI' | 'Net banking' | 'None';
+
+/** How money put into a stock was paid. Anything but "None" comes out of a bank account. */
+const PAY_METHODS: { key: PayMethod; label: string }[] = [
+  { key: 'UPI', label: 'UPI' },
+  { key: 'Net banking', label: 'Net banking' },
+  { key: 'None', label: 'Not from a bank' },
+];
 
 interface Props {
   visible: boolean;
@@ -53,6 +65,37 @@ export function AccountModal({
   const [institution, setInstitution] = useState('');
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
+  const [banks, setBanks] = useState<AccountItem[]>([]);
+  // Null means "not chosen yet" — the defaults below apply until a tap.
+  const [payChoice, setPayChoice] = useState<PayMethod | null>(null);
+  const [bankChoice, setBankChoice] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!visible) return;
+    listAccounts({ type: 'bank' })
+      .then(setBanks)
+      .catch(() => setBanks([]));
+  }, [visible]);
+
+  // Money put into a stock comes out of a bank. A new stock: all of it. An
+  // edit: only an increase — and that defaults to "not from a bank", so
+  // updating the value to match the market never touches a bank by accident.
+  const parsed = parseFloat(balance.replace(/,/g, ''));
+  const added =
+    accType === 'stock' && !isNaN(parsed)
+      ? Math.round((parsed - (item ? item.balance : 0)) * 100) / 100
+      : 0;
+  const payMethod: PayMethod = payChoice ?? (item ? 'None' : 'UPI');
+  const fromBankId = bankChoice ?? (banks.length === 1 ? banks[0].id : null);
+  const paysFromBank = added > 0 && payMethod !== 'None';
+  const fromBank = paysFromBank ? banks.find((b) => b.id === fromBankId) ?? null : null;
+  const needsBank = paysFromBank && !fromBank;
+
+  const close = () => {
+    setPayChoice(null);
+    setBankChoice(null);
+    onClose();
+  };
 
   useEffect(() => {
     if (item) {
@@ -87,8 +130,11 @@ export function AccountModal({
         institution: institution.trim(),
         notes: notes.trim(),
       });
+      // The stock went up by money from this bank, so the bank goes down by
+      // the same — otherwise it's counted twice and the total climbs.
+      if (fromBank) await adjustAccountBalance(fromBank.id, -added);
       onSaved();
-      onClose();
+      close();
     } catch (err) {
       console.warn('Failed to save account:', err);
     } finally {
@@ -102,14 +148,14 @@ export function AccountModal({
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
       await deleteAccount(item.id);
       onSaved();
-      onClose();
+      close();
     } catch (err) {
       console.warn('Failed to delete account:', err);
     }
   };
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={close}>
       <KeyboardAvoidingView
         style={styles.backdrop}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -119,7 +165,7 @@ export function AccountModal({
             <Text style={[type.stamp, styles.headerTitle]}>
               {item ? 'EDIT ASSET / ACCOUNT' : 'ADD ASSET / ACCOUNT'}
             </Text>
-            <Pressable onPress={onClose} hitSlop={10}>
+            <Pressable onPress={close} hitSlop={10}>
               <Ionicons name="close" size={20} color={colors.graphite} />
             </Pressable>
           </View>
@@ -189,6 +235,63 @@ export function AccountModal({
               />
             </View>
 
+            {/* Where the money for a stock came from */}
+            {added > 0 ? (
+              <View style={styles.field}>
+                <Text style={type.label}>{item ? 'ADDED MONEY? PAID WITH' : 'PAID WITH'}</Text>
+                <View style={styles.chipRow}>
+                  {PAY_METHODS.map((m) => (
+                    <Pressable
+                      key={m.key}
+                      onPress={() => setPayChoice(m.key)}
+                      style={[styles.chip, payMethod === m.key && styles.chipActive]}
+                    >
+                      <Text style={[type.label, styles.chipText, payMethod === m.key && styles.chipTextActive]}>
+                        {m.label}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+
+                {paysFromBank ? (
+                  banks.length > 0 ? (
+                    <>
+                      <Text style={[type.label, styles.subLabel]}>FROM WHICH BANK</Text>
+                      <View style={styles.chipRow}>
+                        {banks.map((b) => (
+                          <Pressable
+                            key={b.id}
+                            onPress={() => setBankChoice(b.id)}
+                            style={[styles.chip, fromBankId === b.id && styles.chipActive]}
+                          >
+                            <Text style={[type.label, styles.chipText, fromBankId === b.id && styles.chipTextActive]}>
+                              {b.institution ? `${b.name} · ${b.institution}` : b.name}
+                            </Text>
+                          </Pressable>
+                        ))}
+                      </View>
+                      <Text style={[type.fine, fromBank && fromBank.balance < added ? styles.warn : styles.hint]}>
+                        {fromBank
+                          ? `${fmtMoney(added, '₹')} will be taken from ${fromBank.name}` +
+                            (fromBank.balance < added ? ` — it only has ${fmtMoney(fromBank.balance, '₹')}` : '')
+                          : 'Pick the bank this money came from.'}
+                      </Text>
+                    </>
+                  ) : (
+                    <Text style={[type.fine, styles.warn]}>
+                      Add a bank account first, or choose “Not from a bank”.
+                    </Text>
+                  )
+                ) : (
+                  <Text style={[type.fine, styles.hint]}>
+                    {item
+                      ? 'No bank changes — use this when the value went up by itself.'
+                      : 'No bank changes — use this for a holding you already had.'}
+                  </Text>
+                )}
+              </View>
+            ) : null}
+
             {/* Institution / Broker (Optional) */}
             <View style={styles.field}>
               <Text style={type.label}>INSTITUTION / BROKER (OPTIONAL)</Text>
@@ -223,10 +326,10 @@ export function AccountModal({
 
               <Pressable
                 onPress={handleSave}
-                disabled={saving || !name.trim() || !balance.trim()}
+                disabled={saving || !name.trim() || !balance.trim() || needsBank}
                 style={[
                   styles.saveBtn,
-                  (!name.trim() || !balance.trim()) && styles.saveBtnDisabled,
+                  (!name.trim() || !balance.trim() || needsBank) && styles.saveBtnDisabled,
                 ]}
               >
                 <Text style={[type.label, styles.saveBtnText]}>
@@ -302,6 +405,40 @@ function makeStyles(colors: Colors) {
     },
     field: {
       gap: 6,
+    },
+    chipRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+    },
+    chip: {
+      paddingVertical: 8,
+      paddingHorizontal: 12,
+      borderRadius: 6,
+      borderWidth: 1,
+      borderColor: colors.rule,
+      backgroundColor: colors.surface,
+    },
+    chipActive: {
+      backgroundColor: colors.ink,
+      borderColor: colors.ink,
+    },
+    chipText: {
+      color: colors.graphite,
+      fontSize: 10,
+    },
+    chipTextActive: {
+      color: colors.paper,
+      fontWeight: '600',
+    },
+    subLabel: {
+      marginTop: 6,
+    },
+    hint: {
+      color: colors.graphite,
+    },
+    warn: {
+      color: colors.alert,
     },
     input: {
       backgroundColor: colors.surface,
