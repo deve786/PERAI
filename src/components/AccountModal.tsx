@@ -22,6 +22,7 @@ import {
   type AccountItem,
   type AccountType,
 } from '@/expense/accountsDb';
+import { stockGain } from '@/expense/accountsLogic';
 import { METHODS } from '@/expense/db';
 import { fmtMoney } from '@/expense/stats';
 
@@ -77,23 +78,36 @@ export function AccountModal({
   }, [visible]);
 
   // Money put into a stock comes out of the account it was paid from — like
-  // an expense. A new stock: its whole value. An existing one: only what's
-  // typed into "Add money", so updating the value to match the market never
-  // takes money from anywhere.
+  // an expense. The top field is the money invested: on a new stock, all of
+  // it is paid now; on an existing one only "Add money" is, so correcting a
+  // number never takes money from anywhere. Profit is typed separately and
+  // never touches a bank — it's on paper until sold.
   const isStock = accType === 'stock';
   const [topUp, setTopUp] = useState('');
-  const parsed = parseFloat(balance.replace(/,/g, ''));
-  const parsedTopUp = parseFloat(topUp.replace(/,/g, ''));
+  const [profitKind, setProfitKind] = useState<'Profit' | 'Loss'>('Profit');
+  const [profitAmt, setProfitAmt] = useState('');
   const round = (n: number) => Math.round(n * 100) / 100;
+  const num = (text: string) => {
+    const n = parseFloat(text.replace(/,/g, ''));
+    return isNaN(n) ? NaN : round(n);
+  };
+  const parsed = num(balance);
+  const parsedTopUp = num(topUp);
   const added = !isStock
     ? 0
     : item
-    ? !isNaN(parsedTopUp) && parsedTopUp > 0
-      ? round(parsedTopUp)
+    ? parsedTopUp > 0
+      ? parsedTopUp
       : 0
-    : !isNaN(parsed) && parsed > 0
-    ? round(parsed)
+    : parsed > 0
+    ? parsed
     : 0;
+  const parsedProfit = Math.abs(num(profitAmt)) || 0;
+  const profit = profitKind === 'Loss' ? -parsedProfit : parsedProfit;
+  const investedTotal = isNaN(parsed) ? 0 : round(parsed + (item ? added : 0));
+  const stockValue = round(investedTotal + profit);
+  const profitPct = investedTotal > 0 ? Math.round((profit / investedTotal) * 1000) / 10 : null;
+
   const payMethod: PayMethod = payChoice ?? 'UPI';
   const paying = added > 0 && payMethod !== 'None';
   // Cash comes out of a cash account; UPI, Card and Bank out of a bank.
@@ -119,6 +133,8 @@ export function AccountModal({
     setPayChoice(null);
     setAccountChoice(null);
     setTopUp('');
+    setProfitKind('Profit');
+    setProfitAmt('');
     onClose();
   };
 
@@ -126,9 +142,21 @@ export function AccountModal({
     if (item) {
       setName(item.name);
       setAccType(item.type);
-      setBalance(String(item.balance));
       setInstitution(item.institution || '');
       setNotes(item.notes || '');
+      if (item.type === 'stock') {
+        // The stock opens as it was saved: its invested amount, its profit,
+        // and the payment method and bank it was paid from.
+        const gain = stockGain(item);
+        setBalance(String(gain.invested));
+        setProfitKind(gain.profit < 0 ? 'Loss' : 'Profit');
+        setProfitAmt(gain.profit ? String(Math.abs(gain.profit)) : '');
+        const saved = PAY_METHODS.find((m) => m.key === item.pay_method);
+        setPayChoice(saved ? saved.key : null);
+        setAccountChoice(item.pay_account_id ?? null);
+      } else {
+        setBalance(String(item.balance));
+      }
     } else {
       setName('');
       setAccType(initialType);
@@ -150,11 +178,16 @@ export function AccountModal({
         id: item?.id,
         name: trimmedName,
         type: accType,
-        // "Add money" on an existing stock goes on top of its value.
-        balance: round(numBalance + (item && isStock ? added : 0)),
+        // A stock's balance is its current value: invested + profit.
+        balance: isStock ? stockValue : round(numBalance),
         currency: '₹',
         institution: institution.trim(),
         notes: notes.trim(),
+        invested: isStock ? investedTotal : null,
+        pay_method: isStock ? payMethod : '',
+        // Remembered even when no money moves this time, so the stock
+        // reopens showing the bank it's paid from.
+        pay_account_id: isStock && payMethod !== 'None' ? chosen?.id ?? null : null,
       });
       // The stock went up by money from this account, so the account goes
       // down by the same — otherwise it's counted twice and the total climbs.
@@ -250,7 +283,9 @@ export function AccountModal({
 
             {/* Current Balance */}
             <View style={styles.field}>
-              <Text style={type.label}>CURRENT BALANCE / VALUE (₹)</Text>
+              <Text style={type.label}>
+                {!isStock ? 'CURRENT BALANCE / VALUE (₹)' : item ? 'INVESTED SO FAR (₹)' : 'AMOUNT INVESTED (₹)'}
+              </Text>
               <TextInput
                 value={balance}
                 onChangeText={setBalance}
@@ -259,6 +294,11 @@ export function AccountModal({
                 keyboardType="decimal-pad"
                 style={[styles.input, styles.balanceInput]}
               />
+              {isStock && item ? (
+                <Text style={[type.fine, styles.hint]}>
+                  Editing this only corrects the number. Put in more? Use Add money below.
+                </Text>
+              ) : null}
             </View>
 
             {/* Putting more money into a stock you already have */}
@@ -275,7 +315,7 @@ export function AccountModal({
                 />
                 <Text style={[type.fine, styles.hint]}>
                   {added > 0 && !isNaN(parsed)
-                    ? `New value will be ${fmtMoney(round(parsed + added), '₹')}`
+                    ? `Invested will be ${fmtMoney(investedTotal, '₹')}`
                     : 'Bought more? Type the amount here — it is taken from the account you pick below.'}
                 </Text>
               </View>
@@ -343,6 +383,45 @@ export function AccountModal({
                       : 'No balance changes — use this for a holding you already had.'}
                   </Text>
                 )}
+              </View>
+            ) : null}
+
+            {/* Profit or loss on a stock — on paper, never moves a bank */}
+            {isStock ? (
+              <View style={styles.field}>
+                <Text style={type.label}>PROFIT / LOSS (₹)</Text>
+                <View style={styles.chipRow}>
+                  {(['Profit', 'Loss'] as const).map((k) => (
+                    <Pressable
+                      key={k}
+                      onPress={() => setProfitKind(k)}
+                      style={[styles.chip, profitKind === k && styles.chipActive]}
+                    >
+                      <Text style={[type.label, styles.chipText, profitKind === k && styles.chipTextActive]}>
+                        {k}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+                <TextInput
+                  value={profitAmt}
+                  onChangeText={setProfitAmt}
+                  placeholder="0"
+                  placeholderTextColor={colors.mist}
+                  keyboardType="decimal-pad"
+                  style={styles.input}
+                />
+                <View style={styles.valueBox}>
+                  <Text style={[type.fine, styles.hint]}>CURRENT VALUE</Text>
+                  <Text style={[type.figure, styles.valueFigure]}>{fmtMoney(stockValue, '₹')}</Text>
+                  {profit !== 0 ? (
+                    <Text style={[type.fine, profit > 0 ? styles.gain : styles.warn]}>
+                      {profit > 0 ? '+' : '−'}
+                      {fmtMoney(Math.abs(profit), '₹')}
+                      {profitPct !== null ? ` (${profit > 0 ? '+' : '−'}${Math.abs(profitPct)}%)` : ''}
+                    </Text>
+                  ) : null}
+                </View>
               </View>
             ) : null}
 
@@ -493,6 +572,19 @@ function makeStyles(colors: Colors) {
     },
     warn: {
       color: colors.alert,
+    },
+    gain: {
+      color: colors.moss,
+    },
+    valueBox: {
+      flexDirection: 'row',
+      alignItems: 'baseline',
+      flexWrap: 'wrap',
+      gap: 8,
+      marginTop: 2,
+    },
+    valueFigure: {
+      color: colors.ink,
     },
     input: {
       backgroundColor: colors.surface,

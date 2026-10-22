@@ -11,6 +11,35 @@ export interface AccountItem {
   updated_at: string;
   dirty: number;
   deleted: number;
+  /** Stocks: the money put in. Null on stocks saved before this was tracked — their whole value counts as invested. */
+  invested?: number | null;
+  /** Stocks: how that money was paid ('UPI', 'Cash', …, 'None'), and from which bank/cash account. */
+  pay_method?: string;
+  pay_account_id?: string | null;
+}
+
+export interface StockGain {
+  invested: number;
+  value: number;
+  /** value − invested; negative for a loss. */
+  profit: number;
+  /** profit as a % of invested, or null when nothing was invested. */
+  percent: number | null;
+}
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/** A stock's invested amount, current value and profit. The value is what's stored as its balance (and counted in net worth). */
+export function stockGain(acc: Pick<AccountItem, 'balance' | 'invested'>): StockGain {
+  const value = round2(acc.balance || 0);
+  const invested = round2(acc.invested ?? value);
+  const profit = round2(value - invested);
+  return {
+    invested,
+    value,
+    profit,
+    percent: invested > 0 ? Math.round((profit / invested) * 1000) / 10 : null,
+  };
 }
 
 export interface NetWorthSummary {

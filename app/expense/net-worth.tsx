@@ -19,6 +19,7 @@ import {
   type AccountType,
   type NetWorthSummary,
 } from '@/expense/accountsDb';
+import { stockGain } from '@/expense/accountsLogic';
 import { AccountModal } from '@/components/AccountModal';
 import { fmtMoney } from '@/expense/stats';
 
@@ -436,19 +437,36 @@ export default function NetWorthScreen() {
         </View>
 
         {stockAccounts.length > 0 ? (
-          stockAccounts.map((acc) => (
-            <Pressable key={acc.id} onPress={() => openEdit(acc)} style={styles.accountRow}>
-              <View style={styles.accountMain}>
-                <Text style={[type.body, styles.accountName]}>{acc.name}</Text>
-                {acc.institution ? (
-                  <Text style={[type.fine, styles.accountSub]}>{acc.institution}</Text>
-                ) : null}
-              </View>
-              <Text style={[type.figure, styles.accountBalance]}>
-                {fmtMoney(acc.balance, '₹')}
-              </Text>
-            </Pressable>
-          ))
+          stockAccounts.map((acc) => {
+            const gain = stockGain(acc);
+            const payer = acc.pay_account_id ? accounts.find((a) => a.id === acc.pay_account_id) : undefined;
+            const paidWith = payer
+              ? `${acc.pay_method} · ${payer.institution || payer.name}`
+              : acc.pay_method && acc.pay_method !== 'None'
+              ? acc.pay_method
+              : '';
+            const sub = [acc.institution, paidWith].filter(Boolean).join(' · ');
+            return (
+              <Pressable key={acc.id} onPress={() => openEdit(acc)} style={styles.accountRow}>
+                <View style={styles.accountMain}>
+                  <Text style={[type.body, styles.accountName]}>{acc.name}</Text>
+                  {sub ? <Text style={[type.fine, styles.accountSub]}>{sub}</Text> : null}
+                </View>
+                <View style={{ alignItems: 'flex-end' }}>
+                  <Text style={[type.figure, styles.accountBalance]}>
+                    {fmtMoney(acc.balance, '₹')}
+                  </Text>
+                  {gain.profit !== 0 ? (
+                    <Text style={[type.fine, { color: gain.profit > 0 ? colors.moss : colors.alert }]}>
+                      {gain.profit > 0 ? '+' : '−'}
+                      {fmtMoney(Math.abs(gain.profit), '₹')}
+                      {gain.percent !== null ? ` (${gain.profit > 0 ? '+' : '−'}${Math.abs(gain.percent)}%)` : ''}
+                    </Text>
+                  ) : null}
+                </View>
+              </Pressable>
+            );
+          })
         ) : (
           <Pressable onPress={() => openNew('stock')} style={styles.emptyAddBox}>
             <Ionicons name="add-circle-outline" size={16} color={colors.mist} />

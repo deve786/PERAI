@@ -409,6 +409,10 @@ async function init() {
   await addColumnIfMissing(db, 'expense_items', 'quantity', "REAL NOT NULL DEFAULT 1");
   // Null means no budget, which is how every existing category starts.
   await addColumnIfMissing(db, 'categories', 'monthly_budget', 'REAL');
+  // Stocks: money put in (profit = value − this), and where it was paid from.
+  await addColumnIfMissing(db, 'accounts', 'invested', 'REAL');
+  await addColumnIfMissing(db, 'accounts', 'pay_method', "TEXT NOT NULL DEFAULT ''");
+  await addColumnIfMissing(db, 'accounts', 'pay_account_id', 'TEXT');
   // Which spending belongs to which PERAI entry (a trip, a weekend away).
   // It lives here, not in perai.db, because this zone already syncs tables
   // generically — see src/expense/sync/tables.ts. The id is derived from the

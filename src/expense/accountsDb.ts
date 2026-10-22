@@ -64,8 +64,8 @@ export async function saveAccount(
   const id = account.id || uuid();
 
   await db.runAsync(
-    `INSERT INTO accounts (id, name, type, balance, currency, notes, institution, updated_at, dirty, deleted)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0)
+    `INSERT INTO accounts (id, name, type, balance, currency, notes, institution, invested, pay_method, pay_account_id, updated_at, dirty, deleted)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0)
      ON CONFLICT(id) DO UPDATE SET
        name = excluded.name,
        type = excluded.type,
@@ -73,6 +73,9 @@ export async function saveAccount(
        currency = excluded.currency,
        notes = excluded.notes,
        institution = excluded.institution,
+       invested = excluded.invested,
+       pay_method = excluded.pay_method,
+       pay_account_id = excluded.pay_account_id,
        updated_at = excluded.updated_at,
        dirty = 1,
        deleted = 0`,
@@ -83,6 +86,9 @@ export async function saveAccount(
     account.currency || '₹',
     (account.notes || '').trim(),
     (account.institution || '').trim(),
+    account.invested ?? null,
+    account.pay_method || '',
+    account.pay_account_id || null,
     now
   );
 

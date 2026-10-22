@@ -60,6 +60,7 @@ import {
   type LinkableExpense,
 } from '../src/expense/tripSpending';
 import { tripSpendQuestion } from '../src/tripQuestion';
+import { stockGain } from '../src/expense/accountsLogic';
 import { needsTranslation, normalizeMoney, normalizeQuery } from '../src/manglish';
 import {
   changeLabel,
@@ -1762,6 +1763,18 @@ section('shared payment: which category');
   check('a new payee has no history', categoryFromHistory('Someone New', history, live) === null);
   check('the AI pick is used when it names a real category', knownCategoryName('ticket', ['Food', 'Ticket']) === 'Ticket');
   check('but not when it invents one', knownCategoryName('Snacks', ['Food', 'Ticket']) === null);
+}
+
+section('stock profit');
+{
+  const gain = stockGain({ balance: 11500, invested: 10000 });
+  check('profit is value minus invested', gain.profit === 1500 && gain.value === 11500 && gain.invested === 10000);
+  check('with a percentage', gain.percent === 15);
+  const loss = stockGain({ balance: 9200, invested: 10000 });
+  check('a loss is negative', loss.profit === -800 && loss.percent === -8);
+  const old = stockGain({ balance: 7000, invested: null });
+  check('an older stock counts its whole value as invested', old.invested === 7000 && old.profit === 0);
+  check('no percentage when nothing was invested', stockGain({ balance: 500, invested: 0 }).percent === null);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
