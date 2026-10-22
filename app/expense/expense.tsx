@@ -19,7 +19,7 @@ import { PlacePicker } from '@/expense/PlacePicker';
 import { fromStr, prettyDate, toStr, todayStr } from '@/expense/dates';
 import { noteBudgetCrossing } from '@/expense/budgetAlerts';
 import { numerals, radius, useTheme } from '@/expense/theme';
-import { Button, Chip, ConfirmDialog, Divider, Field, Header, IconDot, Money, Row, Screen, T } from '@/expense/ui';
+import { Button, Chip, ConfirmDialog, Divider, Field, ActionBar, IconDot, Money, Row, Screen, T } from '@/expense/ui';
 import { showDialog } from '@/dialogStore';
 
 type DraftItem = { name: string; qty: string; amount: string };
@@ -508,17 +508,12 @@ export default function ExpenseForm() {
   if (mode === 'view') {
     return (
       <Screen edges={['top', 'bottom']}>
+        <ActionBar
+          title="Expense"
+          onClose={() => router.back()}
+          actions={[{ label: 'Edit', onPress: () => setMode('edit') }]}
+        />
         <ScrollView contentContainerStyle={{ padding: 20, paddingTop: 12, paddingBottom: 32 }}>
-          <Header
-            title="Expense"
-            onClose={() => router.back()}
-            right={
-              <Pressable onPress={() => setMode('edit')} hitSlop={14} accessibilityLabel="Edit" style={{ marginRight: 14 }}>
-                <Ionicons name="pencil-outline" size={21} color={c.sub} />
-              </Pressable>
-            }
-          />
-
           <Row style={{ alignItems: 'center', gap: 10, marginTop: 10 }}>
             {cat && <IconDot icon={cat.icon} color={cat.color} size={44} />}
             <View style={{ flex: 1 }}>
@@ -624,13 +619,15 @@ export default function ExpenseForm() {
 
   return (
     <Screen edges={['top', 'bottom']}>
+      <ActionBar
+        title={editId ? 'Edit expense' : 'New expense'}
+        actions={[
+          { label: 'Cancel', onPress: editId ? () => setMode('view') : () => router.back() },
+          { label: 'Save', onPress: onSave, primary: true, disabled: !valid || saving },
+        ]}
+      />
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView contentContainerStyle={{ padding: 20, paddingTop: 12, paddingBottom: 32 }} keyboardShouldPersistTaps="handled">
-          <Header
-            title={editId ? 'Edit expense' : 'New expense'}
-            onClose={editId ? () => setMode('view') : () => router.back()}
-          />
-
           {!editId && (
             <Pressable
               onPress={handleScanReceipt}

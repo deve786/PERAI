@@ -195,6 +195,53 @@ export function Header({ title, subtitle, onClose, right }: {
   );
 }
 
+/**
+ * The title and its actions, pinned above a screen's scrolling content — so
+ * Edit, or Cancel and Save, are always in reach however far down the form
+ * you've scrolled. Put it outside the ScrollView, not in it.
+ */
+export function ActionBar({ title, onClose, actions }: {
+  title: string;
+  /** A close (✕) at the far right, for screens that just go back. */
+  onClose?: () => void;
+  actions?: { label: string; onPress: () => void; primary?: boolean; disabled?: boolean }[];
+}) {
+  const { c } = useTheme();
+  return (
+    <View style={{
+      flexDirection: 'row', alignItems: 'center', gap: 8,
+      paddingHorizontal: 20, paddingTop: 8, paddingBottom: 10,
+      backgroundColor: c.bg, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: c.line,
+    }}>
+      <T size={22} weight="700" style={{ flex: 1, letterSpacing: -0.4 }} numberOfLines={1}>{title}</T>
+      {(actions ?? []).map((a) => (
+        <Pressable
+          key={a.label}
+          onPress={a.onPress}
+          disabled={a.disabled}
+          hitSlop={6}
+          accessibilityRole="button"
+          style={({ pressed }) => ({
+            paddingVertical: 8, paddingHorizontal: 14, borderRadius: radius.md,
+            backgroundColor: a.primary ? c.ink : 'transparent',
+            borderWidth: a.primary ? 0 : StyleSheet.hairlineWidth, borderColor: c.line,
+            opacity: a.disabled ? 0.35 : pressed ? 0.65 : 1,
+          })}
+        >
+          <Text style={{ color: a.primary ? c.inkText : c.text, fontFamily: FONTS.monoMedium, fontSize: 12, letterSpacing: 1 }}>
+            {a.label.toUpperCase()}
+          </Text>
+        </Pressable>
+      ))}
+      {onClose ? (
+        <Pressable onPress={onClose} hitSlop={14} accessibilityLabel="Close" accessibilityRole="button" style={{ marginLeft: 2 }}>
+          <Ionicons name="close" size={24} color={c.sub} />
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
 /** A quiet category mark — a tinted circle, not a boxed icon badge. */
 export function IconDot({ icon, color, size = 36 }: { icon: string; color: string; size?: number }) {
   return (

@@ -12,7 +12,7 @@ import { listAccounts, type AccountItem } from '@/expense/accountsDb';
 import { PlacePicker } from '@/expense/PlacePicker';
 import { fromStr, prettyDate, toStr, todayStr } from '@/expense/dates';
 import { numerals, radius, useTheme } from '@/expense/theme';
-import { Button, Chip, ConfirmDialog, Divider, Field, Header, IconDot, Row, Screen, T } from '@/expense/ui';
+import { Button, Chip, ConfirmDialog, Divider, Field, ActionBar, IconDot, Row, Screen, T } from '@/expense/ui';
 
 type Mode = 'view' | 'edit';
 const parseAmt = (s: string) => parseFloat(s.replace(/,/g, ''));
@@ -105,17 +105,12 @@ export default function IncomeForm() {
   if (mode === 'view') {
     return (
       <Screen edges={['top', 'bottom']}>
+        <ActionBar
+          title="Income"
+          onClose={() => router.back()}
+          actions={[{ label: 'Edit', onPress: () => setMode('edit') }]}
+        />
         <ScrollView contentContainerStyle={{ padding: 20, paddingTop: 12, paddingBottom: 32 }}>
-          <Header
-            title="Income"
-            onClose={() => router.back()}
-            right={
-              <Pressable onPress={() => setMode('edit')} hitSlop={14} accessibilityLabel="Edit" style={{ marginRight: 14 }}>
-                <Ionicons name="pencil-outline" size={21} color={c.sub} />
-              </Pressable>
-            }
-          />
-
           <Row style={{ alignItems: 'center', gap: 10, marginTop: 10 }}>
             {cat && <IconDot icon={cat.icon} color={cat.color} size={44} />}
             <View style={{ flex: 1 }}>
@@ -181,13 +176,15 @@ export default function IncomeForm() {
 
   return (
     <Screen edges={['top', 'bottom']}>
+      <ActionBar
+        title={editId ? 'Edit income' : 'New income'}
+        actions={[
+          { label: 'Cancel', onPress: editId ? () => setMode('view') : () => router.back() },
+          { label: 'Save', onPress: onSave, primary: true, disabled: !valid },
+        ]}
+      />
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView contentContainerStyle={{ padding: 20, paddingTop: 12, paddingBottom: 32 }} keyboardShouldPersistTaps="handled">
-          <Header
-            title={editId ? 'Edit income' : 'New income'}
-            onClose={editId ? () => setMode('view') : () => router.back()}
-          />
-
           <Row style={{ alignItems: 'center', gap: 6, marginTop: 6, marginBottom: 22 }}>
             <T size={34} weight="600" style={{ color: c.good }}>{symbol}</T>
             <TextInput
