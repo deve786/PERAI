@@ -22,15 +22,14 @@ import {
   type AccountItem,
   type AccountType,
 } from '@/expense/accountsDb';
+import { METHODS } from '@/expense/db';
 import { fmtMoney } from '@/expense/stats';
 
-type PayMethod = 'UPI' | 'Net banking' | 'None';
-
-/** How money put into a stock was paid. Anything but "None" comes out of a bank account. */
+/** How money put into a stock was paid: the same choices as Add Expense, plus "Not paid" for a value that just grew. */
+type PayMethod = (typeof METHODS)[number] | 'None';
 const PAY_METHODS: { key: PayMethod; label: string }[] = [
-  { key: 'UPI', label: 'UPI' },
-  { key: 'Net banking', label: 'Net banking' },
-  { key: 'None', label: 'Not from a bank' },
+  ...METHODS.map((m) => ({ key: m, label: m })),
+  { key: 'None', label: 'Not paid' },
 ];
 
 interface Props {
@@ -65,35 +64,42 @@ export function AccountModal({
   const [institution, setInstitution] = useState('');
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
-  const [banks, setBanks] = useState<AccountItem[]>([]);
+  const [accounts, setAccounts] = useState<AccountItem[]>([]);
   // Null means "not chosen yet" — the defaults below apply until a tap.
   const [payChoice, setPayChoice] = useState<PayMethod | null>(null);
-  const [bankChoice, setBankChoice] = useState<string | null>(null);
+  const [accountChoice, setAccountChoice] = useState<string | null>(null);
 
   useEffect(() => {
     if (!visible) return;
-    listAccounts({ type: 'bank' })
-      .then(setBanks)
-      .catch(() => setBanks([]));
+    listAccounts()
+      .then(setAccounts)
+      .catch(() => setAccounts([]));
   }, [visible]);
 
-  // Money put into a stock comes out of a bank. A new stock: all of it. An
-  // edit: only an increase — and that defaults to "not from a bank", so
-  // updating the value to match the market never touches a bank by accident.
+  // Money put into a stock comes out of the account it was paid from — like
+  // an expense. A new stock: all of it. An edit: only an increase, and that
+  // defaults to "Not paid", so updating the value to match the market never
+  // takes money from anywhere by accident.
   const parsed = parseFloat(balance.replace(/,/g, ''));
   const added =
     accType === 'stock' && !isNaN(parsed)
       ? Math.round((parsed - (item ? item.balance : 0)) * 100) / 100
       : 0;
   const payMethod: PayMethod = payChoice ?? (item ? 'None' : 'UPI');
-  const fromBankId = bankChoice ?? (banks.length === 1 ? banks[0].id : null);
-  const paysFromBank = added > 0 && payMethod !== 'None';
-  const fromBank = paysFromBank ? banks.find((b) => b.id === fromBankId) ?? null : null;
-  const needsBank = paysFromBank && !fromBank;
+  const paying = added > 0 && payMethod !== 'None';
+  // Cash comes out of a cash account; UPI, Card and Bank out of a bank.
+  const sourceType: AccountType = payMethod === 'Cash' ? 'cash' : 'bank';
+  const sources = accounts.filter((a) => a.type === sourceType);
+  const chosen =
+    sources.find((a) => a.id === accountChoice) ?? (sources.length === 1 ? sources[0] : null);
+  const fromAccount = paying ? chosen : null;
+  // With accounts to pick from, one must be picked; with none, it saves
+  // without taking money from anywhere (and says so).
+  const needsAccount = paying && sources.length > 0 && !fromAccount;
 
   const close = () => {
     setPayChoice(null);
-    setBankChoice(null);
+    setAccountChoice(null);
     onClose();
   };
 
@@ -130,9 +136,9 @@ export function AccountModal({
         institution: institution.trim(),
         notes: notes.trim(),
       });
-      // The stock went up by money from this bank, so the bank goes down by
-      // the same — otherwise it's counted twice and the total climbs.
-      if (fromBank) await adjustAccountBalance(fromBank.id, -added);
+      // The stock went up by money from this account, so the account goes
+      // down by the same — otherwise it's counted twice and the total climbs.
+      if (fromAccount) await adjustAccountBalance(fromAccount.id, -added);
       onSaved();
       close();
     } catch (err) {
@@ -253,40 +259,44 @@ export function AccountModal({
                   ))}
                 </View>
 
-                {paysFromBank ? (
-                  banks.length > 0 ? (
+                {paying ? (
+                  sources.length > 0 ? (
                     <>
-                      <Text style={[type.label, styles.subLabel]}>FROM WHICH BANK</Text>
+                      <Text style={[type.label, styles.subLabel]}>
+                        {sourceType === 'cash' ? 'FROM WHICH CASH' : 'FROM WHICH BANK'}
+                      </Text>
                       <View style={styles.chipRow}>
-                        {banks.map((b) => (
+                        {sources.map((a) => (
                           <Pressable
-                            key={b.id}
-                            onPress={() => setBankChoice(b.id)}
-                            style={[styles.chip, fromBankId === b.id && styles.chipActive]}
+                            key={a.id}
+                            onPress={() => setAccountChoice(a.id)}
+                            style={[styles.chip, chosen?.id === a.id && styles.chipActive]}
                           >
-                            <Text style={[type.label, styles.chipText, fromBankId === b.id && styles.chipTextActive]}>
-                              {b.institution ? `${b.name} · ${b.institution}` : b.name}
+                            <Text style={[type.label, styles.chipText, chosen?.id === a.id && styles.chipTextActive]}>
+                              {a.institution ? `${a.name} · ${a.institution}` : a.name}
                             </Text>
                           </Pressable>
                         ))}
                       </View>
-                      <Text style={[type.fine, fromBank && fromBank.balance < added ? styles.warn : styles.hint]}>
-                        {fromBank
-                          ? `${fmtMoney(added, '₹')} will be taken from ${fromBank.name}` +
-                            (fromBank.balance < added ? ` — it only has ${fmtMoney(fromBank.balance, '₹')}` : '')
-                          : 'Pick the bank this money came from.'}
+                      <Text style={[type.fine, fromAccount && fromAccount.balance < added ? styles.warn : styles.hint]}>
+                        {fromAccount
+                          ? `${fmtMoney(added, '₹')} will be taken from ${fromAccount.name}` +
+                            (fromAccount.balance < added ? ` — it only has ${fmtMoney(fromAccount.balance, '₹')}` : '')
+                          : `Pick the ${sourceType === 'cash' ? 'cash account' : 'bank'} this money came from.`}
                       </Text>
                     </>
                   ) : (
-                    <Text style={[type.fine, styles.warn]}>
-                      Add a bank account first, or choose “Not from a bank”.
+                    <Text style={[type.fine, styles.hint]}>
+                      {sourceType === 'cash'
+                        ? 'No cash account saved, so no balance will change. Add one in Net Worth to track it.'
+                        : 'No bank account saved, so no balance will change. Add one in Net Worth to track it.'}
                     </Text>
                   )
                 ) : (
                   <Text style={[type.fine, styles.hint]}>
                     {item
-                      ? 'No bank changes — use this when the value went up by itself.'
-                      : 'No bank changes — use this for a holding you already had.'}
+                      ? 'No balance changes — use this when the value went up by itself.'
+                      : 'No balance changes — use this for a holding you already had.'}
                   </Text>
                 )}
               </View>
@@ -326,10 +336,10 @@ export function AccountModal({
 
               <Pressable
                 onPress={handleSave}
-                disabled={saving || !name.trim() || !balance.trim() || needsBank}
+                disabled={saving || !name.trim() || !balance.trim() || needsAccount}
                 style={[
                   styles.saveBtn,
-                  (!name.trim() || !balance.trim() || needsBank) && styles.saveBtnDisabled,
+                  (!name.trim() || !balance.trim() || needsAccount) && styles.saveBtnDisabled,
                 ]}
               >
                 <Text style={[type.label, styles.saveBtnText]}>
