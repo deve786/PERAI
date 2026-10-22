@@ -77,15 +77,24 @@ export function AccountModal({
   }, [visible]);
 
   // Money put into a stock comes out of the account it was paid from — like
-  // an expense. A new stock: all of it. An edit: only an increase, and that
-  // defaults to "Not paid", so updating the value to match the market never
-  // takes money from anywhere by accident.
+  // an expense. A new stock: its whole value. An existing one: only what's
+  // typed into "Add money", so updating the value to match the market never
+  // takes money from anywhere.
+  const isStock = accType === 'stock';
+  const [topUp, setTopUp] = useState('');
   const parsed = parseFloat(balance.replace(/,/g, ''));
-  const added =
-    accType === 'stock' && !isNaN(parsed)
-      ? Math.round((parsed - (item ? item.balance : 0)) * 100) / 100
-      : 0;
-  const payMethod: PayMethod = payChoice ?? (item ? 'None' : 'UPI');
+  const parsedTopUp = parseFloat(topUp.replace(/,/g, ''));
+  const round = (n: number) => Math.round(n * 100) / 100;
+  const added = !isStock
+    ? 0
+    : item
+    ? !isNaN(parsedTopUp) && parsedTopUp > 0
+      ? round(parsedTopUp)
+      : 0
+    : !isNaN(parsed) && parsed > 0
+    ? round(parsed)
+    : 0;
+  const payMethod: PayMethod = payChoice ?? 'UPI';
   const paying = added > 0 && payMethod !== 'None';
   // Cash comes out of a cash account; UPI, Card and Bank out of a bank.
   const sourceType: AccountType = payMethod === 'Cash' ? 'cash' : 'bank';
@@ -100,6 +109,7 @@ export function AccountModal({
   const close = () => {
     setPayChoice(null);
     setAccountChoice(null);
+    setTopUp('');
     onClose();
   };
 
@@ -131,7 +141,8 @@ export function AccountModal({
         id: item?.id,
         name: trimmedName,
         type: accType,
-        balance: Math.round(numBalance * 100) / 100,
+        // "Add money" on an existing stock goes on top of its value.
+        balance: round(numBalance + (item && isStock ? added : 0)),
         currency: '₹',
         institution: institution.trim(),
         notes: notes.trim(),
@@ -241,10 +252,30 @@ export function AccountModal({
               />
             </View>
 
-            {/* Where the money for a stock came from */}
-            {added > 0 ? (
+            {/* Putting more money into a stock you already have */}
+            {isStock && item ? (
               <View style={styles.field}>
-                <Text style={type.label}>{item ? 'ADDED MONEY? PAID WITH' : 'PAID WITH'}</Text>
+                <Text style={type.label}>ADD MONEY (₹)</Text>
+                <TextInput
+                  value={topUp}
+                  onChangeText={setTopUp}
+                  placeholder="0"
+                  placeholderTextColor={colors.mist}
+                  keyboardType="decimal-pad"
+                  style={styles.input}
+                />
+                <Text style={[type.fine, styles.hint]}>
+                  {added > 0 && !isNaN(parsed)
+                    ? `New value will be ${fmtMoney(round(parsed + added), '₹')}`
+                    : 'Bought more? Type the amount here — it is taken from the account you pick below.'}
+                </Text>
+              </View>
+            ) : null}
+
+            {/* Where the money for a stock came from */}
+            {isStock ? (
+              <View style={styles.field}>
+                <Text style={type.label}>PAID WITH</Text>
                 <View style={styles.chipRow}>
                   {PAY_METHODS.map((m) => (
                     <Pressable
@@ -259,7 +290,7 @@ export function AccountModal({
                   ))}
                 </View>
 
-                {paying ? (
+                {payMethod !== 'None' ? (
                   sources.length > 0 ? (
                     <>
                       <Text style={[type.label, styles.subLabel]}>
@@ -279,10 +310,14 @@ export function AccountModal({
                         ))}
                       </View>
                       <Text style={[type.fine, fromAccount && fromAccount.balance < added ? styles.warn : styles.hint]}>
-                        {fromAccount
-                          ? `${fmtMoney(added, '₹')} will be taken from ${fromAccount.name}` +
-                            (fromAccount.balance < added ? ` — it only has ${fmtMoney(fromAccount.balance, '₹')}` : '')
-                          : `Pick the ${sourceType === 'cash' ? 'cash account' : 'bank'} this money came from.`}
+                        {!chosen
+                          ? `Pick the ${sourceType === 'cash' ? 'cash account' : 'bank'} this money came from.`
+                          : added > 0
+                          ? `${fmtMoney(added, '₹')} will be taken from ${chosen.name}` +
+                            (chosen.balance < added ? ` — it only has ${fmtMoney(chosen.balance, '₹')}` : '')
+                          : item
+                          ? `Type an amount in Add money to take it from ${chosen.name}.`
+                          : `The value you type will be taken from ${chosen.name}.`}
                       </Text>
                     </>
                   ) : (
@@ -295,7 +330,7 @@ export function AccountModal({
                 ) : (
                   <Text style={[type.fine, styles.hint]}>
                     {item
-                      ? 'No balance changes — use this when the value went up by itself.'
+                      ? 'No balance changes — use this when you only update the value.'
                       : 'No balance changes — use this for a holding you already had.'}
                   </Text>
                 )}

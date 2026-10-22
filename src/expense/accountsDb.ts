@@ -44,7 +44,7 @@ export async function listAccounts(filter?: { type?: AccountType }): Promise<Acc
     params.push(filter.type);
   }
 
-  query += ' ORDER BY CASE type WHEN "bank" THEN 0 WHEN "cash" THEN 1 WHEN "stock" THEN 2 WHEN "crypto" THEN 3 ELSE 4 END, balance DESC';
+  query += " ORDER BY CASE type WHEN 'bank' THEN 0 WHEN 'cash' THEN 1 WHEN 'stock' THEN 2 WHEN 'crypto' THEN 3 ELSE 4 END, balance DESC";
   return db.getAllAsync<AccountItem>(query, ...(params as SQLite.SQLiteBindValue[]));
 }
 
