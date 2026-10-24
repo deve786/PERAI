@@ -56,6 +56,15 @@ function extractTitle(html: string): string | null {
   return null;
 }
 
+function normalizeWebsiteUrl(raw: string): string {
+  let url = raw.trim();
+  const tgMatch = url.match(/^(?:https?:\/\/)?t\.me\/([a-zA-Z0-9_]+)\/?$/i);
+  if (tgMatch && tgMatch[1] && tgMatch[1].toLowerCase() !== 's' && !tgMatch[1].startsWith('+') && tgMatch[1].toLowerCase() !== 'joinchat') {
+    return `https://t.me/s/${tgMatch[1]}`;
+  }
+  return url;
+}
+
 function validateUrl(url: string): void {
   try {
     const parsed = new URL(url);
@@ -152,12 +161,14 @@ async function scrapeWithRetry(url: string, retries = MAX_RETRIES): Promise<Webs
 }
 
 export async function scrapeWebsite(url: string): Promise<WebsiteData> {
-  validateUrl(url);
-  return scrapeWithRetry(url);
+  const normalized = normalizeWebsiteUrl(url);
+  validateUrl(normalized);
+  return scrapeWithRetry(normalized);
 }
 
 export async function addWebsite(url: string): Promise<WebsiteData> {
-  const data = await scrapeWebsite(url);
+  const normalized = normalizeWebsiteUrl(url);
+  const data = await scrapeWebsite(normalized);
   const db = await getSourcesDb();
 
   await db.runAsync(
