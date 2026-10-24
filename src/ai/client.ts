@@ -221,7 +221,10 @@ export function isGroqModel(model: string): boolean {
     model.startsWith('llama-') ||
     model.startsWith('mixtral-') ||
     model.startsWith('deepseek-') ||
-    model.startsWith('qwen-')
+    model.startsWith('qwen') ||
+    model.startsWith('openai/') ||
+    model.includes('gpt-oss') ||
+    model.includes('orpheus')
   );
 }
 
