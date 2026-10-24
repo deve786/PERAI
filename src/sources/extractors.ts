@@ -1,7 +1,8 @@
 /**
  * Text extraction from various file formats.
  */
-import * as FileSystem from 'expo-file-system';
+import { File } from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { getClient, EXTRACT_MODEL } from '@/ai/client';
 
 // Configuration
@@ -9,9 +10,54 @@ const MAX_RETRIES = 2;
 const RETRY_DELAY = 1000;
 const MAX_TEXT_LENGTH = 500000; // 500KB of text
 
+async function checkFileExists(filePath: string): Promise<boolean> {
+  try {
+    const file = new File(filePath);
+    if (typeof file.exists === 'boolean') {
+      return file.exists;
+    }
+  } catch {
+    // fallback
+  }
+  try {
+    const info = await FileSystem.getInfoAsync(filePath);
+    return info.exists;
+  } catch {
+    return false;
+  }
+}
+
+async function readFileAsText(filePath: string): Promise<string> {
+  try {
+    const file = new File(filePath);
+    if (typeof file.text === 'function') {
+      return await file.text();
+    }
+  } catch {
+    // fallback
+  }
+  return await FileSystem.readAsStringAsync(filePath, {
+    encoding: FileSystem.EncodingType.UTF8,
+  });
+}
+
+async function readFileAsBase64(filePath: string): Promise<string> {
+  try {
+    const file = new File(filePath);
+    if (typeof file.base64 === 'function') {
+      return await file.base64();
+    }
+  } catch {
+    // fallback
+  }
+  return await FileSystem.readAsStringAsync(filePath, {
+    encoding: FileSystem.EncodingType.Base64,
+  });
+}
+
 export async function extractText(filePath: string, fileType: string): Promise<string> {
-  const fileInfo = await FileSystem.getInfoAsync(filePath);
-  if (!fileInfo.exists) {
+  const exists = await checkFileExists(filePath);
+  if (!exists) {
     throw new Error('File not found');
   }
 
@@ -62,15 +108,11 @@ async function extractWithRetry(fn: () => Promise<string>): Promise<string> {
 }
 
 async function extractTextFile(filePath: string): Promise<string> {
-  return await FileSystem.readAsStringAsync(filePath, {
-    encoding: FileSystem.EncodingType.UTF8,
-  });
+  return await readFileAsText(filePath);
 }
 
 async function extractPdfWithGemini(filePath: string): Promise<string> {
-  const base64 = await FileSystem.readAsStringAsync(filePath, {
-    encoding: FileSystem.EncodingType.Base64,
-  });
+  const base64 = await readFileAsBase64(filePath);
 
   const prompt = `Extract all text from this PDF document.
 Return only the extracted text content, preserving structure where possible.
@@ -98,9 +140,7 @@ Do not add any commentary or explanations.`;
 }
 
 async function extractDocxWithGemini(filePath: string): Promise<string> {
-  const base64 = await FileSystem.readAsStringAsync(filePath, {
-    encoding: FileSystem.EncodingType.Base64,
-  });
+  const base64 = await readFileAsBase64(filePath);
 
   const prompt = `Extract all text from this Word document.
 Return only the extracted text content, preserving structure where possible.
@@ -128,9 +168,7 @@ Do not add any commentary or explanations.`;
 }
 
 async function extractImageWithGemini(filePath: string): Promise<string> {
-  const base64 = await FileSystem.readAsStringAsync(filePath, {
-    encoding: FileSystem.EncodingType.Base64,
-  });
+  const base64 = await readFileAsBase64(filePath);
 
   const prompt = `Extract all visible text from this image using OCR.
 Return only the extracted text, maintaining the reading order.

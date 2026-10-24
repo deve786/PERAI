@@ -2,7 +2,8 @@
  * Document upload, processing, and retrieval.
  */
 import * as DocumentPicker from 'expo-document-picker';
-import { File } from 'expo-file-system';
+import { File, Directory, Paths } from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { getSourcesDb, uuid } from './client';
 import { extractText } from './extractors';
 
@@ -28,17 +29,30 @@ export interface DocumentChunk {
   filename?: string;
 }
 
-const DOCUMENTS_DIR = `file:///data/user/0/com.perai.app/files/perai_documents/`;
-
 // File size limits (in bytes)
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB for images (OCR is expensive)
 const MIN_TEXT_LENGTH = 10; // Minimum characters after extraction
 
+function getDocumentsDirectory(): Directory {
+  try {
+    if (Paths && Paths.document) {
+      return new Directory(Paths.document, 'perai_documents');
+    }
+  } catch {}
+  const baseUri = FileSystem.documentDirectory || 'file:///data/user/0/com.perai.app/files/';
+  return new Directory(baseUri, 'perai_documents');
+}
+
 async function ensureDocumentsDir() {
-  const dir = new File(DOCUMENTS_DIR);
-  if (!dir.exists) {
-    dir.create({ intermediates: true });
+  try {
+    const dir = getDocumentsDirectory();
+    if (!dir.exists) {
+      dir.create({ intermediates: true });
+    }
+  } catch {
+    const baseUri = FileSystem.documentDirectory || 'file:///data/user/0/com.perai.app/files/';
+    await FileSystem.makeDirectoryAsync(`${baseUri}perai_documents/`, { intermediates: true }).catch(() => {});
   }
 }
 
@@ -101,14 +115,18 @@ export async function pickAndProcessDocument(): Promise<Document> {
   await ensureDocumentsDir();
 
   // Copy to permanent storage
-  const destPath = `${DOCUMENTS_DIR}${docId}_${filename}`;
+  const destFile = new File(getDocumentsDirectory(), `${docId}_${filename}`);
+  const destPath = destFile.uri;
 
   try {
     const sourceFile = new File(file.uri);
-    const destFile = new File(destPath);
     sourceFile.copy(destFile);
-  } catch (err) {
-    throw new Error(`Failed to save file: ${err instanceof Error ? err.message : String(err)}`);
+  } catch {
+    try {
+      await FileSystem.copyAsync({ from: file.uri, to: destPath });
+    } catch (err) {
+      throw new Error(`Failed to save file: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   // Save metadata first (unprocessed)
@@ -166,8 +184,13 @@ export async function pickAndProcessDocument(): Promise<Document> {
       const destFile = new File(destPath);
       if (destFile.exists) destFile.delete();
       await db.runAsync('DELETE FROM documents WHERE id = ?', [docId]);
-    } catch (cleanupErr) {
-      console.warn('Cleanup failed after document processing error:', cleanupErr);
+    } catch {
+      try {
+        await FileSystem.deleteAsync(destPath, { idempotent: true });
+        await db.runAsync('DELETE FROM documents WHERE id = ?', [docId]);
+      } catch (cleanupErr) {
+        console.warn('Cleanup failed after document processing error:', cleanupErr);
+      }
     }
 
     throw new Error(`Document processing failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -230,8 +253,12 @@ export async function deleteDocument(id: string): Promise<void> {
     try {
       const file = new File(doc.file_uri);
       if (file.exists) file.delete();
-    } catch (err) {
-      console.warn('Could not delete document file:', err);
+    } catch {
+      try {
+        await FileSystem.deleteAsync(doc.file_uri, { idempotent: true });
+      } catch (err) {
+        console.warn('Could not delete document file:', err);
+      }
     }
   }
 
