@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { askAI, type AskResult } from '@/ai/ask';
+import { askAIEnhanced, type EnhancedAskResult } from '@/ai/askEnhanced';
 import {
   looksLikeCommand,
   planCommand,
@@ -52,8 +53,26 @@ const TRY_ASKING = [
   'Where am I spending the most?',
 ];
 
-/** Which source(s) a found answer actually drew on — memories, Money data, or both. */
-function sourceLabel(result: AskResult): string {
+/** Which source(s) a found answer actually drew on — memories, Money data, or multi-source. */
+function sourceLabel(result: AskResult | EnhancedAskResult): string {
+  // Enhanced result with multiple sources
+  if ('sourcesUsed' in result && result.sourcesUsed) {
+    const sources = result.sourcesUsed;
+    if (sources.length === 0) return 'From your record';
+
+    const labels: string[] = [];
+    if (sources.includes('memory')) labels.push('memories');
+    if (sources.includes('expense')) labels.push('expenses');
+    if (sources.includes('document')) labels.push('documents');
+    if (sources.includes('website')) labels.push('websites');
+    if (sources.includes('telegram')) labels.push('Telegram');
+
+    if (labels.length === 1) return `From your ${labels[0]}`;
+    if (labels.length === 2) return `From ${labels[0]} and ${labels[1]}`;
+    return `From ${labels.slice(0, -1).join(', ')}, and ${labels[labels.length - 1]}`;
+  }
+
+  // Legacy result format
   const { evidence, usedExpenseData } = result;
   const memoryPart = evidence.length > 0 ? (evidence.length === 1 ? '1 entry' : `${evidence.length} entries`) : null;
   if (memoryPart && usedExpenseData) return `From ${memoryPart} and your Money entries`;
@@ -69,7 +88,7 @@ export default function AskScreen() {
   const [question, setQuestion] = useState('');
   const [asking, setAsking] = useState('');
   /** The conversation, newest first — a follow-up is answered knowing these. */
-  const [thread, setThread] = useState<{ question: string; result: AskResult }[]>([]);
+  const [thread, setThread] = useState<{ question: string; result: AskResult | EnhancedAskResult }[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /** A change worked out from an instruction, waiting to be confirmed. */
@@ -232,7 +251,7 @@ export default function AskScreen() {
       const tripAnswer = trip ? await answerTripSpend(trip) : null;
 
       const result =
-        tripAnswer ?? (await askAI(q, new Date().toISOString(), all, history, expenseContext));
+        tripAnswer ?? (await askAIEnhanced(q, new Date().toISOString(), all, history, expenseContext));
       scrollToNewest.current = true;
       setThread((current) => [{ question: q, result }, ...current]);
       await saveQuestion(q);
@@ -346,7 +365,7 @@ export default function AskScreen() {
         >
           <Header
             title="Ask"
-            subtitle="About your notes and your money"
+            subtitle="Search across notes, money, documents, websites & Telegram"
             right={
               thread.length > 0 && !busy ? (
                 <PillButton label="Clear" icon="refresh" onPress={() => setThread([])} />
