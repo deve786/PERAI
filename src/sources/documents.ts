@@ -32,7 +32,7 @@ export interface DocumentChunk {
 // File size limits (in bytes)
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB for images (OCR is expensive)
-const MIN_TEXT_LENGTH = 10; // Minimum characters after extraction
+const MIN_TEXT_LENGTH = 3; // Minimum characters after extraction
 
 function getDocumentsDirectory(): Directory {
   try {
@@ -56,12 +56,14 @@ async function ensureDocumentsDir() {
   }
 }
 
-function getFileType(mimeType?: string): Document['fileType'] {
-  if (!mimeType) return 'other';
-  if (mimeType.includes('pdf')) return 'pdf';
-  if (mimeType.includes('wordprocessingml')) return 'docx';
-  if (mimeType.includes('text/plain')) return 'txt';
-  if (mimeType.includes('image/')) return 'image';
+function getFileType(mimeType?: string, filename?: string): Document['fileType'] {
+  const mime = (mimeType || '').toLowerCase();
+  const name = (filename || '').toLowerCase();
+
+  if (mime.includes('pdf') || name.endsWith('.pdf')) return 'pdf';
+  if (mime.includes('wordprocessingml') || mime.includes('msword') || name.endsWith('.docx') || name.endsWith('.doc')) return 'docx';
+  if (mime.includes('text/plain') || name.endsWith('.txt') || name.endsWith('.csv') || name.endsWith('.md')) return 'txt';
+  if (mime.startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp|heic)$/i.test(name)) return 'image';
   return 'other';
 }
 
@@ -92,9 +94,10 @@ export async function pickAndProcessDocument(): Promise<Document> {
 
   const file = result.assets[0];
 
-  // Validate file size
+  // Validate file size and type
   const fileSize = file.size || 0;
-  const fileType = getFileType(file.mimeType);
+  const filename = file.name || 'document';
+  const fileType = getFileType(file.mimeType, filename);
 
   if (fileType === 'image' && fileSize > MAX_IMAGE_SIZE) {
     throw new Error(`Image too large. Maximum size is ${MAX_IMAGE_SIZE / 1024 / 1024}MB`);
@@ -109,37 +112,50 @@ export async function pickAndProcessDocument(): Promise<Document> {
   }
 
   const docId = uuid();
-  const filename = file.name;
   const now = new Date().toISOString();
 
   await ensureDocumentsDir();
 
   // Copy to permanent storage
-  const destFile = new File(getDocumentsDirectory(), `${docId}_${filename}`);
-  const destPath = destFile.uri;
+  const baseUri = FileSystem.documentDirectory || 'file:///data/user/0/com.perai.app/files/';
+  const sanitizedName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const destPath = `${baseUri}perai_documents/${docId}_${sanitizedName}`;
 
+  let copied = false;
+  // 1. Try legacy copyAsync first (most reliable on Android for content:// and file:// cache URIs)
   try {
-    const sourceFile = new File(file.uri);
-    sourceFile.copy(destFile);
-  } catch {
+    await FileSystem.copyAsync({ from: file.uri, to: destPath });
+    copied = true;
+  } catch (copyErr) {
+    console.warn('FileSystem.copyAsync failed, trying File.copy:', copyErr);
+  }
+
+  // 2. Fallback to new File().copy() if copyAsync failed
+  if (!copied) {
     try {
-      await FileSystem.copyAsync({ from: file.uri, to: destPath });
-    } catch (err) {
-      throw new Error(`Failed to save file: ${err instanceof Error ? err.message : String(err)}`);
+      const sourceFile = new File(file.uri);
+      const destFile = new File(destPath);
+      await sourceFile.copy(destFile);
+      copied = true;
+    } catch (sourceErr) {
+      console.warn('sourceFile.copy failed:', sourceErr);
     }
   }
+
+  // If both file copy methods failed, fallback to picker cache uri directly
+  const finalStoragePath = copied ? destPath : file.uri;
 
   // Save metadata first (unprocessed)
   const db = await getSourcesDb();
   await db.runAsync(
     `INSERT INTO documents (id, filename, file_type, file_size, file_uri, uploaded_at, processed, chunk_count, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?)`,
-    [docId, filename, fileType, fileSize, destPath, now, now]
+    [docId, filename, fileType, fileSize, finalStoragePath, now, now]
   );
 
   // Extract text in background
   try {
-    const text = await extractText(destPath, fileType);
+    const text = await extractText(finalStoragePath, fileType, file.uri);
 
     // Validate extracted text
     if (!text || text.trim().length < MIN_TEXT_LENGTH) {
@@ -172,25 +188,21 @@ export async function pickAndProcessDocument(): Promise<Document> {
       filename,
       fileType,
       fileSize,
-      fileUri: destPath,
+      fileUri: finalStoragePath,
       uploadedAt: now,
       processed: true,
       chunkCount: chunks.length,
       updatedAt: now,
     };
   } catch (err) {
-    // Clean up: delete file and database record on failure
+    // Clean up: delete copied file and database record on failure
     try {
-      const destFile = new File(destPath);
-      if (destFile.exists) destFile.delete();
-      await db.runAsync('DELETE FROM documents WHERE id = ?', [docId]);
-    } catch {
-      try {
-        await FileSystem.deleteAsync(destPath, { idempotent: true });
-        await db.runAsync('DELETE FROM documents WHERE id = ?', [docId]);
-      } catch (cleanupErr) {
-        console.warn('Cleanup failed after document processing error:', cleanupErr);
+      if (copied) {
+        await FileSystem.deleteAsync(destPath, { idempotent: true }).catch(() => {});
       }
+      await db.runAsync('DELETE FROM documents WHERE id = ?', [docId]).catch(() => {});
+    } catch (cleanupErr) {
+      console.warn('Cleanup failed after document processing error:', cleanupErr);
     }
 
     throw new Error(`Document processing failed: ${err instanceof Error ? err.message : String(err)}`);
