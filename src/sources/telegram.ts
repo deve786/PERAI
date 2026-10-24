@@ -10,6 +10,7 @@ export interface TelegramChannel {
   lastSyncedAt: string | null;
   autoSync: boolean;
   createdAt: string;
+  messagesSaved?: number;
 }
 
 export interface TelegramMessage {
@@ -208,6 +209,7 @@ export async function addTelegramChannel(
       lastSyncedAt: now,
       autoSync: true,
       createdAt: now,
+      messagesSaved: messages.length,
     };
   } catch (err) {
     throw new Error(`Could not add Telegram channel: ${err instanceof Error ? err.message : String(err)}`);
@@ -357,3 +359,41 @@ export async function getTelegramMessageCount(): Promise<number> {
   );
   return result?.count || 0;
 }
+
+export async function getChannelMessageCounts(): Promise<Record<string, number>> {
+  const db = await getSourcesDb();
+  const rows = await db.getAllAsync<{ channel_id: string; channel_name: string | null; count: number }>(
+    `SELECT channel_id, channel_name, COUNT(*) as count
+     FROM telegram_messages
+     WHERE deleted = 0
+     GROUP BY channel_id, channel_name`
+  );
+  const result: Record<string, number> = {};
+  for (const row of rows) {
+    if (row.channel_id) {
+      result[row.channel_id] = (result[row.channel_id] || 0) + row.count;
+    }
+    if (row.channel_name) {
+      const lower = row.channel_name.toLowerCase();
+      result[lower] = (result[lower] || 0) + row.count;
+    }
+  }
+  return result;
+}
+
+export async function getChannelMessageCount(channelUsername: string, channelId?: string): Promise<number> {
+  const db = await getSourcesDb();
+  const clean = channelUsername.replace(/^@/, '').toLowerCase();
+  const row = await db.getFirstAsync<{ count: number }>(
+    `SELECT COUNT(*) as count FROM telegram_messages
+     WHERE deleted = 0 AND (
+       channel_id = ?
+       OR channel_name = ?
+       OR LOWER(channel_name) LIKE ?
+       OR LOWER(channel_name) LIKE ?
+     )`,
+    [channelId || '', channelUsername, `%${clean}%`, `%${channelUsername}%`]
+  );
+  return row?.count || 0;
+}
+

@@ -318,3 +318,12 @@ export async function getDocument(id: string): Promise<Document | null> {
     updatedAt: row.updated_at,
   };
 }
+
+export async function getTotalDocumentChunks(): Promise<number> {
+  const db = await getSourcesDb();
+  const row = await db.getFirstAsync<{ count: number }>(
+    'SELECT COUNT(*) as count FROM document_chunks WHERE document_id IN (SELECT id FROM documents WHERE deleted = 0)'
+  );
+  return row?.count || 0;
+}
+

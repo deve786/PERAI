@@ -210,11 +210,11 @@ export async function listWebsites(): Promise<WebsiteData[]> {
   }));
 }
 
-export async function refreshWebsite(id: string): Promise<void> {
+export async function refreshWebsite(id: string): Promise<WebsiteData> {
   const db = await getSourcesDb();
 
-  const existing = await db.getFirstAsync<{ url: string }>(
-    'SELECT url FROM website_data WHERE id = ? AND deleted = 0',
+  const existing = await db.getFirstAsync<{ url: string; refresh_interval: number; auto_refresh: number }>(
+    'SELECT url, refresh_interval, auto_refresh FROM website_data WHERE id = ? AND deleted = 0',
     [id]
   );
 
@@ -228,6 +228,13 @@ export async function refreshWebsite(id: string): Promise<void> {
      WHERE id = ?`,
     [data.title, data.content, data.lastUpdated, id]
   );
+
+  return {
+    ...data,
+    id,
+    refreshInterval: existing.refresh_interval,
+    autoRefresh: existing.auto_refresh === 1,
+  };
 }
 
 export async function deleteWebsite(id: string): Promise<void> {

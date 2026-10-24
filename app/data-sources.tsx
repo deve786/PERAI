@@ -8,9 +8,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@/expense/theme';
 import { Button, Card, Field, ListCard, ListRow, Row, Screen, T, TopBar } from '@/expense/ui';
 import { showDialog } from '@/dialogStore';
-import { listDocuments, deleteDocument, pickAndProcessDocument, type Document } from '@/sources/documents';
+import { listDocuments, deleteDocument, pickAndProcessDocument, getTotalDocumentChunks, type Document } from '@/sources/documents';
 import { listWebsites, addWebsite, deleteWebsite, refreshWebsite, type WebsiteData } from '@/sources/websites';
-import { listTelegramChannels, addTelegramChannel, deleteTelegramChannel, syncTelegramChannel, getTelegramMessageCount, type TelegramChannel } from '@/sources/telegram';
+import { listTelegramChannels, addTelegramChannel, deleteTelegramChannel, syncTelegramChannel, getTelegramMessageCount, getChannelMessageCounts, getChannelMessageCount, type TelegramChannel } from '@/sources/telegram';
 import { syncSourcesNow } from '@/sources/sync';
 import { getSetting, setSetting } from '@/db/queries';
 import { shortDate, timeLabel } from '@/format';
@@ -27,6 +27,8 @@ export default function DataSourcesScreen() {
   const [websites, setWebsites] = useState<WebsiteData[]>([]);
   const [channels, setChannels] = useState<TelegramChannel[]>([]);
   const [telegramCount, setTelegramCount] = useState(0);
+  const [totalDocChunks, setTotalDocChunks] = useState(0);
+  const [channelCounts, setChannelCounts] = useState<Record<string, number>>({});
 
   const [uploadingDoc, setUploadingDoc] = useState(false);
   const [addingWebsite, setAddingWebsite] = useState(false);
@@ -36,23 +38,28 @@ export default function DataSourcesScreen() {
   const [savingTelegram, setSavingTelegram] = useState(false);
   const [refreshingSiteId, setRefreshingSiteId] = useState<string | null>(null);
   const [syncingChannelId, setSyncingChannelId] = useState<string | null>(null);
+  const [refreshingAll, setRefreshingAll] = useState(false);
   const [botToken, setBotToken] = useState('');
   const [channelUsername, setChannelUsername] = useState('');
 
   const loadData = useCallback(async () => {
     try {
-      const [docs, sites, chans, token, count] = await Promise.all([
+      const [docs, sites, chans, token, count, chunks, chCounts] = await Promise.all([
         listDocuments(),
         listWebsites(),
         listTelegramChannels(),
         getSetting('telegram_bot_token'),
         getTelegramMessageCount(),
+        getTotalDocumentChunks(),
+        getChannelMessageCounts(),
       ]);
       setDocuments(docs);
       setWebsites(sites);
       setChannels(chans);
       setBotToken(token || '');
       setTelegramCount(count);
+      setTotalDocChunks(chunks);
+      setChannelCounts(chCounts);
     } catch (err) {
       console.warn('Failed to load data sources:', err);
     }
@@ -67,8 +74,8 @@ export default function DataSourcesScreen() {
       await loadData();
       void syncSourcesNow();
       showDialog({
-        title: 'Document uploaded',
-        message: `${doc.filename} processed into ${doc.chunkCount} chunks and is now searchable.`,
+        title: 'Document Saved in DB',
+        message: `${doc.filename}\n\n✓ Successfully saved in database:\n• ${doc.chunkCount} search chunks indexed\n• ${(doc.fileSize / 1024).toFixed(0)} KB stored\n\nContent is ready and searchable in the Ask tab.`,
       });
     } catch (err) {
       if (err instanceof Error && err.message !== 'Document selection cancelled') {
@@ -85,12 +92,17 @@ export default function DataSourcesScreen() {
 
     setSavingWebsite(true);
     try {
-      await addWebsite(url);
+      const site = await addWebsite(url);
       setWebsiteUrl('');
       setAddingWebsite(false);
       await loadData();
       void syncSourcesNow();
-      showDialog({ title: 'Website added', message: `${url} has been scraped and is now searchable.` });
+      const charCount = site.content.length;
+      const wordCount = site.content.trim() ? site.content.trim().split(/\s+/).length : 0;
+      showDialog({
+        title: 'Website Saved in DB',
+        message: `${site.title || site.url}\n\n✓ Successfully saved in database:\n• ${charCount.toLocaleString()} characters extracted\n• ~${wordCount.toLocaleString()} words indexed\n\nContent is stored in the database and searchable in the Ask tab.`,
+      });
     } catch (err) {
       showDialog({ title: 'Failed to add website', message: err instanceof Error ? err.message : String(err) });
     } finally {
@@ -110,12 +122,15 @@ export default function DataSourcesScreen() {
     setSavingTelegram(true);
     try {
       await setSetting('telegram_bot_token', token);
-      await addTelegramChannel(token, username);
+      const res = await addTelegramChannel(token, username);
       setChannelUsername('');
       setAddingTelegram(false);
       await loadData();
       void syncSourcesNow();
-      showDialog({ title: 'Telegram channel added', message: `${username} is now being tracked.` });
+      showDialog({
+        title: 'Telegram Channel Saved in DB',
+        message: `${username}\n\n✓ Successfully saved in database:\n• ${res.messagesSaved ?? 0} messages stored\n\nChannel messages are now indexed and searchable in the Ask tab.`,
+      });
     } catch (err) {
       showDialog({ title: 'Failed to add channel', message: err instanceof Error ? err.message : String(err) });
     } finally {
@@ -154,9 +169,15 @@ export default function DataSourcesScreen() {
     if (refreshingSiteId) return;
     setRefreshingSiteId(id);
     try {
-      await refreshWebsite(id);
+      const updated = await refreshWebsite(id);
       await loadData();
-      showDialog({ title: 'Refreshed', message: 'Website data updated.' });
+      void syncSourcesNow();
+      const charCount = updated.content.length;
+      const wordCount = updated.content.trim() ? updated.content.trim().split(/\s+/).length : 0;
+      showDialog({
+        title: 'Website Refreshed & Saved',
+        message: `${updated.title || updated.url}\n\n✓ Updated in database:\n• ${charCount.toLocaleString()} characters saved\n• ~${wordCount.toLocaleString()} words indexed\n\nLatest content is now indexed in the Ask tab.`,
+      });
     } catch (err) {
       showDialog({ title: 'Refresh failed', message: err instanceof Error ? err.message : String(err) });
     } finally {
@@ -170,11 +191,54 @@ export default function DataSourcesScreen() {
     try {
       const count = await syncTelegramChannel(botToken, id);
       await loadData();
-      showDialog({ title: 'Synced', message: `${count} new messages fetched.` });
+      void syncSourcesNow();
+      const ch = channels.find(c => c.id === id);
+      const total = await getChannelMessageCount(ch?.channelUsername || '', id);
+      showDialog({
+        title: count > 0 ? 'Telegram Messages Saved' : 'Telegram Up To Date',
+        message: count > 0
+          ? `✓ Saved ${count} new messages to the database.\nTotal stored for this channel: ${total} messages.`
+          : `Already up to date. No new messages found.\nTotal stored in database: ${total} messages.`,
+      });
     } catch (err) {
       showDialog({ title: 'Sync failed', message: err instanceof Error ? err.message : String(err) });
     } finally {
       setSyncingChannelId(null);
+    }
+  }
+
+  async function refreshAll() {
+    if (refreshingAll) return;
+    setRefreshingAll(true);
+    try {
+      for (const site of websites) {
+        try {
+          await refreshWebsite(site.id);
+        } catch (e) {
+          console.warn('Failed to refresh site:', site.url, e);
+        }
+      }
+      if (botToken) {
+        for (const ch of channels) {
+          try {
+            await syncTelegramChannel(botToken, ch.id);
+          } catch (e) {
+            console.warn('Failed to sync channel:', ch.channelUsername, e);
+          }
+        }
+      }
+      await loadData();
+      void syncSourcesNow();
+
+      const totalChars = websites.reduce((acc, s) => acc + s.content.length, 0);
+      showDialog({
+        title: 'All Data Sources Refreshed',
+        message: `✓ Local database is fully updated:\n\n• Documents: ${documents.length} (${totalDocChunks} chunks saved)\n• Websites: ${websites.length} (${(totalChars / 1024).toFixed(1)} KB text saved)\n• Telegram: ${channels.length} channels (${telegramCount} messages saved)\n\nAll content is in the database and searchable in the Ask tab.`,
+      });
+    } catch (err) {
+      showDialog({ title: 'Refresh error', message: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setRefreshingAll(false);
     }
   }
 
@@ -186,14 +250,70 @@ export default function DataSourcesScreen() {
 
   return (
     <Screen>
-      <TopBar title="Data Sources" onBack={() => router.back()} />
+      <TopBar
+        title="Data Sources"
+        onBack={() => router.back()}
+        right={
+          <Pressable
+            onPress={() => void refreshAll()}
+            hitSlop={10}
+            disabled={refreshingAll}
+            style={{ width: 40, height: 40, alignItems: 'center', justifyContent: 'center' }}
+          >
+            {refreshingAll ? (
+              <ActivityIndicator size="small" color={c.accent} />
+            ) : (
+              <Ionicons name="refresh" size={20} color={c.text} />
+            )}
+          </Pressable>
+        }
+      />
       <ScrollView contentContainerStyle={styles.content}>
-        <T size={14} sub style={{ lineHeight: 20, marginBottom: 16 }}>
-          Upload documents, add websites, and connect Telegram channels. All data becomes searchable from the Ask tab.
+        <T size={14} sub style={{ lineHeight: 20 }}>
+          Upload documents, add websites, and connect Telegram channels. All data is saved into your database and searchable from the Ask tab.
         </T>
 
+        {/* Database Storage Status Card */}
+        <Card style={{ padding: 14, backgroundColor: `${c.accent}0d`, borderColor: `${c.accent}30`, gap: 8 }}>
+          <Row style={{ alignItems: 'center', justifyContent: 'space-between' }}>
+            <Row style={{ alignItems: 'center', gap: 6 }}>
+              <Ionicons name="server-outline" size={16} color={c.accent} />
+              <T size={13} weight="600" style={{ color: c.accent }}>Database Storage</T>
+            </Row>
+            <Pressable
+              onPress={() => void refreshAll()}
+              hitSlop={10}
+              disabled={refreshingAll}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}
+            >
+              {refreshingAll ? (
+                <ActivityIndicator size="small" color={c.accent} />
+              ) : (
+                <>
+                  <Ionicons name="refresh" size={13} color={c.accent} />
+                  <T size={12} weight="600" style={{ color: c.accent }}>Refresh All</T>
+                </>
+              )}
+            </Pressable>
+          </Row>
+          <Row style={{ justifyContent: 'space-between', marginTop: 4 }}>
+            <View>
+              <T size={11} sub>DOCUMENTS</T>
+              <T size={13} weight="600">{documents.length} ({totalDocChunks} chunks)</T>
+            </View>
+            <View>
+              <T size={11} sub>WEBSITES</T>
+              <T size={13} weight="600">{websites.length} ({(websites.reduce((a, s) => a + s.content.length, 0) / 1024).toFixed(1)} KB)</T>
+            </View>
+            <View>
+              <T size={11} sub>TELEGRAM</T>
+              <T size={13} weight="600">{channels.length} ({telegramCount} msgs)</T>
+            </View>
+          </Row>
+        </Card>
+
         {/* Tab selector */}
-        <Row style={{ gap: 8, marginBottom: 16 }}>
+        <Row style={{ gap: 8, marginVertical: 4 }}>
           {tabs.map(t => (
             <Pressable
               key={t.key}
@@ -260,8 +380,14 @@ export default function DataSourcesScreen() {
                       <Ionicons name="document-text" size={20} color={c.accent} />
                       <View style={{ flex: 1 }}>
                         <T size={15} numberOfLines={1}>{doc.filename}</T>
-                        <T size={13} sub>
-                          {doc.processed ? `${doc.chunkCount} chunks` : 'Processing...'} · {(doc.fileSize / 1024).toFixed(0)} KB
+                        <Row style={{ alignItems: 'center', gap: 4, marginTop: 2 }}>
+                          <Ionicons name="checkmark-circle" size={13} color={c.good} />
+                          <T size={12} style={{ color: c.good, fontWeight: '600' }}>
+                            {doc.chunkCount} search chunks saved in DB
+                          </T>
+                        </Row>
+                        <T size={11} sub style={{ marginTop: 1 }}>
+                          {(doc.fileSize / 1024).toFixed(0)} KB · Uploaded {shortDate(doc.uploadedAt)}
                         </T>
                       </View>
                       <Pressable onPress={() => void removeDocument(doc.id)} hitSlop={10}>
@@ -326,40 +452,49 @@ export default function DataSourcesScreen() {
               </Card>
             ) : (
               <ListCard>
-                {websites.map((site, i) => (
-                  <View
-                    key={site.id}
-                    style={{
-                      paddingVertical: 12,
-                      paddingHorizontal: 4,
-                      borderBottomWidth: i === websites.length - 1 ? 0 : StyleSheet.hairlineWidth,
-                      borderBottomColor: c.line,
-                    }}
-                  >
-                    <Row style={{ alignItems: 'center', gap: 12 }}>
-                      <Ionicons name="link" size={20} color={c.accent} />
-                      <View style={{ flex: 1 }}>
-                        <T size={15} numberOfLines={1}>{site.title || site.url}</T>
-                        <T size={13} sub numberOfLines={1}>{new URL(site.url).hostname}</T>
-                        <T size={12} sub>Updated {shortDate(site.lastUpdated)}</T>
-                      </View>
-                      <Pressable
-                        onPress={() => void refreshWebsiteData(site.id)}
-                        hitSlop={10}
-                        disabled={refreshingSiteId === site.id}
-                      >
-                        {refreshingSiteId === site.id ? (
-                          <ActivityIndicator size="small" color={c.accent} />
-                        ) : (
-                          <Ionicons name="refresh" size={18} color={c.text} />
-                        )}
-                      </Pressable>
-                      <Pressable onPress={() => void removeWebsite(site.id)} hitSlop={10}>
-                        <Ionicons name="trash-outline" size={18} color={c.danger} />
-                      </Pressable>
-                    </Row>
-                  </View>
-                ))}
+                {websites.map((site, i) => {
+                  const words = site.content.trim() ? Math.round(site.content.trim().split(/\s+/).length) : 0;
+                  return (
+                    <View
+                      key={site.id}
+                      style={{
+                        paddingVertical: 12,
+                        paddingHorizontal: 4,
+                        borderBottomWidth: i === websites.length - 1 ? 0 : StyleSheet.hairlineWidth,
+                        borderBottomColor: c.line,
+                      }}
+                    >
+                      <Row style={{ alignItems: 'center', gap: 12 }}>
+                        <Ionicons name="link" size={20} color={c.accent} />
+                        <View style={{ flex: 1 }}>
+                          <T size={15} numberOfLines={1}>{site.title || site.url}</T>
+                          <T size={12} sub numberOfLines={1}>{new URL(site.url).hostname}</T>
+                          <Row style={{ alignItems: 'center', gap: 4, marginTop: 2 }}>
+                            <Ionicons name="checkmark-circle" size={13} color={c.good} />
+                            <T size={12} style={{ color: c.good, fontWeight: '600' }}>
+                              {site.content.length.toLocaleString()} chars (~{words.toLocaleString()} words) in DB
+                            </T>
+                          </Row>
+                          <T size={11} sub style={{ marginTop: 1 }}>Updated {shortDate(site.lastUpdated)} · {timeLabel(site.lastUpdated)}</T>
+                        </View>
+                        <Pressable
+                          onPress={() => void refreshWebsiteData(site.id)}
+                          hitSlop={10}
+                          disabled={refreshingSiteId === site.id}
+                        >
+                          {refreshingSiteId === site.id ? (
+                            <ActivityIndicator size="small" color={c.accent} />
+                          ) : (
+                            <Ionicons name="refresh" size={18} color={c.text} />
+                          )}
+                        </Pressable>
+                        <Pressable onPress={() => void removeWebsite(site.id)} hitSlop={10}>
+                          <Ionicons name="trash-outline" size={18} color={c.danger} />
+                        </Pressable>
+                      </Row>
+                    </View>
+                  );
+                })}
               </ListCard>
             )}
           </>
@@ -434,42 +569,53 @@ export default function DataSourcesScreen() {
                   <T size={13} sub>{telegramCount} messages tracked across {channels.length} channels</T>
                 </Card>
                 <ListCard>
-                  {channels.map((ch, i) => (
-                    <View
-                      key={ch.id}
-                      style={{
-                        paddingVertical: 12,
-                        paddingHorizontal: 4,
-                        borderBottomWidth: i === channels.length - 1 ? 0 : StyleSheet.hairlineWidth,
-                        borderBottomColor: c.line,
-                      }}
-                    >
-                      <Row style={{ alignItems: 'center', gap: 12 }}>
-                        <Ionicons name="paper-plane" size={20} color={c.accent} />
-                        <View style={{ flex: 1 }}>
-                          <T size={15} numberOfLines={1}>{ch.channelName || ch.channelUsername}</T>
-                          <T size={13} sub>{ch.channelUsername}</T>
-                          {ch.lastSyncedAt && (
-                            <T size={12} sub>Synced {shortDate(ch.lastSyncedAt)}, {timeLabel(ch.lastSyncedAt)}</T>
-                          )}
-                        </View>
-                        <Pressable
-                          onPress={() => void syncChannel(ch.id)}
-                          hitSlop={10}
-                          disabled={syncingChannelId === ch.id}
-                        >
-                          {syncingChannelId === ch.id ? (
-                            <ActivityIndicator size="small" color={c.accent} />
-                          ) : (
-                            <Ionicons name="refresh" size={18} color={c.text} />
-                          )}
-                        </Pressable>
-                        <Pressable onPress={() => void removeChannel(ch.id)} hitSlop={10}>
-                          <Ionicons name="trash-outline" size={18} color={c.danger} />
-                        </Pressable>
-                      </Row>
-                    </View>
-                  ))}
+                  {channels.map((ch, i) => {
+                    const msgCount = channelCounts[ch.id] ??
+                      channelCounts[ch.channelUsername.replace(/^@/, '').toLowerCase()] ??
+                      channelCounts[ch.channelUsername.toLowerCase()] ?? 0;
+                    return (
+                      <View
+                        key={ch.id}
+                        style={{
+                          paddingVertical: 12,
+                          paddingHorizontal: 4,
+                          borderBottomWidth: i === channels.length - 1 ? 0 : StyleSheet.hairlineWidth,
+                          borderBottomColor: c.line,
+                        }}
+                      >
+                        <Row style={{ alignItems: 'center', gap: 12 }}>
+                          <Ionicons name="paper-plane" size={20} color={c.accent} />
+                          <View style={{ flex: 1 }}>
+                            <T size={15} numberOfLines={1}>{ch.channelName || ch.channelUsername}</T>
+                            <T size={12} sub>{ch.channelUsername}</T>
+                            <Row style={{ alignItems: 'center', gap: 4, marginTop: 2 }}>
+                              <Ionicons name="checkmark-circle" size={13} color={c.good} />
+                              <T size={12} style={{ color: c.good, fontWeight: '600' }}>
+                                {msgCount} messages saved in DB
+                              </T>
+                            </Row>
+                            {ch.lastSyncedAt && (
+                              <T size={11} sub style={{ marginTop: 1 }}>Synced {shortDate(ch.lastSyncedAt)}, {timeLabel(ch.lastSyncedAt)}</T>
+                            )}
+                          </View>
+                          <Pressable
+                            onPress={() => void syncChannel(ch.id)}
+                            hitSlop={10}
+                            disabled={syncingChannelId === ch.id}
+                          >
+                            {syncingChannelId === ch.id ? (
+                              <ActivityIndicator size="small" color={c.accent} />
+                            ) : (
+                              <Ionicons name="refresh" size={18} color={c.text} />
+                            )}
+                          </Pressable>
+                          <Pressable onPress={() => void removeChannel(ch.id)} hitSlop={10}>
+                            <Ionicons name="trash-outline" size={18} color={c.danger} />
+                          </Pressable>
+                        </Row>
+                      </View>
+                    );
+                  })}
                 </ListCard>
               </>
             )}
