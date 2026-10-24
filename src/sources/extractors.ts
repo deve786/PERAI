@@ -168,9 +168,13 @@ async function extractTextFile(filePath: string, fallbackUri?: string): Promise<
 async function extractPdfWithGemini(filePath: string, fallbackUri?: string): Promise<string> {
   const base64 = await readFileAsBase64(filePath, fallbackUri);
 
-  const prompt = `Extract all text from this PDF document.
-Return only the extracted text content, preserving structure where possible.
-Do not add any commentary or explanations.`;
+  const prompt = `Extract all text and tabular data from this PDF document.
+CRITICAL TABLE FORMATTING RULES:
+1. If the document contains any tables, schedules, or timetables (such as ship voyage schedules), you MUST format each table as a clean, complete GitHub-Flavored Markdown table with pipe (|) separators.
+2. For ship or voyage schedules, ensure each vessel (e.g. MV A/SEA, MV L/SEA, MV LAGOONS, MV CORALS) has its own dedicated column header, and place each cell under its exact matching column.
+3. Preserve all dates, times, island port codes (AND, KLP, KVT, AGT, AMN, KDM, KLT, CHT, BTR, MCY), and notes exactly as written.
+4. Do not omit any rows or columns.
+5. Return only the extracted markdown content without conversational commentary.`;
 
   try {
     const client = getClient();

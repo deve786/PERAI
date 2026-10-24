@@ -94,15 +94,16 @@ FOR LAKSHADWEEP SHIP SCHEDULES & VOYAGE TABLES:
   * MCY = Minicoy
 - HOW TO TRACE A VOYAGE (CRITICAL):
   Each ship (MV A/SEA, MV L/SEA, MV LAGOONS, MV CORALS) has its own dedicated column across dates.
-  To find the next ship from Kochi to a specific island (e.g. Androth / AND):
-  1. Find the cell where the requested island code (e.g. "AND") appears in the table.
-  2. Identify WHICH ship column has that cell (e.g. MV LAGOONS on 30/10/26 has "AND KLP").
-  3. Trace up in that EXACT SAME ship's column to the preceding day to find its departure from Kochi (e.g. MV LAGOONS on 29/10/26 has "KOCHI Dept.1800").
-  4. Verify that this departure is in the future relative to "Current local time".
-  5. DO NOT assume a ship departing Kochi goes to the requested island unless that SAME vessel visits that island on the next day! For example:
-     - On 25/10/26, MV A/SEA departs Kochi at 1430, but visits KLT CHT (Kiltan & Chetlat) on 26/10/26 — it does NOT go to Androth!
-     - The true next ship to Androth is MV Lagoons, departing Kochi on 29/10/26 at 18:00 (reaching Androth on 30/10/26 at 08:00).
-  6. Always state the correct vessel name, departure date/time from Kochi, and arrival date/time at the island.
+  A voyage from Kochi to an island consists of:
+  * A cell with "KOCHI Dept.[time]" in that ship's column.
+  * The NEXT cell in the SAME column on the following day listing the destination island code (e.g. "AND" or "AGT").
+  When the user asks for the NEXT ship from Kochi to an island, find the earliest departure from Kochi on or after "Current local time" whose immediate next stop in the same ship's column is that island.
+  - For Agatti (AGT):
+    * On 25/10/26, MV A/SEA departs Kochi at 1430, but visits KLT CHT (Kiltan & Chetlat) on 26/10 — it does NOT go to Agatti!
+    * On 26/10/26, MV Lagoons has "KOCHI Dept.1430" and on 27/10/26 it has "KVT AGT" (Kavaratti & Agatti). So the next ship from Kochi to Agatti is MV Lagoons on 26 October 2026 at 14:30!
+  - For Androth (AND):
+    * On 29/10/26, MV Lagoons has "KOCHI Dept.1800" and on 30/10/26 it has "AND KLP" (Androth & Kalpeni). So the next ship from Kochi to Androth is MV Lagoons on 29 October 2026 at 18:00!
+  Never connect a Kochi departure from one ship with an island code from a different ship column or different day!
 
 LANGUAGE:
 - Answer in the same language and script the question used. A question in Malayalam script is answered in Malayalam script; Manglish in Manglish; English in English. Dates, amounts, and names stay exactly as recorded.`;
