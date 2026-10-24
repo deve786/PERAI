@@ -16,6 +16,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { UpdateBanner } from '@/components/UpdateBanner';
 import { initDatabase } from '@/db/client';
 import { getSetting } from '@/db/queries';
+import { initSourcesDb } from '@/sources/client';
 import { startOverdueSweep } from '@/overdue';
 import { startReminderSync } from '@/reminders';
 import { applySavedVoiceLanguage } from '@/settings';
@@ -78,7 +79,7 @@ export default function RootLayout() {
   // JS thread, and doing that during module evaluation deadlocks the wasm
   // worker on web. By the time this runs the thread is idle.
   useEffect(() => {
-    initDatabase()
+    Promise.all([initDatabase(), initSourcesDb()])
       .then(() => setDbReady(true))
       .catch((err) =>
         setDbError(err instanceof Error ? err.message : String(err))
@@ -152,6 +153,7 @@ function ThemedApp() {
         <Stack.Screen name="expense/categories" options={{ presentation: 'modal' }} />
         <Stack.Screen name="expense/account" options={{ presentation: 'modal' }} />
         <Stack.Screen name="expense/whats-new" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="data-sources" options={{ presentation: 'modal' }} />
       </Stack>
       <UpdateBanner />
       {/* The app's own popups, so a question about your record looks like the
