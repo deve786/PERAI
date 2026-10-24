@@ -237,9 +237,9 @@ export interface PublicTelegramResult {
 
 export async function fetchPublicTelegramChannel(
   username: string,
-  daysToScrape = 30,
-  maxPages = 150,
-  maxPhotosToOcr = 8
+  daysToScrape = 21,
+  maxPages = 12,
+  maxPhotosToOcr = 2
 ): Promise<PublicTelegramResult> {
   const clean = username.replace(/^@/, '').replace(/^(?:https?:\/\/)?t\.me\/(?:s\/)?/, '').replace(/\/$/, '').trim();
   let nextUrl: string | null = `https://t.me/s/${clean}`;
@@ -372,19 +372,24 @@ export async function fetchPublicTelegramChannel(
 
   unique.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
-  // OCR the latest attached photos (up to maxPhotosToOcr) to read posters, timetables, and notices
-  let ocrProcessed = 0;
-  for (const m of unique) {
-    if (m.photos && m.photos.length > 0 && ocrProcessed < maxPhotosToOcr) {
-      ocrProcessed++;
-      const ocrResult = await ocrTelegramPhoto(m.photos[0]);
-      if (ocrResult) {
-        m.ocrText = ocrResult;
-        m.text = m.text
-          ? `${m.text}\n\n[Extracted Poster/Image Text]:\n${ocrResult}`
-          : `[Extracted Poster/Image Text]:\n${ocrResult}`;
-      }
-    }
+  // OCR the latest attached photos (up to maxPhotosToOcr) concurrently in parallel
+  const photosToOcr = unique.filter(m => m.photos && m.photos.length > 0).slice(0, maxPhotosToOcr);
+  if (photosToOcr.length > 0) {
+    await Promise.all(
+      photosToOcr.map(async (m) => {
+        try {
+          const ocrResult = await ocrTelegramPhoto(m.photos[0]);
+          if (ocrResult) {
+            m.ocrText = ocrResult;
+            m.text = m.text
+              ? `${m.text}\n\n[Extracted Poster/Image Text]:\n${ocrResult}`
+              : `[Extracted Poster/Image Text]:\n${ocrResult}`;
+          }
+        } catch (e) {
+          console.warn('[telegram-ocr] Parallel OCR error:', e);
+        }
+      })
+    );
   }
 
   const now = new Date().toISOString();

@@ -39,10 +39,10 @@ export async function retrieveRelevantContent(
   } = {}
 ): Promise<RetrievalResult> {
   const {
-    maxMemories = 100,
-    maxDocuments = 50,
-    maxWebsites = 10,
-    maxTelegram = 50,
+    maxMemories = 40,
+    maxDocuments = 12,
+    maxWebsites = 6,
+    maxTelegram = 20,
   } = options;
 
   // Retrieve from all sources in parallel
