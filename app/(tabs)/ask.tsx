@@ -55,7 +55,6 @@ const TRY_ASKING = [
 
 /** Which source(s) a found answer actually drew on — memories, Money data, or multi-source. */
 function sourceLabel(result: AskResult | EnhancedAskResult): string {
-  // Enhanced result with multiple sources
   if ('sourcesUsed' in result && result.sourcesUsed) {
     const sources = result.sourcesUsed;
     if (sources.length === 0) return 'From your record';
@@ -72,12 +71,11 @@ function sourceLabel(result: AskResult | EnhancedAskResult): string {
     return `From ${labels.slice(0, -1).join(', ')}, and ${labels[labels.length - 1]}`;
   }
 
-  // Legacy result format
-  const { evidence, usedExpenseData } = result;
-  const memoryPart = evidence.length > 0 ? (evidence.length === 1 ? '1 entry' : `${evidence.length} entries`) : null;
-  if (memoryPart && usedExpenseData) return `From ${memoryPart} and your Money entries`;
+  const legacyResult = result as AskResult;
+  const memoryPart = legacyResult.evidence.length > 0 ? (legacyResult.evidence.length === 1 ? '1 entry' : `${legacyResult.evidence.length} entries`) : null;
+  if (memoryPart && legacyResult.usedExpenseData) return `From ${memoryPart} and your Money entries`;
   if (memoryPart) return `From ${memoryPart}`;
-  if (usedExpenseData) return 'From your Money entries';
+  if (legacyResult.usedExpenseData) return 'From your Money entries';
   return 'From your record';
 }
 
@@ -250,8 +248,9 @@ export default function AskScreen() {
       const trip = tripSpendQuestion(q, all);
       const tripAnswer = trip ? await answerTripSpend(trip) : null;
 
+      const expenseContextStr = typeof expenseContext === 'string' ? expenseContext : undefined;
       const result =
-        tripAnswer ?? (await askAIEnhanced(q, new Date().toISOString(), all, history, expenseContext));
+        tripAnswer ?? (await askAIEnhanced(q, new Date().toISOString(), all, history, expenseContextStr));
       scrollToNewest.current = true;
       setThread((current) => [{ question: q, result }, ...current]);
       await saveQuestion(q);
@@ -428,8 +427,11 @@ export default function AskScreen() {
                         <View style={styles.evidence}>
                           {/* Rows draw a hairline under themselves; this hides the last one. */}
                           <View style={styles.evidenceInner}>
-                            {result.evidence.map((memory) => (
-                              <MemoryRow key={memory.id} memory={memory} gutter="date" />
+                            {result.evidence.map((item) => (
+                              <View key={item.id} style={{ paddingVertical: 6 }}>
+                                <Text style={type.body}>{'title' in item ? item.title : ''}</Text>
+                                <Text style={type.fine}>{'subtitle' in item ? item.subtitle : ''}</Text>
+                              </View>
                             ))}
                           </View>
                         </View>

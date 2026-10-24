@@ -3,7 +3,7 @@
  */
 import type { Memory } from '../types';
 import type { ExpenseRow } from '@/expense/db';
-import { ASK_MODEL, requestJson } from './client';
+import { ASK_MODEL, getClient } from './client';
 import { retrieveRelevantContent, buildUnifiedContext, formatEvidence, type EvidenceItem } from '@/sources/multiSourceRetrieval';
 import { conversationQuery, HISTORY_TURNS, type AskTurn } from './ask';
 
@@ -52,7 +52,7 @@ const ENHANCED_ANSWER_SCHEMA = {
   },
   required: ['found', 'answer', 'headline', 'items', 'usedSourceIds', 'sourcesUsed'],
   additionalProperties: false,
-} as const;
+};
 
 const ENHANCED_SYSTEM_PROMPT = `You answer questions about one person using their recorded data from multiple sources:
 1. PERSONAL MEMORIES - things they recorded in their notes
@@ -72,13 +72,6 @@ ABSOLUTE RULE: answer ONLY from the data provided in these five sections.
 - When answering from Telegram, mention the channel name.
 - Preserve dates, amounts, and facts exactly as recorded.
 
-Examples:
-- Question about spending → check MEMORIES and EXPENSE DATA
-- Question about a document's content → check DOCUMENTS
-- Question about website info → check WEBSITE DATA
-- Question about Telegram updates → check TELEGRAM MESSAGES
-- Question needing multiple sources → combine data from all relevant sections
-
 Answer briefly and factually. If data exists across multiple sources, synthesize it.`;
 
 export async function askAIEnhanced(
@@ -88,16 +81,10 @@ export async function askAIEnhanced(
   history: AskTurn[] = [],
   expenseContext?: string
 ): Promise<EnhancedAskResult> {
-  // Build search query from conversation
   const searchQuery = conversationQuery(question, history);
-
-  // Retrieve from all sources
   const retrieval = await retrieveRelevantContent(searchQuery, nowISO, allMemories);
-
-  // Build unified context
   const context = buildUnifiedContext(retrieval, expenseContext);
 
-  // Build conversation history
   const recentHistory = history.slice(-HISTORY_TURNS);
   let historyPrompt = '';
   if (recentHistory.length > 0) {
@@ -114,61 +101,36 @@ CURRENT QUESTION: ${question}
 Answer from the data provided above. Cite source IDs you use.`;
 
   try {
-    const response = await requestJson({
+    const client = getClient();
+    const response = await client.models.generateContent({
       model: ASK_MODEL,
-      systemInstruction: { parts: [{ text: ENHANCED_SYSTEM_PROMPT }] },
-      contents: [{ parts: [{ text: userMessage }] }],
-      generationConfig: {
+      config: {
+        systemInstruction: ENHANCED_SYSTEM_PROMPT,
         responseMimeType: 'application/json',
         responseSchema: ENHANCED_ANSWER_SCHEMA,
       },
+      contents: userMessage,
     });
 
-    const reply = JSON.parse(response.candidates[0].content.parts[0].text);
-
-    // Format evidence from all sources
+    const reply = JSON.parse(response.text || '{}');
     const allEvidence = formatEvidence(retrieval);
 
-    // Filter to only cited evidence
     const usedIds = new Set(reply.usedSourceIds || []);
-    const citedEvidence = allEvidence.filter(e => {
-      // Match based on source type and index
-      const memories = retrieval.memories;
-      const documents = retrieval.documentChunks;
-      const websites = retrieval.websites;
-      const telegrams = retrieval.telegramMessages;
+    const citedEvidence = allEvidence.filter(e => usedIds.has(e.refId));
 
-      if (e.type === 'memory') {
-        const idx = memories.findIndex(m => m.id === e.id);
-        return usedIds.has(`M${idx}`);
-      }
-      if (e.type === 'document') {
-        const idx = documents.findIndex(d => d.id === e.id);
-        return usedIds.has(`D${idx}`);
-      }
-      if (e.type === 'website') {
-        const idx = websites.findIndex(w => w.id === e.id);
-        return usedIds.has(`W${idx}`);
-      }
-      if (e.type === 'telegram') {
-        const idx = telegrams.findIndex(t => t.id === e.id);
-        return usedIds.has(`T${idx}`);
-      }
-      return false;
-    });
-
-    // If no evidence cited, downgrade to "not found"
-    const found = reply.found && citedEvidence.length > 0;
+    const sourcesUsed: Array<'memory' | 'expense' | 'document' | 'website' | 'telegram'> = Array.isArray(reply.sourcesUsed)
+      ? reply.sourcesUsed
+      : [];
 
     return {
-      answer: reply.answer || 'No answer found.',
-      items: reply.items || [],
-      headline: reply.headline,
+      answer: reply.answer || 'No relevant information found.',
+      items: Array.isArray(reply.items) ? reply.items : [],
+      headline: reply.headline || null,
       evidence: citedEvidence,
-      sourcesUsed: reply.sourcesUsed || [],
-      found,
+      sourcesUsed,
+      found: Boolean(reply.found),
     };
   } catch (err) {
-    throw new Error(`AI request failed: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(`Enhanced ask failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }

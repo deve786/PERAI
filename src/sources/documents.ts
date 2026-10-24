@@ -2,12 +2,33 @@
  * Document upload, processing, and retrieval.
  */
 import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system';
+import { File } from 'expo-file-system';
 import { getSourcesDb, uuid } from './client';
-import type { Document, DocumentChunk } from './types';
 import { extractText } from './extractors';
 
-const DOCUMENTS_DIR = `${FileSystem.documentDirectory}perai_documents/`;
+export interface Document {
+  id: string;
+  filename: string;
+  fileType: 'pdf' | 'docx' | 'txt' | 'image' | 'other';
+  fileSize: number;
+  fileUri: string;
+  uploadedAt: string;
+  processed: boolean;
+  chunkCount: number;
+  updatedAt: string;
+}
+
+export interface DocumentChunk {
+  id: string;
+  documentId: string;
+  chunkIndex: number;
+  content: string;
+  pageNumber: number | null;
+  createdAt: string;
+  filename?: string;
+}
+
+const DOCUMENTS_DIR = `file:///data/user/0/com.perai.app/files/perai_documents/`;
 
 // File size limits (in bytes)
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
@@ -15,9 +36,9 @@ const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB for images (OCR is expensive)
 const MIN_TEXT_LENGTH = 10; // Minimum characters after extraction
 
 async function ensureDocumentsDir() {
-  const info = await FileSystem.getInfoAsync(DOCUMENTS_DIR);
-  if (!info.exists) {
-    await FileSystem.makeDirectoryAsync(DOCUMENTS_DIR, { intermediates: true });
+  const dir = new File(DOCUMENTS_DIR);
+  if (!dir.exists) {
+    dir.create({ intermediates: true });
   }
 }
 
@@ -83,7 +104,9 @@ export async function pickAndProcessDocument(): Promise<Document> {
   const destPath = `${DOCUMENTS_DIR}${docId}_${filename}`;
 
   try {
-    await FileSystem.copyAsync({ from: file.uri, to: destPath });
+    const sourceFile = new File(file.uri);
+    const destFile = new File(destPath);
+    sourceFile.copy(destFile);
   } catch (err) {
     throw new Error(`Failed to save file: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -140,7 +163,8 @@ export async function pickAndProcessDocument(): Promise<Document> {
   } catch (err) {
     // Clean up: delete file and database record on failure
     try {
-      await FileSystem.deleteAsync(destPath, { idempotent: true });
+      const destFile = new File(destPath);
+      if (destFile.exists) destFile.delete();
       await db.runAsync('DELETE FROM documents WHERE id = ?', [docId]);
     } catch (cleanupErr) {
       console.warn('Cleanup failed after document processing error:', cleanupErr);
@@ -169,7 +193,17 @@ export async function listDocuments(): Promise<Document[]> {
      ORDER BY uploaded_at DESC`
   );
 
-  return rows.map(row => ({
+  return rows.map((row: {
+    id: string;
+    filename: string;
+    file_type: string;
+    file_size: number;
+    file_uri: string;
+    uploaded_at: string;
+    processed: number;
+    chunk_count: number;
+    updated_at: string;
+  }) => ({
     id: row.id,
     filename: row.filename,
     fileType: row.file_type as Document['fileType'],
@@ -194,7 +228,8 @@ export async function deleteDocument(id: string): Promise<void> {
   // Delete file from disk
   if (doc?.file_uri) {
     try {
-      await FileSystem.deleteAsync(doc.file_uri, { idempotent: true });
+      const file = new File(doc.file_uri);
+      if (file.exists) file.delete();
     } catch (err) {
       console.warn('Could not delete document file:', err);
     }
@@ -231,7 +266,15 @@ export async function searchDocumentChunks(query: string, limit = 50): Promise<D
     [...params, limit]
   );
 
-  return rows.map(row => ({
+  return rows.map((row: {
+    id: string;
+    document_id: string;
+    chunk_index: number;
+    content: string;
+    page_number: number | null;
+    created_at: string;
+    filename: string;
+  }) => ({
     id: row.id,
     documentId: row.document_id,
     chunkIndex: row.chunk_index,

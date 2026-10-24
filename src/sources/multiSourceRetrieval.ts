@@ -46,8 +46,8 @@ export async function retrieveRelevantContent(
   } = options;
 
   // Retrieve from all sources in parallel
-  const [memoryResult, documentChunks, websites, telegramMessages] = await Promise.all([
-    Promise.resolve(selectRelevantMemories(question, nowISO, allMemories, { limit: maxMemories })),
+  const memoryResult = selectRelevantMemories(question, allMemories, new Date(nowISO), maxMemories);
+  const [documentChunks, websites, telegramMessages] = await Promise.all([
     searchDocumentChunks(question, maxDocuments).catch(() => []),
     searchWebsiteContent(question, maxWebsites).catch(() => []),
     searchTelegramMessages(question, maxTelegram).catch(() => []),
@@ -122,6 +122,7 @@ export function buildUnifiedContext(result: RetrievalResult, expenseContext?: st
  * Format evidence for display in Ask tab.
  */
 export interface EvidenceItem {
+  refId: string;
   type: 'memory' | 'document' | 'website' | 'telegram';
   id: string;
   title: string;
@@ -134,8 +135,9 @@ export function formatEvidence(result: RetrievalResult): EvidenceItem[] {
   const evidence: EvidenceItem[] = [];
 
   // Add memory evidence
-  for (const m of result.memories) {
+  result.memories.forEach((m, i) => {
     evidence.push({
+      refId: `M${i}`,
       type: 'memory',
       id: m.id,
       title: m.title,
@@ -143,11 +145,12 @@ export function formatEvidence(result: RetrievalResult): EvidenceItem[] {
       content: m.rawInput,
       metadata: { category: m.category, type: m.type },
     });
-  }
+  });
 
   // Add document evidence
-  for (const d of result.documentChunks) {
+  result.documentChunks.forEach((d, i) => {
     evidence.push({
+      refId: `D${i}`,
       type: 'document',
       id: d.id,
       title: d.filename || 'Document',
@@ -155,31 +158,39 @@ export function formatEvidence(result: RetrievalResult): EvidenceItem[] {
       content: d.content.substring(0, 200),
       metadata: { documentId: d.documentId },
     });
-  }
+  });
 
   // Add website evidence
-  for (const w of result.websites) {
+  result.websites.forEach((w, i) => {
     evidence.push({
+      refId: `W${i}`,
       type: 'website',
       id: w.id,
       title: w.title || w.url,
-      subtitle: new URL(w.url).hostname,
+      subtitle: (() => {
+        try {
+          return new URL(w.url).hostname;
+        } catch {
+          return w.url;
+        }
+      })(),
       content: w.content.substring(0, 200),
       metadata: { url: w.url },
     });
-  }
+  });
 
   // Add telegram evidence
-  for (const t of result.telegramMessages) {
+  result.telegramMessages.forEach((t, i) => {
     evidence.push({
+      refId: `T${i}`,
       type: 'telegram',
       id: t.id,
       title: t.channelName || 'Telegram',
       subtitle: t.messageDate,
       content: t.messageText || '[Media message]',
-      metadata: { messageId: t.messageId, channelId: t.channelId },
+      metadata: { channelId: t.channelId },
     });
-  }
+  });
 
   return evidence;
 }

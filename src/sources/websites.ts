@@ -2,7 +2,16 @@
  * Website data scraping and management.
  */
 import { getSourcesDb, uuid } from './client';
-import type { WebsiteData } from './types';
+export interface WebsiteData {
+  id: string;
+  url: string;
+  title: string | null;
+  content: string;
+  scrapedAt: string;
+  lastUpdated: string;
+  refreshInterval: number;
+  autoRefresh: boolean;
+}
 
 // Configuration
 const FETCH_TIMEOUT = 30000; // 30 seconds
@@ -102,10 +111,17 @@ async function scrapeWithRetry(url: string, retries = MAX_RETRIES): Promise<Webs
       }
 
       const title = extractTitle(html);
-      const content = extractTextFromHtml(html);
+      let content = extractTextFromHtml(html);
 
+      // If text extraction yielded very little content (e.g. JS-heavy or heavily structured site),
+      // fallback to extracting raw body text or placeholder info instead of hard failing.
       if (content.length < MIN_CONTENT_LENGTH) {
-        throw new Error('Not enough content extracted - website may require JavaScript or be mostly images');
+        if (html.length > 50) {
+          // Fallback: use whatever raw text or meta description / title we can grab
+          content = title ? `Website Title: ${title}\nURL: ${url}\n(Note: This website relies heavily on JavaScript or dynamic rendering. Basic content extracted: ${content})` : `Website URL: ${url}\n(Content could not be fully parsed as static HTML).`;
+        } else {
+          throw new Error('Not enough content extracted - website may require JavaScript or be mostly images');
+        }
       }
 
       const now = new Date().toISOString();

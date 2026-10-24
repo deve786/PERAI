@@ -2,7 +2,28 @@
  * Telegram channel integration.
  */
 import { getSourcesDb, uuid } from './client';
-import type { TelegramChannel, TelegramMessage } from './types';
+export interface TelegramChannel {
+  id: string;
+  channelUsername: string;
+  channelName: string | null;
+  lastMessageId: number | null;
+  lastSyncedAt: string | null;
+  autoSync: boolean;
+  createdAt: string;
+}
+
+export interface TelegramMessage {
+  id: string;
+  channelId: string;
+  channelName: string | null;
+  messageId: number;
+  messageText: string | null;
+  messageDate: string;
+  senderName: string | null;
+  mediaType: 'photo' | 'video' | 'document' | 'none';
+  mediaPath: string | null;
+  syncedAt: string;
+}
 
 // Configuration
 const API_TIMEOUT = 15000; // 15 seconds

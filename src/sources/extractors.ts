@@ -2,7 +2,7 @@
  * Text extraction from various file formats.
  */
 import * as FileSystem from 'expo-file-system';
-import { requestJson } from '@/ai/client';
+import { getClient, EXTRACT_MODEL } from '@/ai/client';
 
 // Configuration
 const MAX_RETRIES = 2;
@@ -10,7 +10,6 @@ const RETRY_DELAY = 1000;
 const MAX_TEXT_LENGTH = 500000; // 500KB of text
 
 export async function extractText(filePath: string, fileType: string): Promise<string> {
-  // Validate file exists
   const fileInfo = await FileSystem.getInfoAsync(filePath);
   if (!fileInfo.exists) {
     throw new Error('File not found');
@@ -78,22 +77,21 @@ Return only the extracted text content, preserving structure where possible.
 Do not add any commentary or explanations.`;
 
   try {
-    const response = await requestJson({
-      model: 'gemini-1.5-flash',
-      contents: [{
-        parts: [
-          { text: prompt },
-          {
-            inline_data: {
-              mime_type: 'application/pdf',
-              data: base64
-            }
-          }
-        ]
-      }]
+    const client = getClient();
+    const response = await client.models.generateContent({
+      model: EXTRACT_MODEL,
+      contents: [
+        { text: prompt },
+        {
+          inlineData: {
+            mimeType: 'application/pdf',
+            data: base64,
+          },
+        },
+      ],
     });
 
-    return response.candidates[0].content.parts[0].text;
+    return response.text || '';
   } catch (err) {
     throw new Error(`PDF extraction failed: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -109,22 +107,21 @@ Return only the extracted text content, preserving structure where possible.
 Do not add any commentary or explanations.`;
 
   try {
-    const response = await requestJson({
-      model: 'gemini-1.5-flash',
-      contents: [{
-        parts: [
-          { text: prompt },
-          {
-            inline_data: {
-              mime_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-              data: base64
-            }
-          }
-        ]
-      }]
+    const client = getClient();
+    const response = await client.models.generateContent({
+      model: EXTRACT_MODEL,
+      contents: [
+        { text: prompt },
+        {
+          inlineData: {
+            mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            data: base64,
+          },
+        },
+      ],
     });
 
-    return response.candidates[0].content.parts[0].text;
+    return response.text || '';
   } catch (err) {
     throw new Error(`DOCX extraction failed: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -141,29 +138,27 @@ If there's no text, return "No text found in image".
 Do not add any commentary or explanations.`;
 
   try {
-    // Detect mime type from file extension
     const ext = filePath.toLowerCase().split('.').pop();
     let mimeType = 'image/jpeg';
     if (ext === 'png') mimeType = 'image/png';
     else if (ext === 'webp') mimeType = 'image/webp';
     else if (ext === 'gif') mimeType = 'image/gif';
 
-    const response = await requestJson({
-      model: 'gemini-1.5-flash',
-      contents: [{
-        parts: [
-          { text: prompt },
-          {
-            inline_data: {
-              mime_type: mimeType,
-              data: base64
-            }
-          }
-        ]
-      }]
+    const client = getClient();
+    const response = await client.models.generateContent({
+      model: EXTRACT_MODEL,
+      contents: [
+        { text: prompt },
+        {
+          inlineData: {
+            mimeType: mimeType,
+            data: base64,
+          },
+        },
+      ],
     });
 
-    return response.candidates[0].content.parts[0].text;
+    return response.text || '';
   } catch (err) {
     throw new Error(`Image OCR failed: ${err instanceof Error ? err.message : String(err)}`);
   }

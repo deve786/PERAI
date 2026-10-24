@@ -64,7 +64,7 @@ export default function More() {
 
         <T size={16} weight="700" sub style={styles.heading}>App</T>
         <ListCard>
-          <ListRow icon="documents-outline" label="Data Sources" onPress={() => router.push('/data-sources')} />
+          <ListRow icon="documents-outline" label="Data Sources" onPress={() => router.push('/data-sources' as any)} />
           <ListRow icon="settings-outline" label="Settings" onPress={() => router.push('/settings')} />
           <ListRow icon="cloud-outline" label="Backup" onPress={() => router.push('/account')} />
           <ListRow
