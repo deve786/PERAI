@@ -2,6 +2,7 @@
  * Website data scraping and management.
  */
 import { getSourcesDb, uuid } from './client';
+import { savePublicTelegramChannel } from './telegram';
 export interface WebsiteData {
   id: string;
   url: string;
@@ -21,16 +22,26 @@ const MAX_RETRIES = 2;
 const RETRY_DELAY = 1000; // 1 second
 
 /**
- * Simple HTML text extraction without external dependencies.
- * Removes scripts, styles, and extracts visible text.
+ * Enhanced HTML text extraction.
+ * Preserves paragraphs, line breaks, bullet lists, tables, and image descriptions.
  */
 function extractTextFromHtml(html: string): string {
-  // Remove script and style tags
+  // Remove script, style, and svg tags
   let text = html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
   text = text.replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '');
+  text = text.replace(/<svg\b[^<]*(?:(?!<\/svg>)<[^<]*)*<\/svg>/gi, '');
+
+  // Extract images with alt text or descriptive attribute
+  text = text.replace(/<img[^>]*alt="([^"]+)"[^>]*>/gi, ' [Image: $1] ');
+
+  // Preserve line breaks and block element spacing
+  text = text.replace(/<br\s*\/?>/gi, '\n');
+  text = text.replace(/<\/(p|div|h[1-6]|li|tr|article|section|header|footer)>/gi, '\n');
+  text = text.replace(/<(td|th)[^>]*>/gi, ' | ');
+  text = text.replace(/<li[^>]*>/gi, '• ');
 
   // Remove HTML tags
-  text = text.replace(/<[^>]+>/g, ' ');
+  text = text.replace(/<[^>]+>/g, '');
 
   // Decode common HTML entities
   text = text.replace(/&nbsp;/g, ' ');
@@ -40,10 +51,25 @@ function extractTextFromHtml(html: string): string {
   text = text.replace(/&quot;/g, '"');
   text = text.replace(/&#39;/g, "'");
 
-  // Normalize whitespace
-  text = text.replace(/\s+/g, ' ').trim();
+  // Clean lines: trim each line and preserve meaningful paragraph breaks
+  text = text
+    .split('\n')
+    .map(line => line.trim())
+    .filter((line, i, arr) => line.length > 0 || (i > 0 && arr[i - 1].length > 0))
+    .join('\n');
 
-  return text;
+  return text.trim();
+}
+
+export function parseTelegramChannel(url: string): string | null {
+  const match = url.trim().match(/^(?:https?:\/\/)?t\.me\/(?:s\/)?([a-zA-Z0-9_]+)(?:\/|\?.*)?$/i);
+  if (match && match[1]) {
+    const ch = match[1].toLowerCase();
+    if (ch !== 's' && ch !== 'joinchat' && !ch.startsWith('+')) {
+      return match[1];
+    }
+  }
+  return null;
 }
 
 function extractTitle(html: string): string | null {
@@ -161,6 +187,22 @@ async function scrapeWithRetry(url: string, retries = MAX_RETRIES): Promise<Webs
 }
 
 export async function scrapeWebsite(url: string): Promise<WebsiteData> {
+  const tgChannel = parseTelegramChannel(url);
+  if (tgChannel) {
+    const tgRes = await savePublicTelegramChannel(tgChannel);
+    const now = new Date().toISOString();
+    return {
+      id: uuid(),
+      url: `https://t.me/s/${tgChannel}`,
+      title: tgRes.channel.channelName || `@${tgChannel}`,
+      content: tgRes.summary,
+      scrapedAt: now,
+      lastUpdated: now,
+      refreshInterval: 86400,
+      autoRefresh: true,
+    };
+  }
+
   const normalized = normalizeWebsiteUrl(url);
   validateUrl(normalized);
   return scrapeWithRetry(normalized);
@@ -173,7 +215,11 @@ export async function addWebsite(url: string): Promise<WebsiteData> {
 
   await db.runAsync(
     `INSERT INTO website_data (id, url, title, content, scraped_at, last_updated, refresh_interval, auto_refresh)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(url) DO UPDATE SET
+       title = excluded.title,
+       content = excluded.content,
+       last_updated = excluded.last_updated`,
     [data.id, data.url, data.title, data.content, data.scrapedAt, data.lastUpdated, data.refreshInterval, data.autoRefresh ? 1 : 0]
   );
 

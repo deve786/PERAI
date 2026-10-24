@@ -163,36 +163,270 @@ export async function fetchTelegramMessages(
   throw new Error(`Failed to fetch Telegram messages after ${MAX_RETRIES + 1} attempts: ${lastError?.message || 'Unknown error'}`);
 }
 
+export interface PublicTelegramResult {
+  channelName: string;
+  channelUsername: string;
+  messages: TelegramMessage[];
+  formattedSummary: string;
+}
+
+export async function fetchPublicTelegramChannel(
+  username: string,
+  maxPages = 4
+): Promise<PublicTelegramResult> {
+  const clean = username.replace(/^@/, '').replace(/^(?:https?:\/\/)?t\.me\/(?:s\/)?/, '').replace(/\/$/, '').trim();
+  let nextUrl: string | null = `https://t.me/s/${clean}`;
+  const rawMessages: Array<{
+    postPath: string;
+    messageId: number;
+    date: string;
+    text: string;
+    mediaType: 'photo' | 'video' | 'document' | 'none';
+    mediaPath: string | null;
+    photos: string[];
+    docInfo: string | null;
+  }> = [];
+
+  let channelTitle = clean;
+  let page = 0;
+
+  while (nextUrl && page < maxPages) {
+    page++;
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
+      const res: Response = await fetch(nextUrl, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      if (!res.ok) break;
+      const html: string = await res.text();
+
+      const titleMatch = html.match(/<meta property="og:title" content="([^"]*)"/i) || html.match(/<title>([^<]*)<\/title>/i);
+      if (titleMatch && titleMatch[1]) channelTitle = titleMatch[1].trim();
+
+      const blocks = html.split('<div class="tgme_widget_message_wrap');
+      for (let i = 1; i < blocks.length; i++) {
+        const b = blocks[i];
+        const postMatch = b.match(/data-post="([^"]*)"/);
+        const postPath = postMatch ? postMatch[1] : '';
+        const msgNum = parseInt(postPath.split('/').pop() || '0', 10);
+        const dateMatch = b.match(/<time datetime="([^"]*)"/);
+        const msgDate = dateMatch ? dateMatch[1] : new Date().toISOString();
+
+        const textMatch = b.match(/<div class="tgme_widget_message_text[^>]*>([\s\S]*?)<\/div>/);
+        let text = '';
+        if (textMatch) {
+          text = textMatch[1]
+            .replace(/<br\s*\/?>/gi, '\n')
+            .replace(/<[^>]+>/g, '')
+            .replace(/&amp;/g, '&')
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>')
+            .replace(/&quot;/g, '"')
+            .replace(/&#39;/g, "'")
+            .trim();
+        }
+
+        const photos = [...b.matchAll(/background-image:url\('([^']*)'\)/g)]
+          .map(m => m[1])
+          .filter(u => !u.includes('/emoji/'));
+
+        const docTitle = b.match(/<div class="tgme_widget_message_document_title">([^<]*)<\/div>/);
+        const docExtra = b.match(/<div class="tgme_widget_message_document_extra">([^<]*)<\/div>/);
+        const docInfo = docTitle ? `${docTitle[1].trim()}${docExtra ? ` (${docExtra[1].trim()})` : ''}` : null;
+
+        const videoMatch = b.match(/<video[^>]*src="([^"]*)"/i);
+        const videoUrl = videoMatch ? videoMatch[1] : null;
+
+        let mediaType: 'photo' | 'video' | 'document' | 'none' = 'none';
+        let mediaPath: string | null = null;
+        if (photos.length > 0) {
+          mediaType = 'photo';
+          mediaPath = photos.join('; ');
+        } else if (docInfo) {
+          mediaType = 'document';
+          mediaPath = docInfo;
+        } else if (videoUrl) {
+          mediaType = 'video';
+          mediaPath = videoUrl;
+        }
+
+        if (text || mediaPath) {
+          rawMessages.push({
+            postPath,
+            messageId: msgNum,
+            date: msgDate,
+            text,
+            mediaType,
+            mediaPath,
+            photos,
+            docInfo,
+          });
+        }
+      }
+
+      const prevMatch = html.match(/href="([^"]*\?before=[^"]*)"/i);
+      if (prevMatch && prevMatch[1]) {
+        nextUrl = 'https://t.me' + prevMatch[1];
+      } else {
+        nextUrl = null;
+      }
+    } catch {
+      break;
+    }
+  }
+
+  const unique = [];
+  const seen = new Set<string | number>();
+  for (const m of rawMessages) {
+    const key = m.messageId || m.postPath || (m.date + m.text);
+    if (!seen.has(key)) {
+      seen.add(key);
+      unique.push(m);
+    }
+  }
+
+  unique.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+  const now = new Date().toISOString();
+  const messages: TelegramMessage[] = unique.map(m => ({
+    id: uuid(),
+    channelId: clean,
+    channelName: channelTitle,
+    messageId: m.messageId,
+    messageText: m.text,
+    messageDate: m.date,
+    senderName: channelTitle,
+    mediaType: m.mediaType,
+    mediaPath: m.mediaPath,
+    syncedAt: now,
+  }));
+
+  const lines: string[] = [
+    `Telegram Channel: ${channelTitle} (@${clean})`,
+    `Total Messages Scraped: ${messages.length}`,
+    `Scraped At: ${now}`,
+    `----------------------------------------`,
+  ];
+
+  for (const m of unique) {
+    lines.push(`\n[${m.date}] Post #${m.messageId}`);
+    if (m.text) lines.push(m.text);
+    if (m.photos.length > 0) {
+      lines.push(`[Attached Photos (${m.photos.length})]:\n${m.photos.join('\n')}`);
+    }
+    if (m.docInfo) {
+      lines.push(`[Attached Document]: ${m.docInfo}`);
+    }
+    lines.push('----------------------------------------');
+  }
+
+  return {
+    channelName: channelTitle,
+    channelUsername: `@${clean}`,
+    messages,
+    formattedSummary: lines.join('\n'),
+  };
+}
+
+export async function savePublicTelegramChannel(
+  username: string
+): Promise<{ channel: TelegramChannel; messagesCount: number; summary: string }> {
+  const result = await fetchPublicTelegramChannel(username);
+  if (result.messages.length === 0) {
+    throw new Error(`Could not find any messages for channel @${username.replace(/^@/, '')}. Check if the channel is public.`);
+  }
+
+  const db = await getSourcesDb();
+  const now = new Date().toISOString();
+  const channelId = uuid();
+  const lastMessageId = result.messages.length > 0 ? Math.max(...result.messages.map(m => m.messageId)) : null;
+
+  await db.runAsync(
+    `INSERT INTO telegram_channels (id, channel_username, channel_name, last_message_id, last_synced_at, auto_sync, created_at)
+     VALUES (?, ?, ?, ?, ?, 1, ?)
+     ON CONFLICT(channel_username) DO UPDATE SET
+       channel_name = excluded.channel_name,
+       last_message_id = COALESCE(excluded.last_message_id, telegram_channels.last_message_id),
+       last_synced_at = excluded.last_synced_at`,
+    [channelId, result.channelUsername, result.channelName, lastMessageId, now, now]
+  );
+
+  for (const msg of result.messages) {
+    let fullText = msg.messageText || '';
+    if (msg.mediaType === 'photo' && msg.mediaPath) {
+      fullText = fullText ? `${fullText}\n[Photo: ${msg.mediaPath}]` : `[Photo: ${msg.mediaPath}]`;
+    } else if (msg.mediaType === 'document' && msg.mediaPath) {
+      fullText = fullText ? `${fullText}\n[Document: ${msg.mediaPath}]` : `[Document: ${msg.mediaPath}]`;
+    }
+
+    await db.runAsync(
+      `INSERT OR REPLACE INTO telegram_messages (id, channel_id, channel_name, message_id, message_text, message_date, sender_name, media_type, media_path, synced_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [msg.id, msg.channelId, msg.channelName, msg.messageId, fullText, msg.messageDate, msg.senderName, msg.mediaType, msg.mediaPath, msg.syncedAt]
+    );
+  }
+
+  const savedChannel: TelegramChannel = {
+    id: channelId,
+    channelUsername: result.channelUsername,
+    channelName: result.channelName,
+    lastMessageId,
+    lastSyncedAt: now,
+    autoSync: true,
+    createdAt: now,
+    messagesSaved: result.messages.length,
+  };
+
+  return {
+    channel: savedChannel,
+    messagesCount: result.messages.length,
+    summary: result.formattedSummary,
+  };
+}
+
 export async function addTelegramChannel(
   botToken: string,
   channelUsername: string
 ): Promise<TelegramChannel> {
-  validateBotToken(botToken);
+  const cleanUsername = channelUsername.replace(/^@/, '').replace(/^(?:https?:\/\/)?t\.me\/(?:s\/)?/, '').replace(/\/$/, '').trim();
+
+  // If no bot token provided, scrape public channel directly
+  if (!botToken || !botToken.trim() || !botToken.includes(':')) {
+    const res = await savePublicTelegramChannel(cleanUsername);
+    return res.channel;
+  }
+
   validateChannelUsername(channelUsername);
 
   const db = await getSourcesDb();
   const now = new Date().toISOString();
   const id = uuid();
 
-  // Verify we can access the channel
   try {
     const messages = await fetchTelegramMessages(botToken, channelUsername);
 
     if (messages.length === 0) {
-      throw new Error('No messages found. Make sure the bot is added as an admin to the channel.');
+      const res = await savePublicTelegramChannel(cleanUsername);
+      return res.channel;
     }
 
     const channelName = messages[0]?.channelName || channelUsername;
     const lastMessageId = messages.length > 0 ? Math.max(...messages.map(m => m.messageId)) : null;
 
-    // Save channel
     await db.runAsync(
       `INSERT INTO telegram_channels (id, channel_username, channel_name, last_message_id, last_synced_at, auto_sync, created_at)
-       VALUES (?, ?, ?, ?, ?, 1, ?)`,
+       VALUES (?, ?, ?, ?, ?, 1, ?)
+       ON CONFLICT(channel_username) DO UPDATE SET
+         channel_name = excluded.channel_name,
+         last_message_id = COALESCE(excluded.last_message_id, telegram_channels.last_message_id),
+         last_synced_at = excluded.last_synced_at`,
       [id, channelUsername, channelName, lastMessageId, now, now]
     );
 
-    // Save messages
     for (const msg of messages) {
       await db.runAsync(
         `INSERT OR IGNORE INTO telegram_messages (id, channel_id, channel_name, message_id, message_text, message_date, sender_name, media_type, media_path, synced_at)
@@ -211,8 +445,9 @@ export async function addTelegramChannel(
       createdAt: now,
       messagesSaved: messages.length,
     };
-  } catch (err) {
-    throw new Error(`Could not add Telegram channel: ${err instanceof Error ? err.message : String(err)}`);
+  } catch {
+    const res = await savePublicTelegramChannel(cleanUsername);
+    return res.channel;
   }
 }
 
@@ -259,33 +494,44 @@ export async function syncTelegramChannel(
 
   if (!channel) throw new Error('Channel not found');
 
-  const messages = await fetchTelegramMessages(
-    botToken,
-    channel.channel_username,
-    channel.last_message_id || undefined
-  );
-
-  if (messages.length === 0) return 0;
-
-  // Save new messages
-  for (const msg of messages) {
-    await db.runAsync(
-      `INSERT OR IGNORE INTO telegram_messages (id, channel_id, channel_name, message_id, message_text, message_date, sender_name, media_type, media_path, synced_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [msg.id, msg.channelId, msg.channelName, msg.messageId, msg.messageText, msg.messageDate, msg.senderName, msg.mediaType, msg.mediaPath, msg.syncedAt]
-    );
+  if (!botToken || !botToken.trim() || !botToken.includes(':')) {
+    const res = await savePublicTelegramChannel(channel.channel_username);
+    return res.messagesCount;
   }
 
-  // Update channel last sync
-  const lastMessageId = Math.max(...messages.map(m => m.messageId));
-  await db.runAsync(
-    `UPDATE telegram_channels
-     SET last_message_id = ?, last_synced_at = ?
-     WHERE id = ?`,
-    [lastMessageId, new Date().toISOString(), channelId]
-  );
+  try {
+    const messages = await fetchTelegramMessages(
+      botToken,
+      channel.channel_username,
+      channel.last_message_id || undefined
+    );
 
-  return messages.length;
+    if (messages.length === 0) {
+      const res = await savePublicTelegramChannel(channel.channel_username);
+      return res.messagesCount;
+    }
+
+    for (const msg of messages) {
+      await db.runAsync(
+        `INSERT OR IGNORE INTO telegram_messages (id, channel_id, channel_name, message_id, message_text, message_date, sender_name, media_type, media_path, synced_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [msg.id, msg.channelId, msg.channelName, msg.messageId, msg.messageText, msg.messageDate, msg.senderName, msg.mediaType, msg.mediaPath, msg.syncedAt]
+      );
+    }
+
+    const lastMessageId = Math.max(...messages.map(m => m.messageId));
+    await db.runAsync(
+      `UPDATE telegram_channels
+       SET last_message_id = ?, last_synced_at = ?
+       WHERE id = ?`,
+      [lastMessageId, new Date().toISOString(), channelId]
+    );
+
+    return messages.length;
+  } catch {
+    const res = await savePublicTelegramChannel(channel.channel_username);
+    return res.messagesCount;
+  }
 }
 
 export async function deleteTelegramChannel(id: string): Promise<void> {

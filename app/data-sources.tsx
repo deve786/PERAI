@@ -9,7 +9,7 @@ import { useTheme } from '@/expense/theme';
 import { Button, Card, Field, ListCard, ListRow, Row, Screen, T, TopBar } from '@/expense/ui';
 import { showDialog } from '@/dialogStore';
 import { listDocuments, deleteDocument, pickAndProcessDocument, getTotalDocumentChunks, getDocumentChunks, type Document } from '@/sources/documents';
-import { listWebsites, addWebsite, deleteWebsite, refreshWebsite, type WebsiteData } from '@/sources/websites';
+import { listWebsites, addWebsite, deleteWebsite, refreshWebsite, parseTelegramChannel, type WebsiteData } from '@/sources/websites';
 import { listTelegramChannels, addTelegramChannel, deleteTelegramChannel, syncTelegramChannel, getTelegramMessageCount, getChannelMessageCounts, getChannelMessageCount, getChannelMessages, type TelegramChannel } from '@/sources/telegram';
 import { syncSourcesNow } from '@/sources/sync';
 import { getSetting, setSetting } from '@/db/queries';
@@ -99,9 +99,12 @@ export default function DataSourcesScreen() {
       void syncSourcesNow();
       const charCount = site.content.length;
       const wordCount = site.content.trim() ? site.content.trim().split(/\s+/).length : 0;
+      const isTg = !!parseTelegramChannel(url);
       showDialog({
-        title: 'Website Saved in DB',
-        message: `${site.title || site.url}\n\n✓ Successfully saved in database:\n• ${charCount.toLocaleString()} characters extracted\n• ~${wordCount.toLocaleString()} words indexed\n\nContent is stored in the database and searchable in the Ask tab.`,
+        title: isTg ? 'Telegram Channel Saved in DB' : 'Website Saved in DB',
+        message: isTg
+          ? `${site.title || site.url}\n\n✓ Scraped channel history & saved to database:\n• ${charCount.toLocaleString()} characters extracted\n• ~${wordCount.toLocaleString()} words indexed\n• Messages, photos, & documents saved\n\nSearchable in both Websites and Telegram sources!`
+          : `${site.title || site.url}\n\n✓ Successfully saved in database:\n• ${charCount.toLocaleString()} characters extracted\n• ~${wordCount.toLocaleString()} words indexed\n\nContent is stored in the database and searchable in the Ask tab.`,
       });
     } catch (err) {
       showDialog({ title: 'Failed to add website', message: err instanceof Error ? err.message : String(err) });
@@ -114,14 +117,16 @@ export default function DataSourcesScreen() {
     const token = botToken.trim();
     const username = channelUsername.trim();
 
-    if (!token || !username || savingTelegram) {
-      showDialog({ title: 'Missing information', message: 'Please provide both bot token and channel username.' });
+    if (!username || savingTelegram) {
+      showDialog({ title: 'Missing information', message: 'Please provide a channel username or link (e.g. @lakport or https://t.me/lakport).' });
       return;
     }
 
     setSavingTelegram(true);
     try {
-      await setSetting('telegram_bot_token', token);
+      if (token) {
+        await setSetting('telegram_bot_token', token);
+      }
       const res = await addTelegramChannel(token, username);
       setChannelUsername('');
       setAddingTelegram(false);
@@ -129,7 +134,7 @@ export default function DataSourcesScreen() {
       void syncSourcesNow();
       showDialog({
         title: 'Telegram Channel Saved in DB',
-        message: `${username}\n\n✓ Successfully saved in database:\n• ${res.messagesSaved ?? 0} messages stored\n\nChannel messages are now indexed and searchable in the Ask tab.`,
+        message: `${res.channelName || username}\n\n✓ Successfully saved in database:\n• ${res.messagesSaved ?? 0} messages stored\n• Photos, documents, & post history indexed\n\nMessages are now searchable in the Ask tab.`,
       });
     } catch (err) {
       showDialog({ title: 'Failed to add channel', message: err instanceof Error ? err.message : String(err) });
@@ -560,34 +565,34 @@ export default function DataSourcesScreen() {
             ) : (
               <Card style={{ padding: 14, gap: 10 }}>
                 <Field
-                  label="Bot Token"
-                  value={botToken}
-                  onChangeText={setBotToken}
-                  placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
+                  label="Channel Username or Link"
+                  value={channelUsername}
+                  onChangeText={setChannelUsername}
+                  placeholder="@channelname or https://t.me/channel"
                   autoCapitalize="none"
                   autoCorrect={false}
+                  autoFocus
                   editable={!savingTelegram}
                   containerStyle={{ marginBottom: 10 }}
                 />
                 <Field
-                  label="Channel Username"
-                  value={channelUsername}
-                  onChangeText={setChannelUsername}
-                  placeholder="@channelname"
+                  label="Bot Token (Optional for public channels)"
+                  value={botToken}
+                  onChangeText={setBotToken}
+                  placeholder="Optional (leave empty for public channels)"
                   autoCapitalize="none"
                   autoCorrect={false}
-                  autoFocus={!!botToken}
                   editable={!savingTelegram}
                   containerStyle={{ marginBottom: 0 }}
                 />
                 {savingTelegram ? (
                   <Row style={{ alignItems: 'center', gap: 8, paddingVertical: 4 }}>
                     <ActivityIndicator size="small" color={c.accent} />
-                    <T size={13} sub>Connecting to Telegram & fetching messages...</T>
+                    <T size={13} sub>Scraping channel messages, photos & documents...</T>
                   </Row>
                 ) : (
                   <T size={13} sub style={{ lineHeight: 18, marginTop: 4 }}>
-                    Create a bot via @BotFather, add it to your channel as admin, then enter details here.
+                    Public channels like @lakport are scraped automatically with full history, photos, and document links. For private channels, add a bot token from @BotFather.
                   </T>
                 )}
                 <Row style={{ gap: 8, marginTop: 6 }}>
@@ -600,7 +605,7 @@ export default function DataSourcesScreen() {
                   />
                   <Button
                     title={savingTelegram ? 'Connecting...' : 'Add'}
-                    disabled={savingTelegram || !channelUsername.trim() || !botToken.trim()}
+                    disabled={savingTelegram || !channelUsername.trim()}
                     onPress={() => void addTelegramChannelAction()}
                     style={{ flex: 1 }}
                   />
