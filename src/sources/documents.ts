@@ -278,10 +278,38 @@ export async function deleteDocument(id: string): Promise<void> {
   await db.runAsync('UPDATE documents SET deleted = 1 WHERE id = ?', [id]);
 }
 
+const ISLAND_PORT_ALIASES: Record<string, string[]> = {
+  androth: ['and', 'andrott'],
+  androt: ['and', 'androth'],
+  kalpeni: ['klp'],
+  kavaratti: ['kvt'],
+  agatti: ['agt'],
+  amini: ['amn'],
+  kadmat: ['kdm', 'kadmath'],
+  kadmath: ['kdm', 'kadmat'],
+  kiltan: ['klt'],
+  chetlat: ['cht'],
+  bitra: ['btr'],
+  minicoy: ['mcy'],
+  cochin: ['kochi'],
+  kochi: ['cochin'],
+};
+
 export async function searchDocumentChunks(query: string, limit = 50): Promise<DocumentChunk[]> {
   const db = await getSourcesDb();
-  const keywords = query.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+  const rawWords = query.toLowerCase().split(/\s+/).filter(w => w.length >= 2);
+  const keywordsSet = new Set<string>();
 
+  for (const w of rawWords) {
+    if (w.length > 2) keywordsSet.add(w);
+    if (w === 'shiip') keywordsSet.add('ship');
+    const aliases = ISLAND_PORT_ALIASES[w];
+    if (aliases) {
+      aliases.forEach(a => keywordsSet.add(a));
+    }
+  }
+
+  const keywords = Array.from(keywordsSet);
   if (keywords.length === 0) return [];
 
   // Simple keyword matching - could be enhanced with FTS5 or embeddings

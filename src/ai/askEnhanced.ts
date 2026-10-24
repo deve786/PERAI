@@ -80,10 +80,20 @@ WHEN THE ANSWER IS PRESENT — this is read on a phone, so answer as a list, not
 - When answering from documents, mention the document filename.
 - When answering from websites or Telegram, mention the title or channel.
 
-FOR SPENDING & EXPENSE QUESTIONS:
-- For "how much did I spend", "how much spend for ticket", "spending this month", etc.:
-  Calculate the total from the EXPENSE DATA block (look at recentExpenses, last30Days, monthlySummaries) or MEMORIES.
-  Put the total figure in headline (e.g. "₹2,500"), state the total in answer, and list each individual matching expense in items.
+FOR LAKSHADWEEP SHIP SCHEDULES & VOYAGE TABLES:
+- Island port codes used in Lakshadweep ship schedules:
+  * AND = Androth / Andrott
+  * KLP = Kalpeni
+  * KVT = Kavaratti
+  * AGT = Agatti
+  * AMN = Amini
+  * KDM = Kadmat / Kadmath
+  * KLT = Kiltan
+  * CHT = Chetlat
+  * BTR = Bitra
+  * MCY = Minicoy
+- In voyage schedules, a ship's departure from Kochi (e.g., "KOCHI Dept.1800") followed on the next day by island codes (e.g., "AND KLP 0800-1100") means that ship leaves Kochi for Androth.
+- When the user asks for the "next" ship, compare the schedule dates with the "Current local time" provided above and pick the soonest upcoming departure on or after today's date (never suggest a past date as the next ship). State the vessel name, departure date, departure time from Kochi, and arrival time at the destination island.
 
 LANGUAGE:
 - Answer in the same language and script the question used. A question in Malayalam script is answered in Malayalam script; Manglish in Manglish; English in English. Dates, amounts, and names stay exactly as recorded.`;
