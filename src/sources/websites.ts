@@ -288,6 +288,12 @@ export async function deleteWebsite(id: string): Promise<void> {
   await db.runAsync('UPDATE website_data SET deleted = 1 WHERE id = ?', [id]);
 }
 
+export async function clearAllWebsites(): Promise<number> {
+  const db = await getSourcesDb();
+  const res = await db.runAsync('UPDATE website_data SET deleted = 1 WHERE deleted = 0');
+  return res.changes;
+}
+
 export async function searchWebsiteContent(query: string, limit = 10): Promise<WebsiteData[]> {
   const db = await getSourcesDb();
   const keywords = query.toLowerCase().split(/\s+/).filter(w => w.length > 2);

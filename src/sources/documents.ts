@@ -278,6 +278,41 @@ export async function deleteDocument(id: string): Promise<void> {
   await db.runAsync('UPDATE documents SET deleted = 1 WHERE id = ?', [id]);
 }
 
+export async function clearAllDocuments(): Promise<number> {
+  const db = await getSourcesDb();
+  const docs = await db.getAllAsync<{ id: string; file_uri: string }>(
+    'SELECT id, file_uri FROM documents WHERE deleted = 0'
+  );
+  for (const doc of docs) {
+    if (doc.file_uri) {
+      try {
+        await FileSystem.deleteAsync(doc.file_uri, { idempotent: true }).catch(() => {});
+      } catch {}
+    }
+  }
+  await db.runAsync('UPDATE documents SET deleted = 1');
+  await db.runAsync('DELETE FROM document_chunks');
+  return docs.length;
+}
+
+export async function cleanupEmptyDocuments(): Promise<number> {
+  const db = await getSourcesDb();
+  const docs = await db.getAllAsync<{ id: string; file_uri: string }>(
+    'SELECT id, file_uri FROM documents WHERE deleted = 0 AND (chunk_count = 0 OR processed = 0)'
+  );
+  for (const doc of docs) {
+    if (doc.file_uri) {
+      try {
+        await FileSystem.deleteAsync(doc.file_uri, { idempotent: true }).catch(() => {});
+      } catch {}
+    }
+  }
+  if (docs.length > 0) {
+    await db.runAsync('UPDATE documents SET deleted = 1 WHERE chunk_count = 0 OR processed = 0');
+  }
+  return docs.length;
+}
+
 const ISLAND_PORT_ALIASES: Record<string, string[]> = {
   androth: ['and', 'andrott'],
   androt: ['and', 'androth'],

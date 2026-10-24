@@ -658,6 +658,12 @@ export async function deleteTelegramChannel(id: string): Promise<void> {
   await db.runAsync('DELETE FROM telegram_channels WHERE id = ?', [id]);
 }
 
+export async function clearAllTelegramData(): Promise<void> {
+  const db = await getSourcesDb();
+  await db.runAsync('DELETE FROM telegram_messages');
+  await db.runAsync('DELETE FROM telegram_channels');
+}
+
 const ISLAND_PORT_ALIASES: Record<string, string[]> = {
   androth: ['and', 'andrott'],
   androt: ['and', 'androth'],

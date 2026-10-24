@@ -8,9 +8,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@/expense/theme';
 import { Button, Card, Field, ListCard, ListRow, Row, Screen, T, TopBar } from '@/expense/ui';
 import { showDialog } from '@/dialogStore';
-import { listDocuments, deleteDocument, pickAndProcessDocument, getTotalDocumentChunks, getDocumentChunks, type Document } from '@/sources/documents';
-import { listWebsites, addWebsite, deleteWebsite, refreshWebsite, parseTelegramChannel, type WebsiteData } from '@/sources/websites';
-import { listTelegramChannels, addTelegramChannel, deleteTelegramChannel, syncTelegramChannel, getTelegramMessageCount, getChannelMessageCounts, getChannelMessageCount, getChannelMessages, type TelegramChannel } from '@/sources/telegram';
+import { listDocuments, deleteDocument, pickAndProcessDocument, getTotalDocumentChunks, getDocumentChunks, clearAllDocuments, cleanupEmptyDocuments, type Document } from '@/sources/documents';
+import { listWebsites, addWebsite, deleteWebsite, refreshWebsite, parseTelegramChannel, clearAllWebsites, type WebsiteData } from '@/sources/websites';
+import { listTelegramChannels, addTelegramChannel, deleteTelegramChannel, syncTelegramChannel, getTelegramMessageCount, getChannelMessageCounts, getChannelMessageCount, getChannelMessages, clearAllTelegramData, type TelegramChannel } from '@/sources/telegram';
 import { syncSourcesNow } from '@/sources/sync';
 import { getSetting, setSetting } from '@/db/queries';
 import { shortDate, timeLabel } from '@/format';
@@ -39,11 +39,13 @@ export default function DataSourcesScreen() {
   const [refreshingSiteId, setRefreshingSiteId] = useState<string | null>(null);
   const [syncingChannelId, setSyncingChannelId] = useState<string | null>(null);
   const [refreshingAll, setRefreshingAll] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [botToken, setBotToken] = useState('');
   const [channelUsername, setChannelUsername] = useState('');
 
   const loadData = useCallback(async () => {
     try {
+      await cleanupEmptyDocuments().catch(() => 0);
       const [docs, sites, chans, token, count, chunks, chCounts] = await Promise.all([
         listDocuments(),
         listWebsites(),
@@ -245,6 +247,102 @@ export default function DataSourcesScreen() {
     }
   }
 
+  function confirmClearDocuments() {
+    showDialog({
+      title: 'Clear All Documents?',
+      message: 'This will remove all uploaded documents and their indexed search chunks from your local database. This cannot be undone.',
+      actions: [
+        { label: 'Cancel', cancel: true },
+        {
+          label: 'Clear All',
+          destructive: true,
+          onPress: () => {
+            void (async () => {
+              setClearing(true);
+              try {
+                const count = await clearAllDocuments();
+                await loadData();
+                void syncSourcesNow();
+                showDialog({
+                  title: 'Documents Cleared',
+                  message: `Successfully removed ${count} document${count === 1 ? '' : 's'} and all associated chunks from the database.`,
+                });
+              } catch (err) {
+                showDialog({ title: 'Error', message: err instanceof Error ? err.message : String(err) });
+              } finally {
+                setClearing(false);
+              }
+            })();
+          },
+        },
+      ],
+    });
+  }
+
+  function confirmClearWebsites() {
+    showDialog({
+      title: 'Clear All Websites?',
+      message: 'This will remove all saved websites and their scraped content from your local database. This cannot be undone.',
+      actions: [
+        { label: 'Cancel', cancel: true },
+        {
+          label: 'Clear All',
+          destructive: true,
+          onPress: () => {
+            void (async () => {
+              setClearing(true);
+              try {
+                const count = await clearAllWebsites();
+                await loadData();
+                void syncSourcesNow();
+                showDialog({
+                  title: 'Websites Cleared',
+                  message: `Successfully removed ${count} website${count === 1 ? '' : 's'} from the database.`,
+                });
+              } catch (err) {
+                showDialog({ title: 'Error', message: err instanceof Error ? err.message : String(err) });
+              } finally {
+                setClearing(false);
+              }
+            })();
+          },
+        },
+      ],
+    });
+  }
+
+  function confirmClearTelegram() {
+    showDialog({
+      title: 'Clear All Telegram Data?',
+      message: 'This will remove all Telegram channels and delete all saved messages and media from your local database. This cannot be undone.',
+      actions: [
+        { label: 'Cancel', cancel: true },
+        {
+          label: 'Clear All',
+          destructive: true,
+          onPress: () => {
+            void (async () => {
+              setClearing(true);
+              try {
+                await clearAllTelegramData();
+                await loadData();
+                void syncSourcesNow();
+                showDialog({
+                  title: 'Telegram Cleared',
+                  message: 'Successfully removed all Telegram channels and saved messages from the database.',
+                });
+              } catch (err) {
+                showDialog({ title: 'Error', message: err instanceof Error ? err.message : String(err) });
+              } finally {
+                setClearing(false);
+              }
+            })();
+          },
+        },
+      ],
+    });
+  }
+
   const [previewItem, setPreviewItem] = useState<{
     title: string;
     subtitle: string;
@@ -393,12 +491,32 @@ export default function DataSourcesScreen() {
         {/* Documents Tab */}
         {tab === 'documents' && (
           <>
-            <Button
-              title={uploadingDoc ? 'Uploading...' : 'Upload Document'}
-              icon="cloud-upload-outline"
-              onPress={() => void uploadDocument()}
-              disabled={uploadingDoc}
-            />
+            {documents.length > 0 ? (
+              <Row style={{ gap: 8 }}>
+                <Button
+                  title={uploadingDoc ? 'Uploading...' : 'Upload Document'}
+                  icon="cloud-upload-outline"
+                  onPress={() => void uploadDocument()}
+                  disabled={uploadingDoc || clearing}
+                  style={{ flex: 1 }}
+                />
+                <Button
+                  title="Clear All"
+                  icon="trash-outline"
+                  kind="danger"
+                  onPress={confirmClearDocuments}
+                  disabled={uploadingDoc || clearing}
+                  style={{ flex: 1, borderWidth: 1, borderColor: `${c.danger}40`, backgroundColor: `${c.danger}10` }}
+                />
+              </Row>
+            ) : (
+              <Button
+                title={uploadingDoc ? 'Uploading...' : 'Upload Document'}
+                icon="cloud-upload-outline"
+                onPress={() => void uploadDocument()}
+                disabled={uploadingDoc || clearing}
+              />
+            )}
 
             {uploadingDoc && (
               <Card style={{ padding: 14, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: `${c.accent}12` }}>
@@ -460,7 +578,27 @@ export default function DataSourcesScreen() {
         {tab === 'websites' && (
           <>
             {!addingWebsite ? (
-              <Button title="Add Website" icon="add" onPress={() => setAddingWebsite(true)} />
+              websites.length > 0 ? (
+                <Row style={{ gap: 8 }}>
+                  <Button
+                    title="Add Website"
+                    icon="add"
+                    onPress={() => setAddingWebsite(true)}
+                    disabled={clearing}
+                    style={{ flex: 1 }}
+                  />
+                  <Button
+                    title="Clear All"
+                    icon="trash-outline"
+                    kind="danger"
+                    onPress={confirmClearWebsites}
+                    disabled={clearing}
+                    style={{ flex: 1, borderWidth: 1, borderColor: `${c.danger}40`, backgroundColor: `${c.danger}10` }}
+                  />
+                </Row>
+              ) : (
+                <Button title="Add Website" icon="add" onPress={() => setAddingWebsite(true)} disabled={clearing} />
+              )
             ) : (
               <Card style={{ padding: 14, gap: 10 }}>
                 <Field
@@ -559,7 +697,27 @@ export default function DataSourcesScreen() {
         {tab === 'telegram' && (
           <>
             {!addingTelegram ? (
-              <Button title="Add Telegram Channel" icon="add" onPress={() => setAddingTelegram(true)} />
+              channels.length > 0 || telegramCount > 0 ? (
+                <Row style={{ gap: 8 }}>
+                  <Button
+                    title="Add Telegram"
+                    icon="add"
+                    onPress={() => setAddingTelegram(true)}
+                    disabled={clearing}
+                    style={{ flex: 1 }}
+                  />
+                  <Button
+                    title="Clear All"
+                    icon="trash-outline"
+                    kind="danger"
+                    onPress={confirmClearTelegram}
+                    disabled={clearing}
+                    style={{ flex: 1, borderWidth: 1, borderColor: `${c.danger}40`, backgroundColor: `${c.danger}10` }}
+                  />
+                </Row>
+              ) : (
+                <Button title="Add Telegram Channel" icon="add" onPress={() => setAddingTelegram(true)} disabled={clearing} />
+              )
             ) : (
               <Card style={{ padding: 14, gap: 10 }}>
                 <Field
