@@ -327,3 +327,30 @@ export async function getTotalDocumentChunks(): Promise<number> {
   return row?.count || 0;
 }
 
+export async function getDocumentChunks(documentId: string): Promise<DocumentChunk[]> {
+  const db = await getSourcesDb();
+  const rows = await db.getAllAsync<{
+    id: string;
+    document_id: string;
+    chunk_index: number;
+    content: string;
+    page_number: number | null;
+    created_at: string;
+  }>(
+    `SELECT id, document_id, chunk_index, content, page_number, created_at
+     FROM document_chunks
+     WHERE document_id = ?
+     ORDER BY chunk_index ASC`,
+    [documentId]
+  );
+  return rows.map(r => ({
+    id: r.id,
+    documentId: r.document_id,
+    chunkIndex: r.chunk_index,
+    content: r.content,
+    pageNumber: r.page_number,
+    createdAt: r.created_at,
+  }));
+}
+
+

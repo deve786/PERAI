@@ -397,3 +397,45 @@ export async function getChannelMessageCount(channelUsername: string, channelId?
   return row?.count || 0;
 }
 
+export async function getChannelMessages(channelUsername: string, channelId?: string, limit = 50): Promise<TelegramMessage[]> {
+  const db = await getSourcesDb();
+  const clean = channelUsername.replace(/^@/, '').toLowerCase();
+  const rows = await db.getAllAsync<{
+    id: string;
+    channel_id: string;
+    channel_name: string | null;
+    message_id: number;
+    message_text: string | null;
+    message_date: string;
+    sender_name: string | null;
+    media_type: string;
+    media_path: string | null;
+    synced_at: string;
+  }>(
+    `SELECT id, channel_id, channel_name, message_id, message_text, message_date, sender_name, media_type, media_path, synced_at
+     FROM telegram_messages
+     WHERE deleted = 0 AND (
+       channel_id = ?
+       OR channel_name = ?
+       OR LOWER(channel_name) LIKE ?
+       OR LOWER(channel_name) LIKE ?
+     )
+     ORDER BY message_date DESC
+     LIMIT ?`,
+    [channelId || '', channelUsername, `%${clean}%`, `%${channelUsername}%`, limit]
+  );
+  return rows.map(r => ({
+    id: r.id,
+    channelId: r.channel_id,
+    channelName: r.channel_name,
+    messageId: r.message_id,
+    messageText: r.message_text,
+    messageDate: r.message_date,
+    senderName: r.sender_name,
+    mediaType: r.media_type as TelegramMessage['mediaType'],
+    mediaPath: r.media_path,
+    syncedAt: r.synced_at,
+  }));
+}
+
+

@@ -2,15 +2,15 @@
  * Data Sources management screen - Documents, Websites, Telegram.
  */
 import React, { useCallback, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@/expense/theme';
 import { Button, Card, Field, ListCard, ListRow, Row, Screen, T, TopBar } from '@/expense/ui';
 import { showDialog } from '@/dialogStore';
-import { listDocuments, deleteDocument, pickAndProcessDocument, getTotalDocumentChunks, type Document } from '@/sources/documents';
+import { listDocuments, deleteDocument, pickAndProcessDocument, getTotalDocumentChunks, getDocumentChunks, type Document } from '@/sources/documents';
 import { listWebsites, addWebsite, deleteWebsite, refreshWebsite, type WebsiteData } from '@/sources/websites';
-import { listTelegramChannels, addTelegramChannel, deleteTelegramChannel, syncTelegramChannel, getTelegramMessageCount, getChannelMessageCounts, getChannelMessageCount, type TelegramChannel } from '@/sources/telegram';
+import { listTelegramChannels, addTelegramChannel, deleteTelegramChannel, syncTelegramChannel, getTelegramMessageCount, getChannelMessageCounts, getChannelMessageCount, getChannelMessages, type TelegramChannel } from '@/sources/telegram';
 import { syncSourcesNow } from '@/sources/sync';
 import { getSetting, setSetting } from '@/db/queries';
 import { shortDate, timeLabel } from '@/format';
@@ -242,6 +242,57 @@ export default function DataSourcesScreen() {
     }
   }
 
+  const [previewItem, setPreviewItem] = useState<{
+    title: string;
+    subtitle: string;
+    content: string;
+    meta: string;
+  } | null>(null);
+
+  async function viewDocument(doc: Document) {
+    try {
+      const chunks = await getDocumentChunks(doc.id);
+      const content = chunks.length > 0
+        ? chunks.map((c, i) => `=== Search Chunk ${i + 1} (Page ${c.pageNumber ?? 1}) ===\n${c.content}`).join('\n\n')
+        : 'No text extracted.';
+      setPreviewItem({
+        title: doc.filename,
+        subtitle: `${doc.chunkCount} search chunks · ${(doc.fileSize / 1024).toFixed(0)} KB`,
+        content,
+        meta: `Saved to local DB · Uploaded ${shortDate(doc.uploadedAt)}`,
+      });
+    } catch {
+      showDialog({ title: 'Error', message: 'Could not load document text.' });
+    }
+  }
+
+  function viewWebsite(site: WebsiteData) {
+    const words = site.content.trim() ? Math.round(site.content.trim().split(/\s+/).length) : 0;
+    setPreviewItem({
+      title: site.title || site.url,
+      subtitle: site.url,
+      content: site.content,
+      meta: `${site.content.length.toLocaleString()} characters · ~${words.toLocaleString()} words · Updated ${shortDate(site.lastUpdated)}`,
+    });
+  }
+
+  async function viewChannel(ch: TelegramChannel) {
+    try {
+      const msgs = await getChannelMessages(ch.channelUsername, ch.id);
+      const content = msgs.length > 0
+        ? msgs.map((m) => `[${shortDate(m.messageDate)} ${timeLabel(m.messageDate)}] ${m.senderName || 'Channel'}:\n${m.messageText || '(Media message)'}`).join('\n\n')
+        : 'No messages saved yet.';
+      setPreviewItem({
+        title: ch.channelName || ch.channelUsername,
+        subtitle: ch.channelUsername,
+        content,
+        meta: `${msgs.length} messages saved in DB · Last synced ${ch.lastSyncedAt ? shortDate(ch.lastSyncedAt) : 'Never'}`,
+      });
+    } catch {
+      showDialog({ title: 'Error', message: 'Could not load channel messages.' });
+    }
+  }
+
   const tabs: { key: Tab; label: string; count: number }[] = [
     { key: 'documents', label: 'Documents', count: documents.length },
     { key: 'websites', label: 'Websites', count: websites.length },
@@ -368,6 +419,7 @@ export default function DataSourcesScreen() {
                 {documents.map((doc, i) => (
                   <Pressable
                     key={doc.id}
+                    onPress={() => void viewDocument(doc)}
                     style={({ pressed }) => ({
                       paddingVertical: 12,
                       paddingHorizontal: 4,
@@ -387,7 +439,7 @@ export default function DataSourcesScreen() {
                           </T>
                         </Row>
                         <T size={11} sub style={{ marginTop: 1 }}>
-                          {(doc.fileSize / 1024).toFixed(0)} KB · Uploaded {shortDate(doc.uploadedAt)}
+                          {(doc.fileSize / 1024).toFixed(0)} KB · Uploaded {shortDate(doc.uploadedAt)} · Tap to view
                         </T>
                       </View>
                       <Pressable onPress={() => void removeDocument(doc.id)} hitSlop={10}>
@@ -466,7 +518,7 @@ export default function DataSourcesScreen() {
                     >
                       <Row style={{ alignItems: 'center', gap: 12 }}>
                         <Ionicons name="link" size={20} color={c.accent} />
-                        <View style={{ flex: 1 }}>
+                        <Pressable onPress={() => viewWebsite(site)} style={{ flex: 1 }}>
                           <T size={15} numberOfLines={1}>{site.title || site.url}</T>
                           <T size={12} sub numberOfLines={1}>{new URL(site.url).hostname}</T>
                           <Row style={{ alignItems: 'center', gap: 4, marginTop: 2 }}>
@@ -475,8 +527,8 @@ export default function DataSourcesScreen() {
                               {site.content.length.toLocaleString()} chars (~{words.toLocaleString()} words) in DB
                             </T>
                           </Row>
-                          <T size={11} sub style={{ marginTop: 1 }}>Updated {shortDate(site.lastUpdated)} · {timeLabel(site.lastUpdated)}</T>
-                        </View>
+                          <T size={11} sub style={{ marginTop: 1 }}>Updated {shortDate(site.lastUpdated)} · Tap to view</T>
+                        </Pressable>
                         <Pressable
                           onPress={() => void refreshWebsiteData(site.id)}
                           hitSlop={10}
@@ -585,7 +637,7 @@ export default function DataSourcesScreen() {
                       >
                         <Row style={{ alignItems: 'center', gap: 12 }}>
                           <Ionicons name="paper-plane" size={20} color={c.accent} />
-                          <View style={{ flex: 1 }}>
+                          <Pressable onPress={() => void viewChannel(ch)} style={{ flex: 1 }}>
                             <T size={15} numberOfLines={1}>{ch.channelName || ch.channelUsername}</T>
                             <T size={12} sub>{ch.channelUsername}</T>
                             <Row style={{ alignItems: 'center', gap: 4, marginTop: 2 }}>
@@ -595,9 +647,9 @@ export default function DataSourcesScreen() {
                               </T>
                             </Row>
                             {ch.lastSyncedAt && (
-                              <T size={11} sub style={{ marginTop: 1 }}>Synced {shortDate(ch.lastSyncedAt)}, {timeLabel(ch.lastSyncedAt)}</T>
+                              <T size={11} sub style={{ marginTop: 1 }}>Synced {shortDate(ch.lastSyncedAt)} · Tap to view</T>
                             )}
-                          </View>
+                          </Pressable>
                           <Pressable
                             onPress={() => void syncChannel(ch.id)}
                             hitSlop={10}
@@ -622,6 +674,45 @@ export default function DataSourcesScreen() {
           </>
         )}
       </ScrollView>
+
+      {/* Extracted Data Viewer Modal */}
+      <Modal
+        visible={!!previewItem}
+        animationType="slide"
+        onRequestClose={() => setPreviewItem(null)}
+      >
+        <Screen>
+          <TopBar
+            title="Extracted Data"
+            onBack={() => setPreviewItem(null)}
+          />
+          <ScrollView contentContainerStyle={styles.content}>
+            <Card style={{ padding: 14, backgroundColor: `${c.accent}0d`, borderColor: `${c.accent}30`, gap: 4 }}>
+              <T size={16} weight="700">{previewItem?.title}</T>
+              <T size={12} sub>{previewItem?.subtitle}</T>
+              <T size={12} style={{ color: c.good, fontWeight: '600', marginTop: 4 }}>
+                {previewItem?.meta}
+              </T>
+            </Card>
+
+            <Card style={{ padding: 16 }}>
+              <T size={11} sub weight="700" style={{ marginBottom: 10, letterSpacing: 0.5, textTransform: 'uppercase' }}>
+                Content Saved in Database
+              </T>
+              <T size={14} style={{ lineHeight: 22 }}>
+                {previewItem?.content}
+              </T>
+            </Card>
+
+            <Button
+              title="Close"
+              kind="ghost"
+              onPress={() => setPreviewItem(null)}
+              style={{ marginTop: 8 }}
+            />
+          </ScrollView>
+        </Screen>
+      </Modal>
     </Screen>
   );
 }
