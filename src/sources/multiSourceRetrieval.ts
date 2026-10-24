@@ -93,7 +93,7 @@ export function buildUnifiedContext(result: RetrievalResult, expenseContext?: un
     result.documentChunks.forEach((d, i) => {
       const page = d.pageNumber ? ` (page ${d.pageNumber})` : '';
       context += `[D${i}] From "${d.filename}"${page}:\n`;
-      context += `${d.content.substring(0, 800)}${d.content.length > 800 ? '...' : ''}\n\n`;
+      context += `${d.content}\n\n`;
     });
   }
 

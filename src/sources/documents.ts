@@ -71,7 +71,7 @@ function getFileType(mimeType?: string, filename?: string): Document['fileType']
  * Chunk text into smaller pieces for better retrieval.
  * Overlapping chunks help maintain context.
  */
-function chunkText(text: string, chunkSize = 1000, overlap = 200): string[] {
+function chunkText(text: string, chunkSize = 2500, overlap = 400): string[] {
   const chunks: string[] = [];
   let start = 0;
 
@@ -316,7 +316,43 @@ export async function searchDocumentChunks(query: string, limit = 50): Promise<D
   const conditions = keywords.map(() => 'LOWER(content) LIKE ?').join(' OR ');
   const params = keywords.map(k => `%${k}%`);
 
+  // Find matched chunks and their document metadata
   const rows = await db.getAllAsync<{
+    id: string;
+    document_id: string;
+    chunk_index: number;
+    filename: string;
+    chunk_count: number;
+  }>(
+    `SELECT c.id, c.document_id, c.chunk_index, d.filename, d.chunk_count
+     FROM document_chunks c
+     JOIN documents d ON c.document_id = d.id
+     WHERE d.deleted = 0 AND d.processed = 1 AND (${conditions})
+     LIMIT ?`,
+    [...params, limit]
+  );
+
+  if (rows.length === 0) return [];
+
+  // Group matched document IDs and the specific indices that matched
+  const matchedDocs = new Map<string, { chunkCount: number; matchedIndices: Set<number> }>();
+  for (const r of rows) {
+    if (!matchedDocs.has(r.document_id)) {
+      matchedDocs.set(r.document_id, {
+        chunkCount: r.chunk_count || 1,
+        matchedIndices: new Set(),
+      });
+    }
+    matchedDocs.get(r.document_id)!.matchedIndices.add(r.chunk_index);
+  }
+
+  // Retrieve sequential context: for documents with <= 12 chunks (schedules, notices, letters),
+  // retrieve all chunks in order so tables across page breaks remain whole!
+  // For large documents, retrieve the matched chunk plus adjacent preceding and succeeding chunks.
+  const allDocIds = Array.from(matchedDocs.keys());
+  const docPlaceholders = allDocIds.map(() => '?').join(',');
+
+  const allCandidateChunks = await db.getAllAsync<{
     id: string;
     document_id: string;
     chunk_index: number;
@@ -328,20 +364,28 @@ export async function searchDocumentChunks(query: string, limit = 50): Promise<D
     `SELECT c.id, c.document_id, c.chunk_index, c.content, c.page_number, c.created_at, d.filename
      FROM document_chunks c
      JOIN documents d ON c.document_id = d.id
-     WHERE d.deleted = 0 AND d.processed = 1 AND (${conditions})
-     LIMIT ?`,
-    [...params, limit]
+     WHERE c.document_id IN (${docPlaceholders}) AND d.deleted = 0
+     ORDER BY c.document_id, c.chunk_index ASC`,
+    allDocIds
   );
 
-  return rows.map((row: {
-    id: string;
-    document_id: string;
-    chunk_index: number;
-    content: string;
-    page_number: number | null;
-    created_at: string;
-    filename: string;
-  }) => ({
+  const finalChunks: typeof allCandidateChunks = [];
+  for (const c of allCandidateChunks) {
+    const meta = matchedDocs.get(c.document_id);
+    if (!meta) continue;
+    if (meta.chunkCount <= 12) {
+      finalChunks.push(c);
+    } else {
+      const isNearMatch = Array.from(meta.matchedIndices).some(
+        (mIdx) => Math.abs(mIdx - c.chunk_index) <= 1
+      );
+      if (isNearMatch) {
+        finalChunks.push(c);
+      }
+    }
+  }
+
+  return finalChunks.map((row) => ({
     id: row.id,
     documentId: row.document_id,
     chunkIndex: row.chunk_index,
