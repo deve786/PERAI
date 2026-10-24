@@ -193,6 +193,26 @@ CRITICAL TABLE FORMATTING RULES:
 
     return response.text || '';
   } catch (err) {
+    if (EXTRACT_MODEL !== 'gemini-3.5-flash-lite') {
+      try {
+        const client = getClient();
+        const fallback = await client.models.generateContent({
+          model: 'gemini-3.5-flash-lite',
+          contents: [
+            { text: prompt },
+            {
+              inlineData: {
+                mimeType: 'application/pdf',
+                data: base64,
+              },
+            },
+          ],
+        });
+        if (fallback.text && fallback.text.trim().length > 0) {
+          return fallback.text;
+        }
+      } catch {}
+    }
     throw new Error(`PDF extraction failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
@@ -221,6 +241,26 @@ Do not add any commentary or explanations.`;
 
     return response.text || '';
   } catch (err) {
+    if (EXTRACT_MODEL !== 'gemini-3.5-flash-lite') {
+      try {
+        const client = getClient();
+        const fallback = await client.models.generateContent({
+          model: 'gemini-3.5-flash-lite',
+          contents: [
+            { text: prompt },
+            {
+              inlineData: {
+                mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                data: base64,
+              },
+            },
+          ],
+        });
+        if (fallback.text && fallback.text.trim().length > 0) {
+          return fallback.text;
+        }
+      } catch {}
+    }
     throw new Error(`DOCX extraction failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
@@ -233,13 +273,13 @@ Return only the extracted text, maintaining the reading order.
 If there's no text, return "No text found in image".
 Do not add any commentary or explanations.`;
 
-  try {
-    const ext = (filePath || fallbackUri || '').toLowerCase().split('.').pop();
-    let mimeType = 'image/jpeg';
-    if (ext === 'png') mimeType = 'image/png';
-    else if (ext === 'webp') mimeType = 'image/webp';
-    else if (ext === 'gif') mimeType = 'image/gif';
+  const ext = (filePath || fallbackUri || '').toLowerCase().split('.').pop();
+  let mimeType = 'image/jpeg';
+  if (ext === 'png') mimeType = 'image/png';
+  else if (ext === 'webp') mimeType = 'image/webp';
+  else if (ext === 'gif') mimeType = 'image/gif';
 
+  try {
     const client = getClient();
     const response = await client.models.generateContent({
       model: EXTRACT_MODEL,
@@ -256,6 +296,26 @@ Do not add any commentary or explanations.`;
 
     return response.text || '';
   } catch (err) {
+    if (EXTRACT_MODEL !== 'gemini-3.5-flash-lite') {
+      try {
+        const client = getClient();
+        const fallback = await client.models.generateContent({
+          model: 'gemini-3.5-flash-lite',
+          contents: [
+            { text: prompt },
+            {
+              inlineData: {
+                mimeType: mimeType,
+                data: base64,
+              },
+            },
+          ],
+        });
+        if (fallback.text && fallback.text.trim().length > 0) {
+          return fallback.text;
+        }
+      } catch {}
+    }
     throw new Error(`Image OCR failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }

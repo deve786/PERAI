@@ -60,7 +60,6 @@ export default function DataSourcesScreen() {
 
   const loadData = useCallback(async () => {
     try {
-      await cleanupEmptyDocuments().catch(() => 0);
       const [docs, sites, chans, token, count, chunks, chCounts, lastSync] = await Promise.all([
         listDocuments(),
         listWebsites(),

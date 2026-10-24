@@ -148,8 +148,8 @@ export async function pickAndProcessDocument(): Promise<Document> {
   // Save metadata first (unprocessed)
   const db = await getSourcesDb();
   await db.runAsync(
-    `INSERT INTO documents (id, filename, file_type, file_size, file_uri, uploaded_at, processed, chunk_count, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?)`,
+    `INSERT INTO documents (id, filename, file_type, file_size, file_uri, uploaded_at, processed, chunk_count, updated_at, deleted, dirty)
+     VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, 0, 1)`,
     [docId, filename, fileType, fileSize, finalStoragePath, now, now]
   );
 
@@ -179,8 +179,8 @@ export async function pickAndProcessDocument(): Promise<Document> {
 
     // Mark as processed
     await db.runAsync(
-      `UPDATE documents SET processed = 1, chunk_count = ? WHERE id = ?`,
-      [chunks.length, docId]
+      `UPDATE documents SET processed = 1, chunk_count = ?, deleted = 0, dirty = 1, updated_at = ? WHERE id = ?`,
+      [chunks.length, now, docId]
     );
 
     return {
@@ -211,6 +211,18 @@ export async function pickAndProcessDocument(): Promise<Document> {
 
 export async function listDocuments(): Promise<Document[]> {
   const db = await getSourcesDb();
+
+  // Auto-recover any documents that have search chunks in document_chunks
+  // (e.g. if they were prematurely marked deleted or out-of-sync)
+  await db.runAsync(`
+    UPDATE documents
+    SET deleted = 0,
+        processed = 1,
+        chunk_count = (SELECT COUNT(*) FROM document_chunks WHERE document_id = documents.id)
+    WHERE (SELECT COUNT(*) FROM document_chunks WHERE document_id = documents.id) > 0
+      AND (deleted = 1 OR chunk_count = 0 OR processed = 0)
+  `).catch(() => {});
+
   const rows = await db.getAllAsync<{
     id: string;
     filename: string;
@@ -297,9 +309,28 @@ export async function clearAllDocuments(): Promise<number> {
 
 export async function cleanupEmptyDocuments(): Promise<number> {
   const db = await getSourcesDb();
+
+  // 1. First recover any documents that have chunks
+  await db.runAsync(`
+    UPDATE documents
+    SET deleted = 0,
+        processed = 1,
+        chunk_count = (SELECT COUNT(*) FROM document_chunks WHERE document_id = documents.id)
+    WHERE (SELECT COUNT(*) FROM document_chunks WHERE document_id = documents.id) > 0
+      AND (deleted = 1 OR chunk_count = 0 OR processed = 0)
+  `).catch(() => {});
+
+  // 2. Only clean up failed abandoned items older than 2 hours that truly have 0 chunks
+  const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
   const docs = await db.getAllAsync<{ id: string; file_uri: string }>(
-    'SELECT id, file_uri FROM documents WHERE deleted = 0 AND (chunk_count = 0 OR processed = 0)'
+    `SELECT id, file_uri FROM documents
+     WHERE deleted = 0
+       AND (chunk_count = 0 OR processed = 0)
+       AND uploaded_at < ?
+       AND (SELECT COUNT(*) FROM document_chunks WHERE document_id = documents.id) = 0`,
+    [twoHoursAgo]
   );
+
   for (const doc of docs) {
     if (doc.file_uri) {
       try {
@@ -308,7 +339,8 @@ export async function cleanupEmptyDocuments(): Promise<number> {
     }
   }
   if (docs.length > 0) {
-    await db.runAsync('UPDATE documents SET deleted = 1 WHERE chunk_count = 0 OR processed = 0');
+    const ids = docs.map((d) => `'${d.id}'`).join(',');
+    await db.runAsync(`UPDATE documents SET deleted = 1 WHERE id IN (${ids})`);
   }
   return docs.length;
 }
