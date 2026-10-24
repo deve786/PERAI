@@ -18,6 +18,20 @@ import { radius } from '@/expense/theme';
 
 type Tab = 'documents' | 'websites' | 'telegram';
 
+function formatDateTime(iso: string | null | undefined): string {
+  if (!iso) return 'Never';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return 'Never';
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  const date = d.toLocaleDateString(undefined, {
+    day: 'numeric',
+    month: 'short',
+    ...(sameYear ? {} : { year: 'numeric' }),
+  });
+  const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  return `${date}, ${time}`;
+}
+
 export default function DataSourcesScreen() {
   const { c } = useTheme();
   const router = useRouter();
@@ -29,6 +43,7 @@ export default function DataSourcesScreen() {
   const [telegramCount, setTelegramCount] = useState(0);
   const [totalDocChunks, setTotalDocChunks] = useState(0);
   const [channelCounts, setChannelCounts] = useState<Record<string, number>>({});
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
 
   const [uploadingDoc, setUploadingDoc] = useState(false);
   const [addingWebsite, setAddingWebsite] = useState(false);
@@ -46,7 +61,7 @@ export default function DataSourcesScreen() {
   const loadData = useCallback(async () => {
     try {
       await cleanupEmptyDocuments().catch(() => 0);
-      const [docs, sites, chans, token, count, chunks, chCounts] = await Promise.all([
+      const [docs, sites, chans, token, count, chunks, chCounts, lastSync] = await Promise.all([
         listDocuments(),
         listWebsites(),
         listTelegramChannels(),
@@ -54,6 +69,7 @@ export default function DataSourcesScreen() {
         getTelegramMessageCount(),
         getTotalDocumentChunks(),
         getChannelMessageCounts(),
+        getSetting('sources_last_synced_at'),
       ]);
       setDocuments(docs);
       setWebsites(sites);
@@ -62,6 +78,14 @@ export default function DataSourcesScreen() {
       setTelegramCount(count);
       setTotalDocChunks(chunks);
       setChannelCounts(chCounts);
+
+      const latestItemSync = [
+        ...docs.map(d => d.uploadedAt),
+        ...sites.map(s => s.lastUpdated),
+        ...chans.map(c => c.lastSyncedAt).filter((x): x is string => !!x),
+      ].sort().reverse()[0] || null;
+
+      setLastSyncedAt(lastSync || latestItemSync);
     } catch (err) {
       console.warn('Failed to load data sources:', err);
     }
@@ -75,9 +99,12 @@ export default function DataSourcesScreen() {
       const doc = await pickAndProcessDocument();
       await loadData();
       void syncSourcesNow();
+      const now = new Date().toISOString();
+      await setSetting('sources_last_synced_at', now);
+      setLastSyncedAt(now);
       showDialog({
         title: 'Document Saved in DB',
-        message: `${doc.filename}\n\n✓ Successfully saved in database:\n• ${doc.chunkCount} search chunks indexed\n• ${(doc.fileSize / 1024).toFixed(0)} KB stored\n\nContent is ready and searchable in the Ask tab.`,
+        message: `${doc.filename}\n\n✓ Synced on ${formatDateTime(doc.uploadedAt)}:\n• ${doc.chunkCount} search chunks indexed\n• ${(doc.fileSize / 1024).toFixed(0)} KB stored\n\nContent is ready and searchable in the Ask tab.`,
       });
     } catch (err) {
       if (err instanceof Error && err.message !== 'Document selection cancelled') {
@@ -99,14 +126,17 @@ export default function DataSourcesScreen() {
       setAddingWebsite(false);
       await loadData();
       void syncSourcesNow();
+      const now = new Date().toISOString();
+      await setSetting('sources_last_synced_at', now);
+      setLastSyncedAt(now);
       const charCount = site.content.length;
       const wordCount = site.content.trim() ? site.content.trim().split(/\s+/).length : 0;
       const isTg = !!parseTelegramChannel(url);
       showDialog({
         title: isTg ? 'Telegram Channel Saved in DB' : 'Website Saved in DB',
         message: isTg
-          ? `${site.title || site.url}\n\n✓ Scraped channel history & saved to database:\n• ${charCount.toLocaleString()} characters extracted\n• ~${wordCount.toLocaleString()} words indexed\n• Messages, photos, & documents saved\n\nSearchable in both Websites and Telegram sources!`
-          : `${site.title || site.url}\n\n✓ Successfully saved in database:\n• ${charCount.toLocaleString()} characters extracted\n• ~${wordCount.toLocaleString()} words indexed\n\nContent is stored in the database and searchable in the Ask tab.`,
+          ? `${site.title || site.url}\n\n✓ Scraped & synced on ${formatDateTime(site.lastUpdated)}:\n• ${charCount.toLocaleString()} characters extracted\n• ~${wordCount.toLocaleString()} words indexed\n• Messages, photos, & documents saved\n\nSearchable in both Websites and Telegram sources!`
+          : `${site.title || site.url}\n\n✓ Synced on ${formatDateTime(site.lastUpdated)}:\n• ${charCount.toLocaleString()} characters extracted\n• ~${wordCount.toLocaleString()} words indexed\n\nContent is stored in the database and searchable in the Ask tab.`,
       });
     } catch (err) {
       showDialog({ title: 'Failed to add website', message: err instanceof Error ? err.message : String(err) });
@@ -134,9 +164,12 @@ export default function DataSourcesScreen() {
       setAddingTelegram(false);
       await loadData();
       void syncSourcesNow();
+      const now = new Date().toISOString();
+      await setSetting('sources_last_synced_at', now);
+      setLastSyncedAt(now);
       showDialog({
         title: 'Telegram Channel Saved in DB',
-        message: `${res.channelName || username}\n\n✓ Successfully saved in database:\n• ${res.messagesSaved ?? 0} messages stored\n• Photos, documents, & post history indexed\n\nMessages are now searchable in the Ask tab.`,
+        message: `${res.channelName || username}\n\n✓ Synced on ${formatDateTime(now)}:\n• ${res.messagesSaved ?? 0} messages stored\n• Photos, documents, & post history indexed\n\nMessages are now searchable in the Ask tab.`,
       });
     } catch (err) {
       showDialog({ title: 'Failed to add channel', message: err instanceof Error ? err.message : String(err) });
@@ -179,11 +212,14 @@ export default function DataSourcesScreen() {
       const updated = await refreshWebsite(id);
       await loadData();
       void syncSourcesNow();
+      const now = new Date().toISOString();
+      await setSetting('sources_last_synced_at', now);
+      setLastSyncedAt(now);
       const charCount = updated.content.length;
       const wordCount = updated.content.trim() ? updated.content.trim().split(/\s+/).length : 0;
       showDialog({
         title: 'Website Refreshed & Saved',
-        message: `${updated.title || updated.url}\n\n✓ Updated in database:\n• ${charCount.toLocaleString()} characters saved\n• ~${wordCount.toLocaleString()} words indexed\n\nLatest content is now indexed in the Ask tab.`,
+        message: `${updated.title || updated.url}\n\n✓ Synced on ${formatDateTime(updated.lastUpdated)}:\n• ${charCount.toLocaleString()} characters saved\n• ~${wordCount.toLocaleString()} words indexed\n\nLatest content is now indexed in the Ask tab.`,
       });
     } catch (err) {
       showDialog({ title: 'Refresh failed', message: err instanceof Error ? err.message : String(err) });
@@ -199,13 +235,16 @@ export default function DataSourcesScreen() {
       const count = await syncTelegramChannel(botToken, id);
       await loadData();
       void syncSourcesNow();
+      const now = new Date().toISOString();
+      await setSetting('sources_last_synced_at', now);
+      setLastSyncedAt(now);
       const ch = channels.find(c => c.id === id);
       const total = await getChannelMessageCount(ch?.channelUsername || '', id);
       showDialog({
         title: count > 0 ? 'Telegram Messages Saved' : 'Telegram Up To Date',
         message: count > 0
-          ? `✓ Saved ${count} new messages to the database.\nTotal stored for this channel: ${total} messages.`
-          : `Already up to date. No new messages found.\nTotal stored in database: ${total} messages.`,
+          ? `✓ Synced ${count} new messages on ${formatDateTime(now)}.\nTotal stored for this channel: ${total} messages.`
+          : `Already up to date as of ${formatDateTime(now)}.\nTotal stored in database: ${total} messages.`,
       });
     } catch (err) {
       showDialog({ title: 'Sync failed', message: err instanceof Error ? err.message : String(err) });
@@ -234,11 +273,14 @@ export default function DataSourcesScreen() {
       }
       await loadData();
       void syncSourcesNow();
+      const now = new Date().toISOString();
+      await setSetting('sources_last_synced_at', now);
+      setLastSyncedAt(now);
 
       const totalChars = websites.reduce((acc, s) => acc + s.content.length, 0);
       showDialog({
         title: 'All Data Sources Refreshed',
-        message: `✓ Local database is fully updated:\n\n• Documents: ${documents.length} (${totalDocChunks} chunks saved)\n• Websites: ${websites.length} (${(totalChars / 1024).toFixed(1)} KB text saved)\n• Telegram: ${channels.length} channels (${telegramCount} messages saved)\n\nAll content is in the database and searchable in the Ask tab.`,
+        message: `✓ Local database synced on ${formatDateTime(now)}:\n\n• Documents: ${documents.length} (${totalDocChunks} chunks saved)\n• Websites: ${websites.length} (${(totalChars / 1024).toFixed(1)} KB text saved)\n• Telegram: ${channels.length} channels (${telegramCount} messages saved)\n\nAll content is in the database and searchable in the Ask tab.`,
       });
     } catch (err) {
       showDialog({ title: 'Refresh error', message: err instanceof Error ? err.message : String(err) });
@@ -360,7 +402,7 @@ export default function DataSourcesScreen() {
         title: doc.filename,
         subtitle: `${doc.chunkCount} search chunks · ${(doc.fileSize / 1024).toFixed(0)} KB`,
         content,
-        meta: `Saved to local DB · Uploaded ${shortDate(doc.uploadedAt)}`,
+        meta: `Saved to local DB · Synced ${formatDateTime(doc.uploadedAt)}`,
       });
     } catch {
       showDialog({ title: 'Error', message: 'Could not load document text.' });
@@ -373,7 +415,7 @@ export default function DataSourcesScreen() {
       title: site.title || site.url,
       subtitle: site.url,
       content: site.content,
-      meta: `${site.content.length.toLocaleString()} characters · ~${words.toLocaleString()} words · Updated ${shortDate(site.lastUpdated)}`,
+      meta: `${site.content.length.toLocaleString()} characters · ~${words.toLocaleString()} words · Synced ${formatDateTime(site.lastUpdated)}`,
     });
   }
 
@@ -381,13 +423,13 @@ export default function DataSourcesScreen() {
     try {
       const msgs = await getChannelMessages(ch.channelUsername, ch.id);
       const content = msgs.length > 0
-        ? msgs.map((m) => `[${shortDate(m.messageDate)} ${timeLabel(m.messageDate)}] ${m.senderName || 'Channel'}:\n${m.messageText || '(Media message)'}`).join('\n\n')
+        ? msgs.map((m) => `[${formatDateTime(m.messageDate)}] ${m.senderName || 'Channel'}:\n${m.messageText || '(Media message)'}`).join('\n\n')
         : 'No messages saved yet.';
       setPreviewItem({
         title: ch.channelName || ch.channelUsername,
         subtitle: ch.channelUsername,
         content,
-        meta: `${msgs.length} messages saved in DB · Last synced ${ch.lastSyncedAt ? shortDate(ch.lastSyncedAt) : 'Never'}`,
+        meta: `${msgs.length} messages saved in DB · Last synced ${ch.lastSyncedAt ? formatDateTime(ch.lastSyncedAt) : 'Never'}`,
       });
     } catch {
       showDialog({ title: 'Error', message: 'Could not load channel messages.' });
@@ -461,6 +503,12 @@ export default function DataSourcesScreen() {
               <T size={11} sub>TELEGRAM</T>
               <T size={13} weight="600">{channels.length} ({telegramCount} msgs)</T>
             </View>
+          </Row>
+          <Row style={{ alignItems: 'center', gap: 6, marginTop: 4, paddingTop: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: `${c.accent}25` }}>
+            <Ionicons name="time-outline" size={13} color={c.accent} />
+            <T size={12} sub>
+              Last Synced: <T size={12} weight="600" style={{ color: c.text }}>{formatDateTime(lastSyncedAt)}</T>
+            </T>
           </Row>
         </Card>
 
@@ -560,7 +608,7 @@ export default function DataSourcesScreen() {
                           </T>
                         </Row>
                         <T size={11} sub style={{ marginTop: 1 }}>
-                          {(doc.fileSize / 1024).toFixed(0)} KB · Uploaded {shortDate(doc.uploadedAt)} · Tap to view
+                          {(doc.fileSize / 1024).toFixed(0)} KB · Synced {formatDateTime(doc.uploadedAt)} · Tap to view
                         </T>
                       </View>
                       <Pressable onPress={() => void removeDocument(doc.id)} hitSlop={10}>
@@ -668,7 +716,7 @@ export default function DataSourcesScreen() {
                               {site.content.length.toLocaleString()} chars (~{words.toLocaleString()} words) in DB
                             </T>
                           </Row>
-                          <T size={11} sub style={{ marginTop: 1 }}>Updated {shortDate(site.lastUpdated)} · Tap to view</T>
+                          <T size={11} sub style={{ marginTop: 1 }}>Synced {formatDateTime(site.lastUpdated)} · Tap to view</T>
                         </Pressable>
                         <Pressable
                           onPress={() => void refreshWebsiteData(site.id)}
@@ -807,9 +855,9 @@ export default function DataSourcesScreen() {
                                 {msgCount} messages saved in DB
                               </T>
                             </Row>
-                            {ch.lastSyncedAt && (
-                              <T size={11} sub style={{ marginTop: 1 }}>Synced {shortDate(ch.lastSyncedAt)} · Tap to view</T>
-                            )}
+                            <T size={11} sub style={{ marginTop: 1 }}>
+                              Synced {ch.lastSyncedAt ? formatDateTime(ch.lastSyncedAt) : 'Never'} · Tap to view
+                            </T>
                           </Pressable>
                           <Pressable
                             onPress={() => void syncChannel(ch.id)}
