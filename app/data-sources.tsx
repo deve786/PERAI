@@ -223,13 +223,11 @@ export default function DataSourcesScreen() {
           console.warn('Failed to refresh site:', site.url, e);
         }
       }
-      if (botToken) {
-        for (const ch of channels) {
-          try {
-            await syncTelegramChannel(botToken, ch.id);
-          } catch (e) {
-            console.warn('Failed to sync channel:', ch.channelUsername, e);
-          }
+      for (const ch of channels) {
+        try {
+          await syncTelegramChannel(botToken, ch.id);
+        } catch (e) {
+          console.warn('Failed to sync channel:', ch.channelUsername, e);
         }
       }
       await loadData();

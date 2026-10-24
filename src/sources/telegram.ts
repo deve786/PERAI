@@ -237,11 +237,15 @@ export interface PublicTelegramResult {
 
 export async function fetchPublicTelegramChannel(
   username: string,
-  maxPages = 4,
-  maxPhotosToOcr = 6
+  daysToScrape = 30,
+  maxPages = 150,
+  maxPhotosToOcr = 8
 ): Promise<PublicTelegramResult> {
   const clean = username.replace(/^@/, '').replace(/^(?:https?:\/\/)?t\.me\/(?:s\/)?/, '').replace(/\/$/, '').trim();
   let nextUrl: string | null = `https://t.me/s/${clean}`;
+  const cutoffTime = daysToScrape > 0 ? Date.now() - daysToScrape * 24 * 60 * 60 * 1000 : 0;
+  let reachedCutoff = false;
+
   const rawMessages: Array<{
     postPath: string;
     messageId: number;
@@ -257,7 +261,7 @@ export async function fetchPublicTelegramChannel(
   let channelTitle = clean;
   let page = 0;
 
-  while (nextUrl && page < maxPages) {
+  while (nextUrl && page < maxPages && !reachedCutoff) {
     page++;
     try {
       const controller = new AbortController();
@@ -281,7 +285,14 @@ export async function fetchPublicTelegramChannel(
         const postPath = postMatch ? postMatch[1] : '';
         const msgNum = parseInt(postPath.split('/').pop() || '0', 10);
         const dateMatch = b.match(/<time datetime="([^"]*)"/);
-        const msgDate = dateMatch ? dateMatch[1] : new Date().toISOString();
+        const msgDateStr = dateMatch ? dateMatch[1] : '';
+        const msgDate = msgDateStr || new Date().toISOString();
+        const msgDateMs = msgDateStr ? new Date(msgDateStr).getTime() : 0;
+
+        if (cutoffTime > 0 && msgDateMs > 0 && msgDateMs < cutoffTime) {
+          reachedCutoff = true;
+          continue;
+        }
 
         const textMatch = b.match(/<div class="tgme_widget_message_text[^>]*>([\s\S]*?)<\/div>/);
         let text = '';
@@ -306,7 +317,8 @@ export async function fetchPublicTelegramChannel(
         const docInfo = docTitle ? `${docTitle[1].trim()}${docExtra ? ` (${docExtra[1].trim()})` : ''}` : null;
 
         const videoMatch = b.match(/<video[^>]*src="([^"]*)"/i);
-        const videoUrl = videoMatch ? videoMatch[1] : null;
+        const videoThumb = b.match(/class="[^"]*tgme_widget_message_video_thumb[^"]*"[^>]*style="background-image:url\('([^']*)'\)"/i);
+        const videoUrl = videoMatch ? videoMatch[1] : (videoThumb ? videoThumb[1] : null);
 
         let mediaType: 'photo' | 'video' | 'document' | 'none' = 'none';
         let mediaPath: string | null = null;
@@ -334,6 +346,8 @@ export async function fetchPublicTelegramChannel(
           });
         }
       }
+
+      if (reachedCutoff) break;
 
       const prevMatch = html.match(/href="([^"]*\?before=[^"]*)"/i);
       if (prevMatch && prevMatch[1]) {
@@ -440,20 +454,24 @@ export async function savePublicTelegramChannel(
     [channelId, result.channelUsername, result.channelName, lastMessageId, now, now]
   );
 
-  for (const msg of result.messages) {
-    let fullText = msg.messageText || '';
-    if (msg.mediaType === 'photo' && msg.mediaPath) {
-      fullText = fullText ? `${fullText}\n[Photo: ${msg.mediaPath}]` : `[Photo: ${msg.mediaPath}]`;
-    } else if (msg.mediaType === 'document' && msg.mediaPath) {
-      fullText = fullText ? `${fullText}\n[Document: ${msg.mediaPath}]` : `[Document: ${msg.mediaPath}]`;
-    }
+  await db.withTransactionAsync(async () => {
+    for (const msg of result.messages) {
+      let fullText = msg.messageText || '';
+      if (msg.mediaType === 'photo' && msg.mediaPath) {
+        fullText = fullText ? `${fullText}\n[Photo: ${msg.mediaPath}]` : `[Photo: ${msg.mediaPath}]`;
+      } else if (msg.mediaType === 'document' && msg.mediaPath) {
+        fullText = fullText ? `${fullText}\n[Document: ${msg.mediaPath}]` : `[Document: ${msg.mediaPath}]`;
+      } else if (msg.mediaType === 'video' && msg.mediaPath) {
+        fullText = fullText ? `${fullText}\n[Video: ${msg.mediaPath}]` : `[Video: ${msg.mediaPath}]`;
+      }
 
-    await db.runAsync(
-      `INSERT OR REPLACE INTO telegram_messages (id, channel_id, channel_name, message_id, message_text, message_date, sender_name, media_type, media_path, synced_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [msg.id, msg.channelId, msg.channelName, msg.messageId, fullText, msg.messageDate, msg.senderName, msg.mediaType, msg.mediaPath, msg.syncedAt]
-    );
-  }
+      await db.runAsync(
+        `INSERT OR REPLACE INTO telegram_messages (id, channel_id, channel_name, message_id, message_text, message_date, sender_name, media_type, media_path, synced_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [msg.id, msg.channelId, msg.channelName, msg.messageId, fullText, msg.messageDate, msg.senderName, msg.mediaType, msg.mediaPath, msg.syncedAt]
+      );
+    }
+  });
 
   const savedChannel: TelegramChannel = {
     id: channelId,
