@@ -118,8 +118,45 @@ export function buildUnifiedContext(result: RetrievalResult, expenseContext?: un
   return context;
 }
 
+export type SourceBadgeKind = 'image' | 'pdf' | 'docx' | 'video' | 'document' | 'text' | 'website' | 'memory' | 'expense';
+
 /**
- * Format evidence for display in Ask tab.
+ * Formats an ISO string or date into Indian Standard Time (IST).
+ * Example: "2026-10-24T12:40:47+00:00" -> "24 Oct 2026, 6:10 PM IST"
+ */
+export function formatToIST(isoOrDateStr?: string | null): string {
+  if (!isoOrDateStr) return '';
+  try {
+    const date = new Date(isoOrDateStr);
+    if (isNaN(date.getTime())) return isoOrDateStr;
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(isoOrDateStr.trim())) {
+      return new Intl.DateTimeFormat('en-IN', {
+        timeZone: 'Asia/Kolkata',
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+      }).format(date);
+    }
+
+    const formatted = new Intl.DateTimeFormat('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    }).format(date);
+
+    return `${formatted} IST`;
+  } catch {
+    return isoOrDateStr;
+  }
+}
+
+/**
+ * Format evidence for display in Ask tab with badges and IST timestamps.
  */
 export interface EvidenceItem {
   refId: string;
@@ -127,6 +164,8 @@ export interface EvidenceItem {
   id: string;
   title: string;
   subtitle: string;
+  sourceKind?: SourceBadgeKind;
+  badgeLabel?: string;
   content?: string;
   metadata?: Record<string, unknown>;
 }
@@ -141,7 +180,9 @@ export function formatEvidence(result: RetrievalResult): EvidenceItem[] {
       type: 'memory',
       id: m.id,
       title: m.title,
-      subtitle: m.eventDate,
+      subtitle: formatToIST(m.eventDate),
+      sourceKind: 'memory',
+      badgeLabel: '🧠 Memory',
       content: m.rawInput,
       metadata: { category: m.category, type: m.type },
     });
@@ -149,12 +190,36 @@ export function formatEvidence(result: RetrievalResult): EvidenceItem[] {
 
   // Add document evidence
   result.documentChunks.forEach((d, i) => {
+    const filename = d.filename || 'Document';
+    const lower = filename.toLowerCase();
+    let sourceKind: SourceBadgeKind = 'document';
+    let badgeLabel = '📁 Document';
+
+    if (lower.endsWith('.pdf')) {
+      sourceKind = 'pdf';
+      badgeLabel = '📄 PDF';
+    } else if (lower.endsWith('.docx') || lower.endsWith('.doc')) {
+      sourceKind = 'docx';
+      badgeLabel = '📝 Word Doc';
+    } else if (/\.(png|jpg|jpeg|webp|gif)$/i.test(lower)) {
+      sourceKind = 'image';
+      badgeLabel = '📷 Image';
+    } else if (lower.endsWith('.txt')) {
+      sourceKind = 'text';
+      badgeLabel = '📄 Text Doc';
+    }
+
+    const chunkInfo = d.pageNumber ? `Page ${d.pageNumber}` : `Section ${d.chunkIndex + 1}`;
+    const dateInfo = d.createdAt ? formatToIST(d.createdAt) : '';
+
     evidence.push({
       refId: `D${i}`,
       type: 'document',
       id: d.id,
-      title: d.filename || 'Document',
-      subtitle: d.pageNumber ? `Page ${d.pageNumber}` : `Chunk ${d.chunkIndex}`,
+      title: filename,
+      subtitle: dateInfo ? `${chunkInfo} · ${dateInfo}` : chunkInfo,
+      sourceKind,
+      badgeLabel,
       content: d.content.substring(0, 200),
       metadata: { documentId: d.documentId },
     });
@@ -162,18 +227,22 @@ export function formatEvidence(result: RetrievalResult): EvidenceItem[] {
 
   // Add website evidence
   result.websites.forEach((w, i) => {
+    const timeStr = formatToIST(w.lastUpdated || w.scrapedAt);
+    let hostname = '';
+    try {
+      hostname = new URL(w.url).hostname;
+    } catch {
+      hostname = w.url;
+    }
+
     evidence.push({
       refId: `W${i}`,
       type: 'website',
       id: w.id,
-      title: w.title || w.url,
-      subtitle: (() => {
-        try {
-          return new URL(w.url).hostname;
-        } catch {
-          return w.url;
-        }
-      })(),
+      title: w.title || hostname,
+      subtitle: timeStr ? `${hostname} · ${timeStr}` : hostname,
+      sourceKind: 'website',
+      badgeLabel: '🌐 Website',
       content: w.content.substring(0, 200),
       metadata: { url: w.url },
     });
@@ -181,13 +250,35 @@ export function formatEvidence(result: RetrievalResult): EvidenceItem[] {
 
   // Add telegram evidence
   result.telegramMessages.forEach((t, i) => {
+    let sourceKind: SourceBadgeKind = 'text';
+    let badgeLabel = '💬 Telegram';
+
+    const text = t.messageText || '';
+    if (
+      t.mediaType === 'photo' ||
+      text.includes('[Photo') ||
+      text.includes('[Extracted Poster') ||
+      text.includes('[Image OCR Content]')
+    ) {
+      sourceKind = 'image';
+      badgeLabel = '📷 Image Notice';
+    } else if (t.mediaType === 'video' || text.includes('[Video')) {
+      sourceKind = 'video';
+      badgeLabel = '🎥 Video';
+    } else if (t.mediaType === 'document' || text.includes('[Document')) {
+      sourceKind = 'document';
+      badgeLabel = '📎 Document';
+    }
+
     evidence.push({
       refId: `T${i}`,
       type: 'telegram',
       id: t.id,
       title: t.channelName || 'Telegram',
-      subtitle: t.messageDate,
-      content: t.messageText || '[Media message]',
+      subtitle: formatToIST(t.messageDate),
+      sourceKind,
+      badgeLabel,
+      content: text || '[Media message]',
       metadata: { channelId: t.channelId },
     });
   });

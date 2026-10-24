@@ -421,17 +421,47 @@ export default function AskScreen() {
 
                   {result.found ? (
                     <>
-                      <Text style={type.fine}>{sourceLabel(result)}</Text>
+                      <Text style={[type.fine, { marginTop: 10, color: colors.mist }]}>
+                        {sourceLabel(result)}
+                      </Text>
                       {result.evidence.length > 0 ? (
                         <View style={styles.evidence}>
-                          {/* Rows draw a hairline under themselves; this hides the last one. */}
                           <View style={styles.evidenceInner}>
-                            {result.evidence.map((item) => (
-                              <View key={item.id} style={{ paddingVertical: 6 }}>
-                                <Text style={type.body}>{'title' in item ? item.title : ''}</Text>
-                                <Text style={type.fine}>{'subtitle' in item ? item.subtitle : ''}</Text>
-                              </View>
-                            ))}
+                            {result.evidence.map((item) => {
+                              const badge = 'badgeLabel' in item && item.badgeLabel ? item.badgeLabel : null;
+                              const kind = 'sourceKind' in item ? item.sourceKind : null;
+                              return (
+                                <View key={item.id} style={styles.evidenceItemCard}>
+                                  <View style={styles.evidenceHeaderLine}>
+                                    {badge ? (
+                                      <View
+                                        style={[
+                                          styles.sourceBadge,
+                                          kind === 'image' && styles.badgeImage,
+                                          kind === 'pdf' && styles.badgePdf,
+                                          kind === 'video' && styles.badgeVideo,
+                                          kind === 'docx' && styles.badgeDoc,
+                                          kind === 'website' && styles.badgeWeb,
+                                        ]}
+                                      >
+                                        <Text style={styles.sourceBadgeText}>{badge}</Text>
+                                      </View>
+                                    ) : null}
+                                    <Text style={[type.body, styles.evidenceTitleText]} numberOfLines={1}>
+                                      {'title' in item ? item.title : ''}
+                                    </Text>
+                                  </View>
+                                  {'subtitle' in item && item.subtitle ? (
+                                    <View style={styles.evidenceTimeRow}>
+                                      <Ionicons name="time-outline" size={13} color={colors.mist} />
+                                      <Text style={[type.fine, styles.evidenceTimeText]}>
+                                        {item.subtitle}
+                                      </Text>
+                                    </View>
+                                  ) : null}
+                                </View>
+                              );
+                            })}
                           </View>
                         </View>
                       ) : null}
@@ -759,13 +789,73 @@ function makeStyles(colors: Colors) {
     itemMark: { width: 18, color: colors.mist },
     itemText: { flex: 1, color: colors.ink },
     evidence: {
-      marginTop: 2,
-      marginBottom: -8,
+      marginTop: 4,
+      marginBottom: -4,
       overflow: 'hidden',
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: colors.rule,
     },
-    evidenceInner: { marginBottom: -1 },
+    evidenceInner: { gap: 6, paddingTop: 6 },
+    evidenceItemCard: {
+      paddingVertical: 7,
+      paddingHorizontal: 9,
+      borderRadius: RADIUS.input,
+      backgroundColor: colors.well,
+      gap: 3,
+    },
+    evidenceHeaderLine: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 7,
+    },
+    evidenceTitleText: {
+      flex: 1,
+      fontFamily: FONTS.sansMedium,
+      fontSize: 13,
+      color: colors.ink,
+    },
+    evidenceTimeRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+    },
+    evidenceTimeText: {
+      fontSize: 12,
+      color: colors.mist,
+    },
+    sourceBadge: {
+      paddingHorizontal: 7,
+      paddingVertical: 2,
+      borderRadius: RADIUS.pill,
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    sourceBadgeText: {
+      fontFamily: FONTS.sansMedium,
+      fontSize: 11,
+      color: colors.graphite,
+    },
+    badgeImage: {
+      backgroundColor: colors.mossSoft,
+      borderColor: colors.moss,
+    },
+    badgePdf: {
+      backgroundColor: '#FEF3E2',
+      borderColor: '#F59E0B',
+    },
+    badgeVideo: {
+      backgroundColor: '#F3E8FF',
+      borderColor: '#9333EA',
+    },
+    badgeDoc: {
+      backgroundColor: '#E0F2FE',
+      borderColor: '#0284C7',
+    },
+    badgeWeb: {
+      backgroundColor: '#E6FFFA',
+      borderColor: '#0D9488',
+    },
 
     card: {
       gap: 10,
