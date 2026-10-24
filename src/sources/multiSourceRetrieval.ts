@@ -64,7 +64,7 @@ export async function retrieveRelevantContent(
 /**
  * Build unified context string for AI prompt.
  */
-export function buildUnifiedContext(result: RetrievalResult, expenseContext?: string): string {
+export function buildUnifiedContext(result: RetrievalResult, expenseContext?: unknown): string {
   let context = '';
 
   // Memories section
@@ -84,7 +84,7 @@ export function buildUnifiedContext(result: RetrievalResult, expenseContext?: st
   // Expense context from Money data
   if (expenseContext) {
     context += '\n\n=== YOUR EXPENSE DATA ===\n';
-    context += expenseContext;
+    context += typeof expenseContext === 'string' ? expenseContext : JSON.stringify(expenseContext, null, 2);
   }
 
   // Document chunks section

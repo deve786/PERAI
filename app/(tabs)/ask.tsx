@@ -248,9 +248,8 @@ export default function AskScreen() {
       const trip = tripSpendQuestion(q, all);
       const tripAnswer = trip ? await answerTripSpend(trip) : null;
 
-      const expenseContextStr = typeof expenseContext === 'string' ? expenseContext : undefined;
       const result =
-        tripAnswer ?? (await askAIEnhanced(q, new Date().toISOString(), all, history, expenseContextStr));
+        tripAnswer ?? (await askAIEnhanced(q, new Date().toISOString(), all, history, expenseContext));
       scrollToNewest.current = true;
       setThread((current) => [{ question: q, result }, ...current]);
       await saveQuestion(q);

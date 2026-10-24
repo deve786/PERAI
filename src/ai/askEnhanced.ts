@@ -2,8 +2,8 @@
  * Enhanced AI Ask with multi-source support (memories + expenses + documents + websites + telegram).
  */
 import type { Memory } from '../types';
-import type { ExpenseRow } from '@/expense/db';
-import { ASK_MODEL, getClient } from './client';
+import { localTimestamp } from '../format';
+import { ASK_MODEL, requestJson } from './client';
 import { retrieveRelevantContent, buildUnifiedContext, formatEvidence, type EvidenceItem } from '@/sources/multiSourceRetrieval';
 import { conversationQuery, HISTORY_TURNS, type AskTurn } from './ask';
 
@@ -32,7 +32,7 @@ const ENHANCED_ANSWER_SCHEMA = {
     answer: { type: 'string', description: 'One short sentence answering the question.' },
     headline: {
       type: ['string', 'null'],
-      description: 'The single figure the question asked for — a total, a count, a date — or null.',
+      description: 'The single figure the question asked for — a total (e.g. "₹4,300"), a count ("3 times"), a date — or null.',
     },
     items: {
       type: 'array',
@@ -41,7 +41,7 @@ const ENHANCED_ANSWER_SCHEMA = {
     },
     usedSourceIds: {
       type: 'array',
-      description: 'The reference ids used (e.g. "M3", "D1", "W0", "T2").',
+      description: 'The reference ids used (e.g. "M3", "D1", "W0", "T2"). Empty if only expense data was used.',
       items: { type: 'string' },
     },
     sourcesUsed: {
@@ -56,32 +56,62 @@ const ENHANCED_ANSWER_SCHEMA = {
 
 const ENHANCED_SYSTEM_PROMPT = `You answer questions about one person using their recorded data from multiple sources:
 1. PERSONAL MEMORIES - things they recorded in their notes
-2. EXPENSE DATA - their spending and income records
+2. EXPENSE DATA - their recorded spending, income, budgets, monthly summaries, and recent expense transactions
 3. DOCUMENTS - uploaded PDFs, Word docs, and images they've added
 4. WEBSITE DATA - content scraped from websites they're tracking
 5. TELEGRAM MESSAGES - messages from Telegram channels they follow
 
-ABSOLUTE RULE: answer ONLY from the data provided in these five sections.
+Together these sections are the entire world of things you know about this person. You have no other information about them.
 
-- If none of the sections contain the answer, set found=false and say plainly that there is no data for that.
-- Do NOT guess, do NOT use general knowledge, do NOT pad a non-answer with speculation.
-- Each section is independent — use whichever ones actually answer the question.
-- Always cite which sources you used by including their reference IDs (M0, D1, W0, T2, etc.).
-- When answering from documents, mention which document and page if available.
-- When answering from websites, mention the website name or URL.
-- When answering from Telegram, mention the channel name.
-- Preserve dates, amounts, and facts exactly as recorded.
+ABSOLUTE RULE: answer ONLY from the data provided in these sections.
+- If none of the sections contain the answer, set found=false and say plainly that there is no recorded data for that.
+- Do NOT guess, do NOT use general or outside knowledge, do NOT pad a non-answer with speculation.
+- The sections are independent records — draw on whichever one (or multiple) actually answers the question.
+- Always include all source types you drew facts from in sourcesUsed: ['memory', 'expense', 'document', 'website', 'telegram'].
+  * Whenever EXPENSE DATA provides any fact, 'expense' MUST be in sourcesUsed.
+- Always list the reference IDs (e.g. "M0", "D1", "W0", "T2") in usedSourceIds for any cited memories, documents, websites, or telegram messages.
 
-Answer briefly and factually. If data exists across multiple sources, synthesize it.`;
+WHEN THE ANSWER IS PRESENT — this is read on a phone, so answer as a list, not a paragraph:
+- answer: ONE short sentence. E.g. "You spent ₹4,300 on tickets." or "You spent ₹18,450 this month."
+  Never a paragraph, never a restatement of the question.
+- headline: the single figure asked for, written as it should be read — a total ("₹4,300"), a count ("6 times"), a date ("24 October 2026"). Null when the question does not ask for one figure.
+- items: one line per thing, newest first, each one short and factual in the form "24 Oct · Train ticket · ₹1,200". Include every record you used. No sentences, no commentary, no bullet characters.
+- Quote concrete dates, amounts, and names rather than paraphrasing vaguely.
+- When answering from documents, mention the document filename.
+- When answering from websites or Telegram, mention the title or channel.
+
+FOR SPENDING & EXPENSE QUESTIONS:
+- For "how much did I spend", "how much spend for ticket", "spending this month", etc.:
+  Calculate the total from the EXPENSE DATA block (look at recentExpenses, last30Days, monthlySummaries) or MEMORIES.
+  Put the total figure in headline (e.g. "₹2,500"), state the total in answer, and list each individual matching expense in items.
+
+LANGUAGE:
+- Answer in the same language and script the question used. A question in Malayalam script is answered in Malayalam script; Manglish in Manglish; English in English. Dates, amounts, and names stay exactly as recorded.`;
 
 export async function askAIEnhanced(
   question: string,
   nowISO: string,
   allMemories: Memory[],
   history: AskTurn[] = [],
-  expenseContext?: string
+  expenseContext?: unknown
 ): Promise<EnhancedAskResult> {
-  const searchQuery = conversationQuery(question, history);
+  const trimmed = question.trim();
+  if (!trimmed) {
+    return {
+      answer: '',
+      items: [],
+      headline: null,
+      evidence: [],
+      sourcesUsed: [],
+      found: false,
+    };
+  }
+
+  const now = new Date(nowISO);
+  const weekday = now.toLocaleDateString('en-US', { weekday: 'long' });
+  const timeHeader = `Current local time: ${localTimestamp(nowISO)} (${weekday})`;
+
+  const searchQuery = conversationQuery(trimmed, history);
   const retrieval = await retrieveRelevantContent(searchQuery, nowISO, allMemories);
   const context = buildUnifiedContext(retrieval, expenseContext);
 
@@ -94,41 +124,53 @@ export async function askAIEnhanced(
     }
   }
 
-  const userMessage = `${context}${historyPrompt}
-
-CURRENT QUESTION: ${question}
-
-Answer from the data provided above. Cite source IDs you use.`;
+  const userMessage = `${timeHeader}\n\n${context}${historyPrompt}\n\nQUESTION: ${trimmed}\n\nAnswer strictly from the data provided above. Cite source IDs and include all sourcesUsed.`;
 
   try {
-    const client = getClient();
-    const response = await client.models.generateContent({
+    const raw = await requestJson({
       model: ASK_MODEL,
-      config: {
-        systemInstruction: ENHANCED_SYSTEM_PROMPT,
-        responseMimeType: 'application/json',
-        responseSchema: ENHANCED_ANSWER_SCHEMA,
-      },
-      contents: userMessage,
+      system: ENHANCED_SYSTEM_PROMPT,
+      user: userMessage,
+      schemaName: 'enhanced_answer',
+      schema: ENHANCED_ANSWER_SCHEMA,
     });
 
-    const reply = JSON.parse(response.text || '{}');
+    const reply = JSON.parse(raw || '{}');
     const allEvidence = formatEvidence(retrieval);
 
     const usedIds = new Set(reply.usedSourceIds || []);
-    const citedEvidence = allEvidence.filter(e => usedIds.has(e.refId));
+    const citedEvidence = allEvidence.filter((e) => usedIds.has(e.refId));
 
-    const sourcesUsed: Array<'memory' | 'expense' | 'document' | 'website' | 'telegram'> = Array.isArray(reply.sourcesUsed)
+    const sourcesUsed: Array<'memory' | 'expense' | 'document' | 'website' | 'telegram'> = Array.isArray(
+      reply.sourcesUsed
+    )
       ? reply.sourcesUsed
       : [];
 
+    const isExpenseUsed = sourcesUsed.includes('expense');
+    const found = Boolean(reply.found) && (citedEvidence.length > 0 || isExpenseUsed);
+
+    const items = Array.isArray(reply.items)
+      ? reply.items
+          .filter((item: unknown): item is string => typeof item === 'string')
+          .map((item: string) => item.replace(/^\s*[-•*–]\s*/, '').trim())
+          .filter(Boolean)
+      : [];
+
+    const headline =
+      typeof reply.headline === 'string' && reply.headline.trim().length > 0
+        ? reply.headline.trim()
+        : null;
+
     return {
-      answer: reply.answer || 'No relevant information found.',
-      items: Array.isArray(reply.items) ? reply.items : [],
-      headline: reply.headline || null,
+      answer: found
+        ? (reply.answer || 'Found relevant records.')
+        : (reply.answer || 'Nothing in your record matches this.'),
+      items: found ? items : [],
+      headline: found ? headline : null,
       evidence: citedEvidence,
-      sourcesUsed,
-      found: Boolean(reply.found),
+      sourcesUsed: found ? sourcesUsed : [],
+      found,
     };
   } catch (err) {
     throw new Error(`Enhanced ask failed: ${err instanceof Error ? err.message : String(err)}`);
