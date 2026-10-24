@@ -26,14 +26,42 @@ export type VoiceLanguage = 'en-IN' | 'ml-IN' | 'mixed';
 /** What titles and tags are written in. The raw note is never translated. */
 export type TitleLanguage = 'english' | 'original';
 
-export type AiModelChoice = 'gemini-3.5-flash-lite' | 'gemini-3.8-flash';
+export type AiModelChoice =
+  | 'gemini-3.5-flash-lite'
+  | 'gemini-3.8-flash'
+  | 'llama-3.3-70b-versatile'
+  | 'llama-3.1-8b-instant';
 
-export const AI_MODELS: { value: AiModelChoice; label: string; desc: string; speed: string; icon: string }[] = [
+export const AI_MODELS: {
+  value: AiModelChoice;
+  label: string;
+  desc: string;
+  speed: string;
+  provider: 'gemini' | 'groq';
+  icon: string;
+}[] = [
+  {
+    value: 'llama-3.3-70b-versatile',
+    label: 'Llama 3.3 70B (Groq)',
+    desc: 'Top-tier open model, near GPT-4o quality. 128k context, free API.',
+    speed: '~1s',
+    provider: 'groq',
+    icon: 'rocket-outline',
+  },
+  {
+    value: 'llama-3.1-8b-instant',
+    label: 'Llama 3.1 8B (Groq)',
+    desc: 'Ultra-fast inference (under 1s). Great for quick mobile answers.',
+    speed: '<1s',
+    provider: 'groq',
+    icon: 'flash-outline',
+  },
   {
     value: 'gemini-3.5-flash-lite',
     label: 'Gemini 3.5 Flash Lite',
-    desc: 'Super fast (2–4s), generous free quota. Recommended for mobile.',
+    desc: 'Fast (2–4s), generous free quota. Default Gemini ask model.',
     speed: '~2–4s',
+    provider: 'gemini',
     icon: 'flash-outline',
   },
   {
@@ -41,6 +69,7 @@ export const AI_MODELS: { value: AiModelChoice; label: string; desc: string; spe
     label: 'Gemini 3.8 Flash',
     desc: 'Deep reasoning model. Slower on mobile (~30–45s).',
     speed: '~35–45s',
+    provider: 'gemini',
     icon: 'hardware-chip-outline',
   },
 ];
@@ -84,9 +113,26 @@ export async function setTitleLanguage(language: TitleLanguage): Promise<void> {
   await setSetting(TITLE_LANGUAGE_KEY, language);
 }
 
+const GROQ_API_KEY = 'ai.groq_api_key';
+
+export async function getGroqApiKey(): Promise<string> {
+  const stored = await getSetting(GROQ_API_KEY);
+  if (stored && stored.trim().length > 0) return stored.trim();
+  return process.env.EXPO_PUBLIC_GROQ_API_KEY || '';
+}
+
+export async function setGroqApiKey(key: string): Promise<void> {
+  await setSetting(GROQ_API_KEY, key.trim());
+}
+
 export async function getSelectedAiModel(): Promise<AiModelChoice> {
   const stored = await getSetting(AI_MODEL_KEY);
-  if (stored === 'gemini-3.8-flash' || stored === 'gemini-3.5-flash-lite') {
+  if (
+    stored === 'gemini-3.8-flash' ||
+    stored === 'gemini-3.5-flash-lite' ||
+    stored === 'llama-3.3-70b-versatile' ||
+    stored === 'llama-3.1-8b-instant'
+  ) {
     return stored;
   }
   return (process.env.EXPO_PUBLIC_GEMINI_ASK_MODEL as AiModelChoice) || 'gemini-3.5-flash-lite';

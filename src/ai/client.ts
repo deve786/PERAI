@@ -203,12 +203,79 @@ export async function requestText(options: {
   }
 }
 
+let groqApiKeyInMemory: string | null = null;
+
+export function setGroqApiKeyInMemory(key: string): void {
+  groqApiKeyInMemory = key;
+}
+
+export function getGroqApiKey(): string {
+  if (groqApiKeyInMemory && groqApiKeyInMemory.trim().length > 0) {
+    return groqApiKeyInMemory.trim();
+  }
+  return process.env.EXPO_PUBLIC_GROQ_API_KEY || process.env.GROQ_API_KEY || '';
+}
+
+export function isGroqModel(model: string): boolean {
+  return (
+    model.startsWith('llama-') ||
+    model.startsWith('mixtral-') ||
+    model.startsWith('deepseek-') ||
+    model.startsWith('qwen-')
+  );
+}
+
+async function sendGroqOnce(options: {
+  model: string;
+  system: string;
+  user: string;
+  schema: object;
+}): Promise<string> {
+  const key = getGroqApiKey();
+  if (!key) {
+    throw new Error('Groq API key is not configured. Add EXPO_PUBLIC_GROQ_API_KEY in .env or set it in Settings.');
+  }
+
+  const promptWithSchema = `${options.user}\n\nIMPORTANT: You must output ONLY a valid JSON object matching this schema:\n${JSON.stringify(options.schema, null, 2)}`;
+
+  const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${key}`,
+    },
+    body: JSON.stringify({
+      model: options.model,
+      messages: [
+        { role: 'system', content: options.system },
+        { role: 'user', content: promptWithSchema },
+      ],
+      response_format: { type: 'json_object' },
+      temperature: 0.1,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Groq API error (${response.status}): ${errorText}`);
+  }
+
+  const data = (await response.json()) as {
+    choices?: Array<{ message?: { content?: string } }>;
+  };
+  return data.choices?.[0]?.message?.content ?? '{}';
+}
+
 async function sendOnce(options: {
   model: string;
   system: string;
   user: string;
   schema: object;
 }): Promise<string> {
+  if (isGroqModel(options.model)) {
+    return sendGroqOnce(options);
+  }
+
   const interaction = await getClient().interactions.create({
     model: options.model,
     system_instruction: options.system,
@@ -239,12 +306,22 @@ export function describeError(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err);
   const status = (err as { status?: number })?.status;
 
+  if (/Groq API error/i.test(message) || /groq/i.test(message)) {
+    if (/401|invalid_api_key/i.test(message)) {
+      return 'Groq API key was rejected. Please check your key in Settings.';
+    }
+    if (/429|rate_limit/i.test(message)) {
+      return 'Groq rate limit reached. Please wait a moment and try again.';
+    }
+    return message;
+  }
+
   if (status === 401 || status === 403 || /API key/i.test(message)) {
     return 'That API key was rejected. Check EXPO_PUBLIC_GEMINI_API_KEY.';
   }
   if (status === 429 || isQuotaError(message)) return quotaMessage(message);
   if (/fetch|network|ENOTFOUND|ECONNREFUSED/i.test(message)) {
-    return 'Could not reach Gemini. Check your network connection.';
+    return 'Could not reach AI provider. Check your network connection.';
   }
   return message || 'Something went wrong.';
 }

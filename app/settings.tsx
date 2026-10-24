@@ -22,11 +22,13 @@ import {
   AI_MODELS,
   getSelectedAiModel,
   setSelectedAiModel,
+  getGroqApiKey,
+  setGroqApiKey,
   type TitleLanguage,
   type VoiceLanguage,
   type AiModelChoice,
 } from '@/settings';
-import { setSelectedModelInMemory, EXTRACT_MODEL } from '@/ai/client';
+import { setSelectedModelInMemory, EXTRACT_MODEL, setGroqApiKeyInMemory } from '@/ai/client';
 import { APP_BUILD, APP_VERSION } from '@/appVersion';
 import { KeyboardLift } from '@/components/KeyboardLift';
 
@@ -66,6 +68,9 @@ export default function Settings() {
   const [titles, setTitles] = useState<TitleLanguage>('english');
   const [selectedAskModel, setSelectedAskModel] = useState<AiModelChoice>('gemini-3.5-flash-lite');
   const [choosingModel, setChoosingModel] = useState(false);
+  const [groqKey, setGroqKey] = useState('');
+  const [editingGroqKey, setEditingGroqKey] = useState(false);
+  const [groqKeyText, setGroqKeyText] = useState('');
 
   useEffect(() => {
     void getVoiceLanguage().then(setVoice);
@@ -73,6 +78,11 @@ export default function Settings() {
     void getSelectedAiModel().then((m) => {
       setSelectedAskModel(m);
       setSelectedModelInMemory(m);
+    });
+    void getGroqApiKey().then((k) => {
+      setGroqKey(k);
+      setGroqKeyText(k);
+      setGroqApiKeyInMemory(k);
     });
   }, []);
 
@@ -86,13 +96,36 @@ export default function Settings() {
     await setTitleLanguage(language);
   }
 
+  async function saveGroqKey() {
+    const clean = groqKeyText.trim();
+    setGroqKey(clean);
+    setGroqApiKeyInMemory(clean);
+    await setGroqApiKey(clean);
+    setEditingGroqKey(false);
+    showDialog({
+      title: 'Groq Key Saved',
+      message: clean
+        ? 'Groq API key configured. Llama 3.3 70B & 8B are ready to use!'
+        : 'Groq API key cleared.',
+    });
+  }
+
   async function chooseAskModel(model: AiModelChoice) {
+    const chosen = AI_MODELS.find((m) => m.value === model);
+    if (chosen?.provider === 'groq' && !groqKey) {
+      setEditingGroqKey(true);
+      showDialog({
+        title: 'Groq Key Required',
+        message: 'To use Llama on Groq (~1s responses), please paste your free API key from console.groq.com/keys below.',
+      });
+      return;
+    }
     setSelectedAskModel(model);
     setSelectedModelInMemory(model);
     await setSelectedAiModel(model);
     showDialog({
       title: 'AI Model Updated',
-      message: `Ask model set to ${model === 'gemini-3.8-flash' ? 'Gemini 3.8 Flash' : 'Gemini 3.5 Flash Lite'}.`,
+      message: `Ask model set to ${chosen?.label ?? model}.`,
     });
   }
 
@@ -319,8 +352,34 @@ export default function Settings() {
               }
             />
             <ListRow
+              label="Groq API Key"
+              value={groqKey ? 'Key configured' : 'Not set'}
+              onPress={() => setEditingGroqKey((v) => !v)}
+              chevron={false}
+              right={chevron(editingGroqKey)}
+            />
+            {editingGroqKey ? (
+              <View style={{ paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: c.line }}>
+                <T size={13} sub style={{ marginBottom: 10, lineHeight: 18 }}>
+                  Enables ultra-fast Llama 3.3 70B & 8B (~1s response time). Get a free key at console.groq.com/keys.
+                </T>
+                <Row style={{ gap: 10, alignItems: 'flex-start' }}>
+                  <Field
+                    value={groqKeyText}
+                    onChangeText={setGroqKeyText}
+                    placeholder="gsk_..."
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    secureTextEntry
+                    containerStyle={{ flex: 1, marginBottom: 0 }}
+                  />
+                  <Button title="Save" onPress={() => void saveGroqKey()} />
+                </Row>
+              </View>
+            ) : null}
+            <ListRow
               label="Ask Model"
-              value={selectedAskModel === 'gemini-3.8-flash' ? '3.8 Flash (Deep)' : '3.5 Flash Lite (Fast)'}
+              value={AI_MODELS.find((m) => m.value === selectedAskModel)?.label ?? selectedAskModel}
               onPress={() => setChoosingModel((v) => !v)}
               chevron={false}
               right={chevron(choosingModel)}

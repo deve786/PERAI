@@ -23,7 +23,14 @@ import {
 } from '@/ai/command';
 import { extractMemories } from '@/ai/extract';
 import { setPendingDrafts } from '@/draftStore';
-import { getTitleLanguage, getSelectedAiModel, setSelectedAiModel, type AiModelChoice } from '@/settings';
+import {
+  getTitleLanguage,
+  getSelectedAiModel,
+  setSelectedAiModel,
+  AI_MODELS,
+  getGroqApiKey,
+  type AiModelChoice,
+} from '@/settings';
 import { describeError, hasApiKey, setSelectedModelInMemory } from '@/ai/client';
 import { showDialog } from '@/dialogStore';
 import { MemoryRow } from '@/components/MemoryRow';
@@ -113,31 +120,33 @@ export default function AskScreen() {
   }, []);
 
   function promptSwitchModel() {
+    const currentOpt = AI_MODELS.find((m) => m.value === activeModel);
     showDialog({
       title: 'Change AI Model',
-      message: `Current: ${activeModel === 'gemini-3.8-flash' ? 'Gemini 3.8 Flash (~35s reasoning)' : 'Gemini 3.5 Flash Lite (~2-4s fast)'}\n\nSelect a model for answering questions:`,
+      message: `Current: ${currentOpt?.label ?? activeModel} (${currentOpt?.speed ?? ''})\n\nSelect a model for answering questions:`,
       actions: [
         { label: 'Cancel', cancel: true },
-        {
-          label: '3.5 Flash Lite (Fast ~2-4s)',
+        ...AI_MODELS.map((opt) => ({
+          label: `${opt.label} (${opt.speed})`,
           onPress: () => {
             void (async () => {
-              setActiveModel('gemini-3.5-flash-lite');
-              setSelectedModelInMemory('gemini-3.5-flash-lite');
-              await setSelectedAiModel('gemini-3.5-flash-lite');
+              if (opt.provider === 'groq') {
+                const key = await getGroqApiKey();
+                if (!key) {
+                  showDialog({
+                    title: 'Groq Key Required',
+                    message:
+                      'Please configure your free Groq API key in Settings > AI diagnostics & logs first.',
+                  });
+                  return;
+                }
+              }
+              setActiveModel(opt.value);
+              setSelectedModelInMemory(opt.value);
+              await setSelectedAiModel(opt.value);
             })();
           },
-        },
-        {
-          label: '3.8 Flash (Deep ~35s)',
-          onPress: () => {
-            void (async () => {
-              setActiveModel('gemini-3.8-flash');
-              setSelectedModelInMemory('gemini-3.8-flash');
-              await setSelectedAiModel('gemini-3.8-flash');
-            })();
-          },
-        },
+        })),
       ],
     });
   }
@@ -410,36 +419,43 @@ export default function AskScreen() {
             }
           />
 
-          <Pressable
-            onPress={promptSwitchModel}
-            hitSlop={8}
-            accessibilityRole="button"
-            accessibilityLabel="Switch AI model"
-            style={{
-              alignSelf: 'flex-start',
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 6,
-              paddingVertical: 5,
-              paddingHorizontal: 11,
-              borderRadius: 14,
-              borderWidth: 1,
-              borderColor: activeModel === 'gemini-3.8-flash' ? colors.moss : colors.rule,
-              backgroundColor: activeModel === 'gemini-3.8-flash' ? colors.mossSoft : colors.well,
-              marginTop: 2,
-              marginBottom: 4,
-            }}
-          >
-            <Ionicons
-              name={activeModel === 'gemini-3.8-flash' ? 'hardware-chip-outline' : 'flash-outline'}
-              size={13}
-              color={activeModel === 'gemini-3.8-flash' ? colors.moss : colors.ink}
-            />
-            <Text style={{ fontSize: 12, fontWeight: '600', color: colors.ink }}>
-              {activeModel === 'gemini-3.8-flash' ? 'Gemini 3.8 Flash (Thinking)' : 'Gemini 3.5 Flash Lite (Fast)'}
-            </Text>
-            <Ionicons name="swap-horizontal" size={12} color={colors.graphite} />
-          </Pressable>
+          {(() => {
+            const activeOpt = AI_MODELS.find((m) => m.value === activeModel);
+            const isThinking = activeModel === 'gemini-3.8-flash';
+            const isGroq = activeOpt?.provider === 'groq';
+            return (
+              <Pressable
+                onPress={promptSwitchModel}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="Switch AI model"
+                style={{
+                  alignSelf: 'flex-start',
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 6,
+                  paddingVertical: 5,
+                  paddingHorizontal: 11,
+                  borderRadius: 14,
+                  borderWidth: 1,
+                  borderColor: isThinking ? colors.moss : colors.rule,
+                  backgroundColor: isThinking ? colors.mossSoft : colors.well,
+                  marginTop: 2,
+                  marginBottom: 4,
+                }}
+              >
+                <Ionicons
+                  name={activeOpt?.icon as any ?? 'flash-outline'}
+                  size={13}
+                  color={isThinking ? colors.moss : colors.ink}
+                />
+                <Text style={{ fontSize: 12, fontWeight: '600', color: colors.ink }}>
+                  {activeOpt?.label ?? activeModel} ({activeOpt?.speed ?? ''})
+                </Text>
+                <Ionicons name="swap-horizontal" size={12} color={colors.graphite} />
+              </Pressable>
+            );
+          })()}
 
           {scope && thread.length === 0 && !listening ? (
             <Text style={[type.fine, styles.scope]}>{scope}</Text>
