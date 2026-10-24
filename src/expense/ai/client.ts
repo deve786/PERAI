@@ -43,7 +43,7 @@ function getClient(): GoogleGenAI {
  * been handed. Raise EXPO_PUBLIC_GEMINI_ASK_MODEL if answers start missing
  * figures.
  */
-export const ASK_MODEL = process.env.EXPO_PUBLIC_GEMINI_ASK_MODEL || 'gemini-3.5-flash-lite';
+export const ASK_MODEL = process.env.EXPO_PUBLIC_GEMINI_ASK_MODEL || 'gemini-3.8-flash';
 
 /** Gemini's free tier is capped per minute; it tells us how long to wait. */
 function retryDelayMs(err: unknown): number | null {
