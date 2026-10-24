@@ -2,7 +2,7 @@
  * Data Sources management screen - Documents, Websites, Telegram.
  */
 import React, { useCallback, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@/expense/theme';
@@ -29,8 +29,12 @@ export default function DataSourcesScreen() {
 
   const [uploadingDoc, setUploadingDoc] = useState(false);
   const [addingWebsite, setAddingWebsite] = useState(false);
+  const [savingWebsite, setSavingWebsite] = useState(false);
   const [websiteUrl, setWebsiteUrl] = useState('');
   const [addingTelegram, setAddingTelegram] = useState(false);
+  const [savingTelegram, setSavingTelegram] = useState(false);
+  const [refreshingSiteId, setRefreshingSiteId] = useState<string | null>(null);
+  const [syncingChannelId, setSyncingChannelId] = useState<string | null>(null);
   const [botToken, setBotToken] = useState('');
   const [channelUsername, setChannelUsername] = useState('');
 
@@ -75,8 +79,9 @@ export default function DataSourcesScreen() {
 
   async function addWebsiteUrl() {
     const url = websiteUrl.trim();
-    if (!url) return;
+    if (!url || savingWebsite) return;
 
+    setSavingWebsite(true);
     try {
       await addWebsite(url);
       setWebsiteUrl('');
@@ -85,6 +90,8 @@ export default function DataSourcesScreen() {
       showDialog({ title: 'Website added', message: `${url} has been scraped and is now searchable.` });
     } catch (err) {
       showDialog({ title: 'Failed to add website', message: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setSavingWebsite(false);
     }
   }
 
@@ -92,11 +99,12 @@ export default function DataSourcesScreen() {
     const token = botToken.trim();
     const username = channelUsername.trim();
 
-    if (!token || !username) {
+    if (!token || !username || savingTelegram) {
       showDialog({ title: 'Missing information', message: 'Please provide both bot token and channel username.' });
       return;
     }
 
+    setSavingTelegram(true);
     try {
       await setSetting('telegram_bot_token', token);
       await addTelegramChannel(token, username);
@@ -106,6 +114,8 @@ export default function DataSourcesScreen() {
       showDialog({ title: 'Telegram channel added', message: `${username} is now being tracked.` });
     } catch (err) {
       showDialog({ title: 'Failed to add channel', message: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setSavingTelegram(false);
     }
   }
 
@@ -137,22 +147,30 @@ export default function DataSourcesScreen() {
   }
 
   async function refreshWebsiteData(id: string) {
+    if (refreshingSiteId) return;
+    setRefreshingSiteId(id);
     try {
       await refreshWebsite(id);
       await loadData();
       showDialog({ title: 'Refreshed', message: 'Website data updated.' });
     } catch (err) {
       showDialog({ title: 'Refresh failed', message: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setRefreshingSiteId(null);
     }
   }
 
   async function syncChannel(id: string) {
+    if (syncingChannelId) return;
+    setSyncingChannelId(id);
     try {
       const count = await syncTelegramChannel(botToken, id);
       await loadData();
       showDialog({ title: 'Synced', message: `${count} new messages fetched.` });
     } catch (err) {
       showDialog({ title: 'Sync failed', message: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setSyncingChannelId(null);
     }
   }
 
@@ -204,6 +222,16 @@ export default function DataSourcesScreen() {
               disabled={uploadingDoc}
             />
 
+            {uploadingDoc && (
+              <Card style={{ padding: 14, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: `${c.accent}12` }}>
+                <ActivityIndicator size="small" color={c.accent} />
+                <View style={{ flex: 1 }}>
+                  <T size={14} weight="600">Processing document...</T>
+                  <T size={12} sub>Reading text and creating search chunks</T>
+                </View>
+              </Card>
+            )}
+
             {documents.length === 0 ? (
               <Card style={{ padding: 20, alignItems: 'center', gap: 8 }}>
                 <Ionicons name="document-outline" size={48} color={c.faint} />
@@ -253,16 +281,34 @@ export default function DataSourcesScreen() {
                 <Field
                   value={websiteUrl}
                   onChangeText={setWebsiteUrl}
-                  placeholder="https://example.com"
+                  placeholder="https://example.com or https://t.me/channel"
                   autoCapitalize="none"
                   autoCorrect={false}
                   keyboardType="url"
                   autoFocus
+                  editable={!savingWebsite}
                   containerStyle={{ marginBottom: 0 }}
                 />
+                {savingWebsite && (
+                  <Row style={{ alignItems: 'center', gap: 8, paddingVertical: 4 }}>
+                    <ActivityIndicator size="small" color={c.accent} />
+                    <T size={13} sub>Scraping webpage content...</T>
+                  </Row>
+                )}
                 <Row style={{ gap: 8 }}>
-                  <Button title="Cancel" kind="ghost" onPress={() => setAddingWebsite(false)} style={{ flex: 1 }} />
-                  <Button title="Add" onPress={() => void addWebsiteUrl()} style={{ flex: 1 }} />
+                  <Button
+                    title="Cancel"
+                    kind="ghost"
+                    disabled={savingWebsite}
+                    onPress={() => setAddingWebsite(false)}
+                    style={{ flex: 1 }}
+                  />
+                  <Button
+                    title={savingWebsite ? 'Adding...' : 'Add'}
+                    disabled={savingWebsite || !websiteUrl.trim()}
+                    onPress={() => void addWebsiteUrl()}
+                    style={{ flex: 1 }}
+                  />
                 </Row>
               </Card>
             )}
@@ -293,8 +339,16 @@ export default function DataSourcesScreen() {
                         <T size={13} sub numberOfLines={1}>{new URL(site.url).hostname}</T>
                         <T size={12} sub>Updated {shortDate(site.lastUpdated)}</T>
                       </View>
-                      <Pressable onPress={() => void refreshWebsiteData(site.id)} hitSlop={10}>
-                        <Ionicons name="refresh" size={18} color={c.text} />
+                      <Pressable
+                        onPress={() => void refreshWebsiteData(site.id)}
+                        hitSlop={10}
+                        disabled={refreshingSiteId === site.id}
+                      >
+                        {refreshingSiteId === site.id ? (
+                          <ActivityIndicator size="small" color={c.accent} />
+                        ) : (
+                          <Ionicons name="refresh" size={18} color={c.text} />
+                        )}
                       </Pressable>
                       <Pressable onPress={() => void removeWebsite(site.id)} hitSlop={10}>
                         <Ionicons name="trash-outline" size={18} color={c.danger} />
@@ -321,6 +375,7 @@ export default function DataSourcesScreen() {
                   placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
                   autoCapitalize="none"
                   autoCorrect={false}
+                  editable={!savingTelegram}
                   containerStyle={{ marginBottom: 10 }}
                 />
                 <Field
@@ -331,14 +386,33 @@ export default function DataSourcesScreen() {
                   autoCapitalize="none"
                   autoCorrect={false}
                   autoFocus={!!botToken}
+                  editable={!savingTelegram}
                   containerStyle={{ marginBottom: 0 }}
                 />
-                <T size={13} sub style={{ lineHeight: 18, marginTop: 4 }}>
-                  Create a bot via @BotFather, add it to your channel as admin, then enter details here.
-                </T>
+                {savingTelegram ? (
+                  <Row style={{ alignItems: 'center', gap: 8, paddingVertical: 4 }}>
+                    <ActivityIndicator size="small" color={c.accent} />
+                    <T size={13} sub>Connecting to Telegram & fetching messages...</T>
+                  </Row>
+                ) : (
+                  <T size={13} sub style={{ lineHeight: 18, marginTop: 4 }}>
+                    Create a bot via @BotFather, add it to your channel as admin, then enter details here.
+                  </T>
+                )}
                 <Row style={{ gap: 8, marginTop: 6 }}>
-                  <Button title="Cancel" kind="ghost" onPress={() => setAddingTelegram(false)} style={{ flex: 1 }} />
-                  <Button title="Add" onPress={() => void addTelegramChannelAction()} style={{ flex: 1 }} />
+                  <Button
+                    title="Cancel"
+                    kind="ghost"
+                    disabled={savingTelegram}
+                    onPress={() => setAddingTelegram(false)}
+                    style={{ flex: 1 }}
+                  />
+                  <Button
+                    title={savingTelegram ? 'Connecting...' : 'Add'}
+                    disabled={savingTelegram || !channelUsername.trim() || !botToken.trim()}
+                    onPress={() => void addTelegramChannelAction()}
+                    style={{ flex: 1 }}
+                  />
                 </Row>
               </Card>
             )}
@@ -375,8 +449,16 @@ export default function DataSourcesScreen() {
                             <T size={12} sub>Synced {shortDate(ch.lastSyncedAt)}, {timeLabel(ch.lastSyncedAt)}</T>
                           )}
                         </View>
-                        <Pressable onPress={() => void syncChannel(ch.id)} hitSlop={10}>
-                          <Ionicons name="refresh" size={18} color={c.text} />
+                        <Pressable
+                          onPress={() => void syncChannel(ch.id)}
+                          hitSlop={10}
+                          disabled={syncingChannelId === ch.id}
+                        >
+                          {syncingChannelId === ch.id ? (
+                            <ActivityIndicator size="small" color={c.accent} />
+                          ) : (
+                            <Ionicons name="refresh" size={18} color={c.text} />
+                          )}
                         </Pressable>
                         <Pressable onPress={() => void removeChannel(ch.id)} hitSlop={10}>
                           <Ionicons name="trash-outline" size={18} color={c.danger} />
