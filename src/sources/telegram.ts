@@ -2,6 +2,71 @@
  * Telegram channel integration.
  */
 import { getSourcesDb, uuid } from './client';
+import { getClient, EXTRACT_MODEL, hasApiKey } from '@/ai/client';
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const chunkSize = 8192;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode.apply(null, chunk as unknown as number[]);
+  }
+  return typeof btoa !== 'undefined'
+    ? btoa(binary)
+    : Buffer.from(buffer).toString('base64');
+}
+
+/**
+ * Runs Gemini Vision OCR on an image URL (such as a Telegram CDN photo).
+ * Extracts text, schedules, timetables, and rules accurately in English & Malayalam.
+ */
+export async function ocrTelegramPhoto(photoUrl: string): Promise<string | null> {
+  if (!hasApiKey()) return null;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12000);
+    const res = await fetch(photoUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)',
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (!res.ok) return null;
+    const buf = await res.arrayBuffer();
+    if (!buf || buf.byteLength < 1000) return null;
+
+    const base64 = arrayBufferToBase64(buf);
+    const client = getClient();
+    const response = await client.models.generateContent({
+      model: EXTRACT_MODEL,
+      contents: [
+        {
+          text: `Extract all visible text, dates, times, schedules, passenger guidelines, locations, vessel names, and rules from this image accurately in English and Malayalam.
+If there is no readable text or it is just scenery, respond with "NO_TEXT".
+Do not add opinions, introductory notes, or commentary.`,
+        },
+        {
+          inlineData: {
+            mimeType: 'image/jpeg',
+            data: base64,
+          },
+        },
+      ],
+    });
+
+    const text = response.text?.trim();
+    if (!text || /^(NO_TEXT|no text|no legible text)/i.test(text)) {
+      return null;
+    }
+    return text;
+  } catch (err) {
+    console.warn('[telegram-ocr] Could not OCR photo:', err);
+    return null;
+  }
+}
+
 export interface TelegramChannel {
   id: string;
   channelUsername: string;
@@ -172,7 +237,8 @@ export interface PublicTelegramResult {
 
 export async function fetchPublicTelegramChannel(
   username: string,
-  maxPages = 4
+  maxPages = 4,
+  maxPhotosToOcr = 6
 ): Promise<PublicTelegramResult> {
   const clean = username.replace(/^@/, '').replace(/^(?:https?:\/\/)?t\.me\/(?:s\/)?/, '').replace(/\/$/, '').trim();
   let nextUrl: string | null = `https://t.me/s/${clean}`;
@@ -185,6 +251,7 @@ export async function fetchPublicTelegramChannel(
     mediaPath: string | null;
     photos: string[];
     docInfo: string | null;
+    ocrText?: string | null;
   }> = [];
 
   let channelTitle = clean;
@@ -291,6 +358,21 @@ export async function fetchPublicTelegramChannel(
 
   unique.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
+  // OCR the latest attached photos (up to maxPhotosToOcr) to read posters, timetables, and notices
+  let ocrProcessed = 0;
+  for (const m of unique) {
+    if (m.photos && m.photos.length > 0 && ocrProcessed < maxPhotosToOcr) {
+      ocrProcessed++;
+      const ocrResult = await ocrTelegramPhoto(m.photos[0]);
+      if (ocrResult) {
+        m.ocrText = ocrResult;
+        m.text = m.text
+          ? `${m.text}\n\n[Extracted Poster/Image Text]:\n${ocrResult}`
+          : `[Extracted Poster/Image Text]:\n${ocrResult}`;
+      }
+    }
+  }
+
   const now = new Date().toISOString();
   const messages: TelegramMessage[] = unique.map(m => ({
     id: uuid(),
@@ -317,6 +399,9 @@ export async function fetchPublicTelegramChannel(
     if (m.text) lines.push(m.text);
     if (m.photos.length > 0) {
       lines.push(`[Attached Photos (${m.photos.length})]:\n${m.photos.join('\n')}`);
+      if (m.ocrText) {
+        lines.push(`[Image OCR Content]:\n${m.ocrText}`);
+      }
     }
     if (m.docInfo) {
       lines.push(`[Attached Document]: ${m.docInfo}`);
