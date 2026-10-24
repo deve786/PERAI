@@ -67,9 +67,23 @@ export function getClient(): GoogleGenAI {
  * quota, so change it on its own rather than alongside EXTRACT_MODEL.
  */
 export const EXTRACT_MODEL =
-  process.env.EXPO_PUBLIC_GEMINI_EXTRACT_MODEL || 'gemini-3.5-flash-lite';
+  process.env.EXPO_PUBLIC_GEMINI_EXTRACT_MODEL || 'gemini-3.8-flash';
 export const ASK_MODEL =
   process.env.EXPO_PUBLIC_GEMINI_ASK_MODEL || 'gemini-3.5-flash-lite';
+
+let userSelectedModel: string | null = null;
+
+export function setSelectedModelInMemory(model: string): void {
+  userSelectedModel = model;
+}
+
+export function getEffectiveAskModel(): string {
+  return (
+    userSelectedModel ||
+    process.env.EXPO_PUBLIC_GEMINI_ASK_MODEL ||
+    'gemini-3.5-flash-lite'
+  );
+}
 
 /** Gemini's free tier is capped per minute; it tells us how long to wait. */
 function retryDelayMs(err: unknown): number | null {

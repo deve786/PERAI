@@ -19,9 +19,14 @@ import {
   setVoiceLanguage,
   TITLE_LANGUAGES,
   VOICE_LANGUAGES,
+  AI_MODELS,
+  getSelectedAiModel,
+  setSelectedAiModel,
   type TitleLanguage,
   type VoiceLanguage,
+  type AiModelChoice,
 } from '@/settings';
+import { setSelectedModelInMemory, EXTRACT_MODEL } from '@/ai/client';
 import { APP_BUILD, APP_VERSION } from '@/appVersion';
 import { KeyboardLift } from '@/components/KeyboardLift';
 
@@ -59,10 +64,16 @@ export default function Settings() {
   /** null means the recognizer follows the phone, which is how it shipped. */
   const [voice, setVoice] = useState<VoiceLanguage | null>(null);
   const [titles, setTitles] = useState<TitleLanguage>('english');
+  const [selectedAskModel, setSelectedAskModel] = useState<AiModelChoice>('gemini-3.5-flash-lite');
+  const [choosingModel, setChoosingModel] = useState(false);
 
   useEffect(() => {
     void getVoiceLanguage().then(setVoice);
     void getTitleLanguage().then(setTitles);
+    void getSelectedAiModel().then((m) => {
+      setSelectedAskModel(m);
+      setSelectedModelInMemory(m);
+    });
   }, []);
 
   async function chooseVoice(language: VoiceLanguage | null) {
@@ -73,6 +84,16 @@ export default function Settings() {
   async function chooseTitles(language: TitleLanguage) {
     setTitles(language);
     await setTitleLanguage(language);
+  }
+
+  async function chooseAskModel(model: AiModelChoice) {
+    setSelectedAskModel(model);
+    setSelectedModelInMemory(model);
+    await setSelectedAiModel(model);
+    showDialog({
+      title: 'AI Model Updated',
+      message: `Ask model set to ${model === 'gemini-3.8-flash' ? 'Gemini 3.8 Flash' : 'Gemini 3.5 Flash Lite'}.`,
+    });
   }
 
   useEffect(() => {
@@ -297,7 +318,58 @@ export default function Settings() {
                 </Row>
               }
             />
-            <ListRow label="Model" right={<T size={14} sub tabular>{ASK_MODEL}</T>} />
+            <ListRow
+              label="Ask Model"
+              value={selectedAskModel === 'gemini-3.8-flash' ? '3.8 Flash (Deep)' : '3.5 Flash Lite (Fast)'}
+              onPress={() => setChoosingModel((v) => !v)}
+              chevron={false}
+              right={chevron(choosingModel)}
+            />
+            {choosingModel ? (
+              <View style={{ paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: c.line }}>
+                {AI_MODELS.map((opt) => {
+                  const on = selectedAskModel === opt.value;
+                  return (
+                    <Pressable
+                      key={opt.value}
+                      onPress={() => void chooseAskModel(opt.value)}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: on }}
+                      style={({ pressed }) => ({
+                        paddingVertical: 10,
+                        paddingHorizontal: 4,
+                        flexDirection: 'row',
+                        alignItems: 'flex-start',
+                        gap: 12,
+                        opacity: pressed ? 0.6 : 1,
+                      })}
+                    >
+                      <Ionicons
+                        name={on ? 'radio-button-on' : 'radio-button-off'}
+                        size={20}
+                        color={on ? c.accent : c.faint}
+                        style={{ marginTop: 2 }}
+                      />
+                      <View style={{ flex: 1, gap: 2 }}>
+                        <Row style={{ alignItems: 'center', justifyContent: 'space-between' }}>
+                          <T size={15} weight={on ? '700' : '500'} style={{ color: on ? c.accent : c.text }}>
+                            {opt.label}
+                          </T>
+                          <T size={12} weight="600" style={{ color: on ? c.good : c.sub }}>
+                            {opt.speed}
+                          </T>
+                        </Row>
+                        <T size={13} sub style={{ lineHeight: 18 }}>{opt.desc}</T>
+                      </View>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            ) : null}
+            <ListRow
+              label="Extract Model"
+              right={<T size={14} sub tabular>{EXTRACT_MODEL}</T>}
+            />
             <ListRow
               icon="sparkles-outline"
               label={testingAi ? 'Testing…' : 'Test AI connection'}

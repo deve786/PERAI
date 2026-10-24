@@ -23,8 +23,9 @@ import {
 } from '@/ai/command';
 import { extractMemories } from '@/ai/extract';
 import { setPendingDrafts } from '@/draftStore';
-import { getTitleLanguage } from '@/settings';
-import { describeError, hasApiKey } from '@/ai/client';
+import { getTitleLanguage, getSelectedAiModel, setSelectedAiModel, type AiModelChoice } from '@/settings';
+import { describeError, hasApiKey, setSelectedModelInMemory } from '@/ai/client';
+import { showDialog } from '@/dialogStore';
 import { MemoryRow } from '@/components/MemoryRow';
 import { PlanCard } from '@/components/PlanCard';
 import { VoiceWaveform } from '@/components/VoiceWaveform';
@@ -102,6 +103,44 @@ export default function AskScreen() {
 
   const { memories } = useMemories();
   const [recentQuestions, setRecentQuestions] = useState<string[]>([]);
+  const [activeModel, setActiveModel] = useState<AiModelChoice>('gemini-3.5-flash-lite');
+
+  useEffect(() => {
+    void getSelectedAiModel().then((m) => {
+      setActiveModel(m);
+      setSelectedModelInMemory(m);
+    });
+  }, []);
+
+  function promptSwitchModel() {
+    showDialog({
+      title: 'Change AI Model',
+      message: `Current: ${activeModel === 'gemini-3.8-flash' ? 'Gemini 3.8 Flash (~35s reasoning)' : 'Gemini 3.5 Flash Lite (~2-4s fast)'}\n\nSelect a model for answering questions:`,
+      actions: [
+        { label: 'Cancel', cancel: true },
+        {
+          label: '3.5 Flash Lite (Fast ~2-4s)',
+          onPress: () => {
+            void (async () => {
+              setActiveModel('gemini-3.5-flash-lite');
+              setSelectedModelInMemory('gemini-3.5-flash-lite');
+              await setSelectedAiModel('gemini-3.5-flash-lite');
+            })();
+          },
+        },
+        {
+          label: '3.8 Flash (Deep ~35s)',
+          onPress: () => {
+            void (async () => {
+              setActiveModel('gemini-3.8-flash');
+              setSelectedModelInMemory('gemini-3.8-flash');
+              await setSelectedAiModel('gemini-3.8-flash');
+            })();
+          },
+        },
+      ],
+    });
+  }
 
   // The newest exchange is scrolled to the top of the view when it appears,
   // so a long answer is read from its start rather than its end.
@@ -370,6 +409,37 @@ export default function AskScreen() {
               ) : undefined
             }
           />
+
+          <Pressable
+            onPress={promptSwitchModel}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Switch AI model"
+            style={{
+              alignSelf: 'flex-start',
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 6,
+              paddingVertical: 5,
+              paddingHorizontal: 11,
+              borderRadius: 14,
+              borderWidth: 1,
+              borderColor: activeModel === 'gemini-3.8-flash' ? colors.moss : colors.rule,
+              backgroundColor: activeModel === 'gemini-3.8-flash' ? colors.mossSoft : colors.well,
+              marginTop: 2,
+              marginBottom: 4,
+            }}
+          >
+            <Ionicons
+              name={activeModel === 'gemini-3.8-flash' ? 'hardware-chip-outline' : 'flash-outline'}
+              size={13}
+              color={activeModel === 'gemini-3.8-flash' ? colors.moss : colors.ink}
+            />
+            <Text style={{ fontSize: 12, fontWeight: '600', color: colors.ink }}>
+              {activeModel === 'gemini-3.8-flash' ? 'Gemini 3.8 Flash (Thinking)' : 'Gemini 3.5 Flash Lite (Fast)'}
+            </Text>
+            <Ionicons name="swap-horizontal" size={12} color={colors.graphite} />
+          </Pressable>
 
           {scope && thread.length === 0 && !listening ? (
             <Text style={[type.fine, styles.scope]}>{scope}</Text>

@@ -26,7 +26,27 @@ export type VoiceLanguage = 'en-IN' | 'ml-IN' | 'mixed';
 /** What titles and tags are written in. The raw note is never translated. */
 export type TitleLanguage = 'english' | 'original';
 
+export type AiModelChoice = 'gemini-3.5-flash-lite' | 'gemini-3.8-flash';
+
+export const AI_MODELS: { value: AiModelChoice; label: string; desc: string; speed: string; icon: string }[] = [
+  {
+    value: 'gemini-3.5-flash-lite',
+    label: 'Gemini 3.5 Flash Lite',
+    desc: 'Super fast (2–4s), generous free quota. Recommended for mobile.',
+    speed: '~2–4s',
+    icon: 'flash-outline',
+  },
+  {
+    value: 'gemini-3.8-flash',
+    label: 'Gemini 3.8 Flash',
+    desc: 'Deep reasoning model. Slower on mobile (~30–45s).',
+    speed: '~35–45s',
+    icon: 'hardware-chip-outline',
+  },
+];
+
 const TITLE_LANGUAGE_KEY = 'titles.language';
+const AI_MODEL_KEY = 'ai.ask_model';
 
 export const VOICE_LANGUAGES: { value: VoiceLanguage; label: string; hint: string }[] = [
   { value: 'en-IN', label: 'English (India)', hint: 'Malayalam comes back written in English letters' },
@@ -62,6 +82,18 @@ export async function getTitleLanguage(): Promise<TitleLanguage> {
 
 export async function setTitleLanguage(language: TitleLanguage): Promise<void> {
   await setSetting(TITLE_LANGUAGE_KEY, language);
+}
+
+export async function getSelectedAiModel(): Promise<AiModelChoice> {
+  const stored = await getSetting(AI_MODEL_KEY);
+  if (stored === 'gemini-3.8-flash' || stored === 'gemini-3.5-flash-lite') {
+    return stored;
+  }
+  return (process.env.EXPO_PUBLIC_GEMINI_ASK_MODEL as AiModelChoice) || 'gemini-3.5-flash-lite';
+}
+
+export async function setSelectedAiModel(model: AiModelChoice): Promise<void> {
+  await setSetting(AI_MODEL_KEY, model);
 }
 
 /** Read at startup, so a saved choice survives a restart. */
