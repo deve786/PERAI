@@ -11,6 +11,7 @@ import { showDialog } from '@/dialogStore';
 import { listDocuments, deleteDocument, pickAndProcessDocument, type Document } from '@/sources/documents';
 import { listWebsites, addWebsite, deleteWebsite, refreshWebsite, type WebsiteData } from '@/sources/websites';
 import { listTelegramChannels, addTelegramChannel, deleteTelegramChannel, syncTelegramChannel, getTelegramMessageCount, type TelegramChannel } from '@/sources/telegram';
+import { syncSourcesNow } from '@/sources/sync';
 import { getSetting, setSetting } from '@/db/queries';
 import { shortDate, timeLabel } from '@/format';
 import { radius } from '@/expense/theme';
@@ -64,6 +65,7 @@ export default function DataSourcesScreen() {
     try {
       const doc = await pickAndProcessDocument();
       await loadData();
+      void syncSourcesNow();
       showDialog({
         title: 'Document uploaded',
         message: `${doc.filename} processed into ${doc.chunkCount} chunks and is now searchable.`,
@@ -87,6 +89,7 @@ export default function DataSourcesScreen() {
       setWebsiteUrl('');
       setAddingWebsite(false);
       await loadData();
+      void syncSourcesNow();
       showDialog({ title: 'Website added', message: `${url} has been scraped and is now searchable.` });
     } catch (err) {
       showDialog({ title: 'Failed to add website', message: err instanceof Error ? err.message : String(err) });
@@ -111,6 +114,7 @@ export default function DataSourcesScreen() {
       setChannelUsername('');
       setAddingTelegram(false);
       await loadData();
+      void syncSourcesNow();
       showDialog({ title: 'Telegram channel added', message: `${username} is now being tracked.` });
     } catch (err) {
       showDialog({ title: 'Failed to add channel', message: err instanceof Error ? err.message : String(err) });

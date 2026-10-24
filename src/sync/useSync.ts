@@ -4,6 +4,7 @@ import { onDatabaseChange } from '../db/client';
 import { logFail, logOk } from '../log';
 import { currentEmail, isConfigured } from './client';
 import { lastSyncedAt, pendingCount, syncNow } from './sync';
+import { syncSourcesNow } from '@/sources/sync';
 
 /** A quiet spell after a write, so saving several entries syncs once. */
 const AFTER_WRITE_MS = 2500;
@@ -41,7 +42,10 @@ export function useSync() {
     }
     setState('syncing');
     try {
-      const outcome = await syncNow();
+      const [outcome] = await Promise.all([
+        syncNow(),
+        syncSourcesNow().catch(() => null),
+      ]);
       if (!mounted.current) return;
       setError(null);
       setState(outcome === null ? 'off' : 'idle');
