@@ -177,6 +177,23 @@ async function pushSources(userId: string): Promise<number> {
       created_at: ch.created_at,
     }));
     await supabase.from('telegram_channels').upsert(channelPayload, { onConflict: 'id' });
+
+    // Clean up any cloud channels that were deleted locally
+    const localIds = new Set(channels.map((c) => c.id));
+    const { data: cloudChans } = await supabase
+      .from('telegram_channels')
+      .select('id')
+      .eq('user_id', userId);
+
+    if (cloudChans && cloudChans.length > 0) {
+      const idsToDelete = cloudChans.map((c) => c.id).filter((id) => !localIds.has(id));
+      if (idsToDelete.length > 0) {
+        await supabase.from('telegram_channels').delete().in('id', idsToDelete).eq('user_id', userId);
+      }
+    }
+  } else {
+    // Local channels are completely cleared -> remove all cloud channels for this user
+    await supabase.from('telegram_channels').delete().eq('user_id', userId);
   }
 
   return count;

@@ -3,6 +3,7 @@
  */
 import { getSourcesDb, uuid } from './client';
 import { getClient, EXTRACT_MODEL, hasApiKey } from '@/ai/client';
+import { currentUserId, getSupabase, isConfigured } from '@/sync/client';
 
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
@@ -25,7 +26,7 @@ export async function ocrTelegramPhoto(photoUrl: string): Promise<string | null>
   if (!hasApiKey()) return null;
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 12000);
+    const timer = setTimeout(() => controller.abort(), 25000);
     const res = await fetch(photoUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)',
@@ -35,36 +36,150 @@ export async function ocrTelegramPhoto(photoUrl: string): Promise<string | null>
     clearTimeout(timer);
     if (!res.ok) return null;
     const buf = await res.arrayBuffer();
-    if (!buf || buf.byteLength < 1000) return null;
+    if (!buf || buf.byteLength < 500) return null;
 
     const base64 = arrayBufferToBase64(buf);
     const client = getClient();
-    const response = await client.models.generateContent({
-      model: EXTRACT_MODEL,
-      contents: [
-        {
-          text: `Extract all visible text, dates, times, schedules, passenger guidelines, locations, vessel names, and rules from this image accurately in English and Malayalam.
+    const candidateModels = Array.from(new Set([EXTRACT_MODEL, 'gemini-3.5-flash-lite', 'gemini-3.5-flash']));
+    let text: string | null = null;
+
+    for (const model of candidateModels) {
+      try {
+        const response = await client.models.generateContent({
+          model,
+          contents: [
+            {
+              text: `Extract all visible text, dates, times, schedules, passenger guidelines, locations, vessel names, and rules from this image accurately in English and Malayalam.
+Format any tables or schedules as clean markdown tables.
 If there is no readable text or it is just scenery, respond with "NO_TEXT".
 Do not add opinions, introductory notes, or commentary.`,
-        },
-        {
-          inlineData: {
-            mimeType: 'image/jpeg',
-            data: base64,
-          },
-        },
-      ],
-    });
+            },
+            {
+              inlineData: {
+                mimeType: 'image/jpeg',
+                data: base64,
+              },
+            },
+          ],
+        });
 
-    const text = response.text?.trim();
-    if (!text || /^(NO_TEXT|no text|no legible text)/i.test(text)) {
-      return null;
+        const reply = response.text?.trim();
+        if (reply && !/^(NO_TEXT|no text|no legible text)/i.test(reply)) {
+          text = reply;
+          break;
+        }
+      } catch (genErr) {
+        console.warn(`[telegram-ocr] Generation with model ${model} failed, trying next candidate:`, genErr);
+      }
     }
+
     return text;
   } catch (err) {
     console.warn('[telegram-ocr] Could not OCR photo:', err);
     return null;
   }
+}
+
+/**
+ * On-demand OCR for a single stored photo message.
+ * Extracts the image text using Gemini Vision, updates SQLite, and returns the extracted text.
+ */
+export async function ocrMessagePhoto(messageId: string, photoUrl: string): Promise<string | null> {
+  const ocrText = await ocrTelegramPhoto(photoUrl);
+  if (!ocrText) return null;
+
+  const db = await getSourcesDb();
+  const row = await db.getFirstAsync<{ message_text: string | null }>(
+    'SELECT message_text FROM telegram_messages WHERE id = ?',
+    [messageId]
+  );
+
+  const existingText = row?.message_text || '';
+  // Remove any previous partial OCR block
+  const cleanedText = existingText
+    .replace(/\[(?:Extracted Poster\/Image Text|Extracted Poster|Image OCR Content)[^\]]*\]:[\s\S]*?(?=(?:\n\s*\[Photo:)|$)/gi, '')
+    .trim();
+
+  const hasPhotoTag = cleanedText.includes('[Photo:');
+  const newText = cleanedText
+    ? (hasPhotoTag
+        ? `${cleanedText}\n\n[Extracted Poster/Image Text]:\n${ocrText}`
+        : `${cleanedText}\n\n[Extracted Poster/Image Text]:\n${ocrText}\n[Photo: ${photoUrl}]`)
+    : `[Extracted Poster/Image Text]:\n${ocrText}\n[Photo: ${photoUrl}]`;
+
+  await db.runAsync(
+    'UPDATE telegram_messages SET message_text = ? WHERE id = ?',
+    [newText, messageId]
+  );
+
+  return ocrText;
+}
+
+/**
+ * Scans all photo messages in a channel that don't have OCR text extracted yet,
+ * extracts them with Gemini Vision in batches of 3, and updates the database.
+ */
+export async function ocrUnextractedPhotosForChannel(
+  channelUsername: string,
+  channelId?: string,
+  onProgress?: (done: number, total: number) => void
+): Promise<number> {
+  const db = await getSourcesDb();
+  const clean = channelUsername.replace(/^@/, '').toLowerCase();
+  const rows = await db.getAllAsync<{ id: string; message_id: number; message_text: string; media_path: string | null }>(
+    `SELECT id, message_id, message_text, media_path
+     FROM telegram_messages
+     WHERE deleted = 0
+       AND (media_type = 'photo' OR message_text LIKE '%[Photo:%')
+       AND message_text NOT LIKE '%[Extracted Poster%'
+       AND message_text NOT LIKE '%[Image OCR Content%'
+       AND (
+         channel_id = ?
+         OR channel_id = ?
+         OR channel_id = ?
+         OR (channel_name IS NOT NULL AND LOWER(channel_name) LIKE ?)
+       )
+     ORDER BY message_date DESC`,
+    [channelId || '', clean, `@${clean}`, `%${clean}%`]
+  );
+
+  if (rows.length === 0) return 0;
+
+  let successCount = 0;
+  for (let i = 0; i < rows.length; i += 3) {
+    const chunk = rows.slice(i, i + 3);
+    await Promise.all(
+      chunk.map(async (row, chunkIdx) => {
+        let photoUrl = row.media_path?.split('; ')[0]?.trim() || '';
+        if (!photoUrl) {
+          const m = row.message_text.match(/\[Photo:\s*([^\]]+)\]/i);
+          if (m) photoUrl = m[1].trim();
+        }
+        if (photoUrl && photoUrl.startsWith('http')) {
+          try {
+            const ocr = await ocrTelegramPhoto(photoUrl);
+            if (ocr) {
+              const cleaned = row.message_text
+                .replace(/\[(?:Extracted Poster\/Image Text|Extracted Poster|Image OCR Content)[^\]]*\]:[\s\S]*?(?=(?:\n\s*\[Photo:)|$)/gi, '')
+                .trim();
+              const hasPhotoTag = cleaned.includes('[Photo:');
+              const updatedText = cleaned
+                ? (hasPhotoTag
+                    ? `${cleaned}\n\n[Extracted Poster/Image Text]:\n${ocr}`
+                    : `${cleaned}\n\n[Extracted Poster/Image Text]:\n${ocr}\n[Photo: ${photoUrl}]`)
+                : `[Extracted Poster/Image Text]:\n${ocr}\n[Photo: ${photoUrl}]`;
+              await db.runAsync('UPDATE telegram_messages SET message_text = ? WHERE id = ?', [updatedText, row.id]);
+              successCount++;
+            }
+          } catch (err) {
+            console.warn(`[telegram-ocr] Failed to OCR row ${row.message_id}:`, err);
+          }
+        }
+        onProgress?.(i + chunkIdx + 1, rows.length);
+      })
+    );
+  }
+  return successCount;
 }
 
 /**
@@ -352,11 +467,69 @@ export interface FetchPublicTelegramOptions {
   maxPhotosToOcr?: number;
 }
 
+/**
+ * Generates structured voyage and cargo insights from a document title and post caption.
+ */
+export function extractDocumentAbstract(title: string, postText = ''): string {
+  const combined = `${title} ${postText}`;
+
+  // Vessel identification
+  let vessel = 'Lakshadweep Port Vessel';
+  if (/A\.?\s*Sea|Arabian\s*Sea/i.test(combined)) vessel = 'MV Arabian Sea';
+  else if (/Lakshadweep\s*Sea|L\.?\s*Sea/i.test(combined)) vessel = 'MV Lakshadweep Sea';
+  else if (/Lagoons/i.test(combined)) vessel = 'MV Lagoons';
+  else if (/Corals/i.test(combined)) vessel = 'MV Corals';
+  else if (/Sagar\s*Samraj/i.test(combined)) vessel = 'MV Sagar Samraj';
+  else if (/Sagar\s*Yuvaraj/i.test(combined)) vessel = 'MV Sagar Yuvaraj';
+  else if (/Laccadives/i.test(combined)) vessel = 'MV Laccadives';
+  else if (/Thinnakara/i.test(combined)) vessel = 'MV Thinnakara';
+  else if (/Elikalpeni/i.test(combined)) vessel = 'MV Elikalpeni';
+  else if (/HSC/i.test(combined)) vessel = 'High Speed Craft (HSC)';
+
+  // Document category
+  let category = 'Port Document';
+  if (/cargo\s*abstract/i.test(combined)) category = 'Cargo Abstract / Manifest';
+  else if (/passenger\s*abstract/i.test(combined)) category = 'Passenger Abstract / Berth List';
+  else if (/eq\s*list/i.test(combined)) category = 'Vessel Equipment List / Material Inventory';
+  else if (/HSC/i.test(combined)) category = 'High Speed Craft Timetable';
+  else if (/schedule|timings|timing/i.test(combined)) category = 'Vessel Voyage Schedule';
+  else if (/circular|notice|order/i.test(combined)) category = 'Port Circular / Notice';
+
+  // Dates
+  const dateMatch = combined.match(/(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})|(\d{1,2}(?:\s*(?:&|and)\s*\d{1,2})?)/i);
+  const dateStr = dateMatch ? dateMatch[0] : '';
+
+  // Ports
+  const ports: string[] = [];
+  if (/kochi|cochin/i.test(combined)) ports.push('Kochi');
+  if (/beypore|calicut/i.test(combined)) ports.push('Beypore');
+  if (/kavaratti|kvt/i.test(combined)) ports.push('Kavaratti');
+  if (/agatti|agt/i.test(combined)) ports.push('Agatti');
+  if (/androth|and/i.test(combined)) ports.push('Androth');
+  if (/minicoy|mcy/i.test(combined)) ports.push('Minicoy');
+  if (/kalpeni|klp/i.test(combined)) ports.push('Kalpeni');
+  if (/amini|amn/i.test(combined)) ports.push('Amini');
+  if (/kadmat|kdt/i.test(combined)) ports.push('Kadmat');
+  if (/kiltan|klt/i.test(combined)) ports.push('Kiltan');
+  if (/chetlat|cht/i.test(combined)) ports.push('Chetlat');
+
+  const lines = [
+    `• File: ${title}`,
+    `• Category: ${category}`,
+    `• Vessel: ${vessel}`,
+  ];
+  if (dateStr) lines.push(`• Date / Reference: ${dateStr}`);
+  if (ports.length > 0) lines.push(`• Ports Involved: ${ports.join(', ')}`);
+  lines.push(`• File Details: Official port PDF document. Itemized rows are contained inside the PDF attachment.`);
+
+  return lines.join('\n');
+}
+
 export async function fetchPublicTelegramChannel(
   username: string,
   options: FetchPublicTelegramOptions | number = 21,
   legacyMaxPages = 12,
-  legacyMaxPhotosToOcr = 2
+  legacyMaxPhotosToOcr = 50
 ): Promise<PublicTelegramResult> {
   const opts: FetchPublicTelegramOptions = typeof options === 'number'
     ? { daysToScrape: options, maxPages: legacyMaxPages, maxPhotosToOcr: legacyMaxPhotosToOcr }
@@ -366,7 +539,7 @@ export async function fetchPublicTelegramChannel(
     lastMessageId,
     daysToScrape = lastMessageId ? 0 : 21,
     maxPages = lastMessageId ? 3 : 12,
-    maxPhotosToOcr = 2,
+    maxPhotosToOcr = 50,
   } = opts;
 
   const clean = username.replace(/^@/, '').replace(/^(?:https?:\/\/)?t\.me\/(?:s\/)?/, '').replace(/\/$/, '').trim();
@@ -383,6 +556,7 @@ export async function fetchPublicTelegramChannel(
     mediaPath: string | null;
     photos: string[];
     docInfo: string | null;
+    docLink: string | null;
     ocrText?: string | null;
   }> = [];
 
@@ -448,9 +622,18 @@ export async function fetchPublicTelegramChannel(
           .map(m => m[1])
           .filter(u => !u.includes('/emoji/'));
 
-        const docTitle = b.match(/<div class="tgme_widget_message_document_title">([^<]*)<\/div>/);
-        const docExtra = b.match(/<div class="tgme_widget_message_document_extra">([^<]*)<\/div>/);
-        const docInfo = docTitle ? `${docTitle[1].trim()}${docExtra ? ` (${docExtra[1].trim()})` : ''}` : null;
+        // Match Telegram document attachments (PDFs, abstracts, manifests)
+        const docTitleMatch = b.match(/<div class="[^"]*tgme_widget_message_document_title[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+        const docExtraMatch = b.match(/<div class="[^"]*tgme_widget_message_document_extra[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+        const docWrapMatch = b.match(/<a class="[^"]*tgme_widget_message_document_wrap[^"]*"[^>]*href="([^"]*)"/i);
+        let docInfo: string | null = null;
+        let docLink: string | null = null;
+        if (docTitleMatch) {
+          const rawDocTitle = docTitleMatch[1].replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').trim();
+          const rawDocExtra = docExtraMatch ? docExtraMatch[1].replace(/<[^>]+>/g, '').trim() : '';
+          docInfo = rawDocTitle + (rawDocExtra ? ` (${rawDocExtra})` : '');
+          docLink = docWrapMatch ? docWrapMatch[1] : (postPath ? `https://t.me/${postPath}` : null);
+        }
 
         const videoMatch = b.match(/<video[^>]*src="([^"]*)"/i);
         const videoThumb = b.match(/class="[^"]*tgme_widget_message_video_thumb[^"]*"[^>]*style="background-image:url\('([^']*)'\)"/i);
@@ -479,6 +662,7 @@ export async function fetchPublicTelegramChannel(
             mediaPath,
             photos,
             docInfo,
+            docLink,
           });
         }
       }
@@ -510,6 +694,7 @@ export async function fetchPublicTelegramChannel(
     mediaPath: string | null;
     photos: string[];
     docInfo: string | null;
+    docLink: string | null;
     ocrText?: string | null;
   }> = [];
   const seen = new Set<string | number>();
@@ -523,24 +708,36 @@ export async function fetchPublicTelegramChannel(
 
   unique.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
-  // OCR the latest attached photos (up to maxPhotosToOcr) concurrently in parallel
+  // Attach extracted abstract and document link to document messages
+  for (const m of unique) {
+    if (m.docInfo) {
+      const details = extractDocumentAbstract(m.docInfo, m.text);
+      const docBlock = `[Attached Cargo/Document Details]:\n${details}${m.docLink ? `\n[Document Link: ${m.docLink}]` : ''}`;
+      m.text = m.text ? `${m.text}\n\n${docBlock}` : docBlock;
+    }
+  }
+
+  // OCR attached photos in controlled parallel batches of 3
   const photosToOcr = unique.filter(m => m.photos && m.photos.length > 0).slice(0, maxPhotosToOcr);
   if (photosToOcr.length > 0) {
-    await Promise.all(
-      photosToOcr.map(async (m) => {
-        try {
-          const ocrResult = await ocrTelegramPhoto(m.photos[0]);
-          if (ocrResult) {
-            m.ocrText = ocrResult;
-            m.text = m.text
-              ? `${m.text}\n\n[Extracted Poster/Image Text]:\n${ocrResult}`
-              : `[Extracted Poster/Image Text]:\n${ocrResult}`;
+    for (let i = 0; i < photosToOcr.length; i += 3) {
+      const batch = photosToOcr.slice(i, i + 3);
+      await Promise.all(
+        batch.map(async (m) => {
+          try {
+            const ocrResult = await ocrTelegramPhoto(m.photos[0]);
+            if (ocrResult) {
+              m.ocrText = ocrResult;
+              m.text = m.text
+                ? `${m.text}\n\n[Extracted Poster/Image Text]:\n${ocrResult}`
+                : `[Extracted Poster/Image Text]:\n${ocrResult}`;
+            }
+          } catch (e) {
+            console.warn('[telegram-ocr] Parallel OCR error:', e);
           }
-        } catch (e) {
-          console.warn('[telegram-ocr] Parallel OCR error:', e);
-        }
-      })
-    );
+        })
+      );
+    }
   }
 
   const now = new Date().toISOString();
@@ -660,17 +857,23 @@ export async function savePublicTelegramChannel(
     for (const msg of result.messages) {
       let fullText = msg.messageText || '';
       if (msg.mediaType === 'photo' && msg.mediaPath) {
-        fullText = fullText ? `${fullText}\n[Photo: ${msg.mediaPath}]` : `[Photo: ${msg.mediaPath}]`;
+        if (!fullText.includes('[Photo:')) {
+          fullText = fullText ? `${fullText}\n[Photo: ${msg.mediaPath}]` : `[Photo: ${msg.mediaPath}]`;
+        }
       } else if (msg.mediaType === 'document' && msg.mediaPath) {
-        fullText = fullText ? `${fullText}\n[Document: ${msg.mediaPath}]` : `[Document: ${msg.mediaPath}]`;
+        if (!fullText.includes('[Document:')) {
+          fullText = fullText ? `${fullText}\n[Document: ${msg.mediaPath}]` : `[Document: ${msg.mediaPath}]`;
+        }
       } else if (msg.mediaType === 'video' && msg.mediaPath) {
-        fullText = fullText ? `${fullText}\n[Video: ${msg.mediaPath}]` : `[Video: ${msg.mediaPath}]`;
+        if (!fullText.includes('[Video:')) {
+          fullText = fullText ? `${fullText}\n[Video: ${msg.mediaPath}]` : `[Video: ${msg.mediaPath}]`;
+        }
       }
 
       await db.runAsync(
         `INSERT OR REPLACE INTO telegram_messages (id, channel_id, channel_name, message_id, message_text, message_date, sender_name, media_type, media_path, synced_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [msg.id, msg.channelId, msg.channelName, msg.messageId, fullText, msg.messageDate, msg.senderName, msg.mediaType, msg.mediaPath, msg.syncedAt]
+        [msg.id, channelId, result.channelName, msg.messageId, fullText, msg.messageDate, msg.senderName, msg.mediaType, msg.mediaPath, msg.syncedAt]
       );
     }
   });
@@ -736,7 +939,7 @@ export async function addTelegramChannel(
       await db.runAsync(
         `INSERT OR IGNORE INTO telegram_messages (id, channel_id, channel_name, message_id, message_text, message_date, sender_name, media_type, media_path, synced_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [msg.id, msg.channelId, msg.channelName, msg.messageId, msg.messageText, msg.messageDate, msg.senderName, msg.mediaType, msg.mediaPath, msg.syncedAt]
+        [msg.id, id, msg.channelName, msg.messageId, msg.messageText, msg.messageDate, msg.senderName, msg.mediaType, msg.mediaPath, msg.syncedAt]
       );
     }
 
@@ -801,6 +1004,12 @@ export async function syncTelegramChannel(
 
   if (!botToken || !botToken.trim() || !botToken.includes(':')) {
     const res = await savePublicTelegramChannel(channel.channel_username, channel.last_message_id ?? undefined);
+    // Also backfill any remaining unextracted photos in this channel
+    try {
+      await ocrUnextractedPhotosForChannel(channel.channel_username, channelId);
+    } catch (e) {
+      console.warn('[telegram] Photo backfill OCR error:', e);
+    }
     return res.messagesCount;
   }
 
@@ -824,7 +1033,7 @@ export async function syncTelegramChannel(
       await db.runAsync(
         `INSERT OR IGNORE INTO telegram_messages (id, channel_id, channel_name, message_id, message_text, message_date, sender_name, media_type, media_path, synced_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [msg.id, msg.channelId, msg.channelName, msg.messageId, msg.messageText, msg.messageDate, msg.senderName, msg.mediaType, msg.mediaPath, msg.syncedAt]
+        [msg.id, channelId, msg.channelName, msg.messageId, msg.messageText, msg.messageDate, msg.senderName, msg.mediaType, msg.mediaPath, msg.syncedAt]
       );
     }
 
@@ -877,28 +1086,58 @@ export async function syncAllActiveTelegramChannels(
 export async function deleteTelegramChannel(id: string): Promise<void> {
   const db = await getSourcesDb();
 
-  // Get channel's messages
-  const channelData = await db.getFirstAsync<{ channel_username: string }>(
-    'SELECT channel_username FROM telegram_channels WHERE id = ?',
+  const channelData = await db.getFirstAsync<{ channel_username: string; channel_name: string | null }>(
+    'SELECT channel_username, channel_name FROM telegram_channels WHERE id = ?',
     [id]
   );
 
   if (channelData) {
-    // Delete messages
+    const clean = channelData.channel_username.replace(/^@/, '').toLowerCase();
+    const title = channelData.channel_name || '';
     await db.runAsync(
-      'DELETE FROM telegram_messages WHERE channel_id IN (SELECT channel_id FROM telegram_channels WHERE id = ?)',
-      [id]
+      `DELETE FROM telegram_messages 
+       WHERE channel_id = ? 
+          OR channel_id = ? 
+          OR channel_id = ? 
+          OR channel_id = ?
+          OR (channel_name IS NOT NULL AND channel_name = ?)`,
+      [id, clean, `@${clean}`, channelData.channel_username, title]
     );
+  } else {
+    await db.runAsync('DELETE FROM telegram_messages WHERE channel_id = ?', [id]);
   }
 
-  // Delete channel
   await db.runAsync('DELETE FROM telegram_channels WHERE id = ?', [id]);
+
+  if (isConfigured()) {
+    try {
+      const supabase = getSupabase();
+      const userId = await currentUserId();
+      if (userId) {
+        await supabase.from('telegram_channels').delete().eq('id', id).eq('user_id', userId);
+      }
+    } catch (err) {
+      console.warn('[telegram] Failed to delete channel from Supabase:', err);
+    }
+  }
 }
 
 export async function clearAllTelegramData(): Promise<void> {
   const db = await getSourcesDb();
   await db.runAsync('DELETE FROM telegram_messages');
   await db.runAsync('DELETE FROM telegram_channels');
+
+  if (isConfigured()) {
+    try {
+      const supabase = getSupabase();
+      const userId = await currentUserId();
+      if (userId) {
+        await supabase.from('telegram_channels').delete().eq('user_id', userId);
+      }
+    } catch (err) {
+      console.warn('[telegram] Failed to clear channels from Supabase:', err);
+    }
+  }
 }
 
 const ISLAND_PORT_ALIASES: Record<string, string[]> = {
@@ -980,46 +1219,111 @@ export async function getTelegramMessageCount(): Promise<number> {
   return result?.count || 0;
 }
 
-export async function getChannelMessageCounts(): Promise<Record<string, number>> {
+export interface ChannelMediaStats {
+  total: number;
+  textCount: number;
+  photoCount: number;
+  docCount: number;
+  videoCount: number;
+}
+
+export async function getChannelMediaStats(
+  channelUsername: string,
+  channelId?: string
+): Promise<ChannelMediaStats> {
   const db = await getSourcesDb();
-  const rows = await db.getAllAsync<{ channel_id: string; channel_name: string | null; count: number }>(
-    `SELECT channel_id, channel_name, COUNT(*) as count
-     FROM telegram_messages
-     WHERE deleted = 0
-     GROUP BY channel_id, channel_name`
+  const clean = channelUsername.replace(/^@/, '').toLowerCase();
+  const channelRecord = await db.getFirstAsync<{ id: string; channel_username: string; channel_name: string | null }>(
+    `SELECT id, channel_username, channel_name FROM telegram_channels 
+     WHERE id = ? OR LOWER(channel_username) = ? OR LOWER(channel_username) = ?`,
+    [channelId || '', `@${clean}`, clean]
   );
+  const matchedId = channelRecord?.id || channelId || '';
+  const matchedUsername = channelRecord?.channel_username?.replace(/^@/, '').toLowerCase() || clean;
+  const matchedTitle = channelRecord?.channel_name || '';
+
+  const row = await db.getFirstAsync<{
+    total: number;
+    photo_count: number;
+    doc_count: number;
+    video_count: number;
+  }>(
+    `SELECT 
+       COUNT(*) as total,
+       SUM(CASE WHEN media_type = 'photo' OR message_text LIKE '%[Photo%' OR message_text LIKE '%[Extracted Poster%' OR message_text LIKE '%[Image OCR Content%' THEN 1 ELSE 0 END) as photo_count,
+       SUM(CASE WHEN media_type = 'document' OR message_text LIKE '%[Document%' OR message_text LIKE '%[Attached Cargo%' OR message_text LIKE '%[Attached Document%' THEN 1 ELSE 0 END) as doc_count,
+       SUM(CASE WHEN media_type = 'video' OR message_text LIKE '%[Video%' THEN 1 ELSE 0 END) as video_count
+     FROM telegram_messages
+     WHERE deleted = 0 AND (
+       channel_id = ?
+       OR channel_id = ?
+       OR channel_id = ?
+       OR channel_id = ?
+       OR (channel_name IS NOT NULL AND (
+         channel_name = ?
+         OR LOWER(channel_name) = ?
+         OR LOWER(channel_name) LIKE ?
+       ))
+     )`,
+    [matchedId, clean, `@${clean}`, matchedUsername, matchedTitle, matchedTitle.toLowerCase(), `%${matchedUsername}%`]
+  );
+
+  const total = row?.total || 0;
+  const photoCount = row?.photo_count || 0;
+  const docCount = row?.doc_count || 0;
+  const videoCount = row?.video_count || 0;
+  const textCount = Math.max(0, total - (photoCount + docCount + videoCount));
+
+  return {
+    total,
+    textCount,
+    photoCount,
+    docCount,
+    videoCount,
+  };
+}
+
+export async function getAllChannelMediaStats(): Promise<Record<string, ChannelMediaStats>> {
+  const db = await getSourcesDb();
+  const channels = await db.getAllAsync<{ id: string; channel_username: string; channel_name: string | null }>(
+    'SELECT id, channel_username, channel_name FROM telegram_channels'
+  );
+  const result: Record<string, ChannelMediaStats> = {};
+  for (const ch of channels) {
+    const stats = await getChannelMediaStats(ch.channel_username, ch.id);
+    result[ch.id] = stats;
+    result[ch.channel_username.toLowerCase()] = stats;
+    result[ch.channel_username.replace(/^@/, '').toLowerCase()] = stats;
+  }
+  return result;
+}
+
+export async function getChannelMessageCounts(): Promise<Record<string, number>> {
+  const statsMap = await getAllChannelMediaStats();
   const result: Record<string, number> = {};
-  for (const row of rows) {
-    if (row.channel_id) {
-      result[row.channel_id] = (result[row.channel_id] || 0) + row.count;
-    }
-    if (row.channel_name) {
-      const lower = row.channel_name.toLowerCase();
-      result[lower] = (result[lower] || 0) + row.count;
-    }
+  for (const [key, stats] of Object.entries(statsMap)) {
+    result[key] = stats.total;
   }
   return result;
 }
 
 export async function getChannelMessageCount(channelUsername: string, channelId?: string): Promise<number> {
-  const db = await getSourcesDb();
-  const clean = channelUsername.replace(/^@/, '').toLowerCase();
-  const row = await db.getFirstAsync<{ count: number }>(
-    `SELECT COUNT(*) as count FROM telegram_messages
-     WHERE deleted = 0 AND (
-       channel_id = ?
-       OR channel_name = ?
-       OR LOWER(channel_name) LIKE ?
-       OR LOWER(channel_name) LIKE ?
-     )`,
-    [channelId || '', channelUsername, `%${clean}%`, `%${channelUsername}%`]
-  );
-  return row?.count || 0;
+  const stats = await getChannelMediaStats(channelUsername, channelId);
+  return stats.total;
 }
 
-export async function getChannelMessages(channelUsername: string, channelId?: string, limit = 50): Promise<TelegramMessage[]> {
+export async function getChannelMessages(channelUsername: string, channelId?: string, limit = 100): Promise<TelegramMessage[]> {
   const db = await getSourcesDb();
   const clean = channelUsername.replace(/^@/, '').toLowerCase();
+  const channelRecord = await db.getFirstAsync<{ id: string; channel_username: string; channel_name: string | null }>(
+    `SELECT id, channel_username, channel_name FROM telegram_channels 
+     WHERE id = ? OR LOWER(channel_username) = ? OR LOWER(channel_username) = ?`,
+    [channelId || '', `@${clean}`, clean]
+  );
+  const matchedId = channelRecord?.id || channelId || '';
+  const matchedUsername = channelRecord?.channel_username?.replace(/^@/, '').toLowerCase() || clean;
+  const matchedTitle = channelRecord?.channel_name || '';
+
   const rows = await db.getAllAsync<{
     id: string;
     channel_id: string;
@@ -1036,14 +1340,20 @@ export async function getChannelMessages(channelUsername: string, channelId?: st
      FROM telegram_messages
      WHERE deleted = 0 AND (
        channel_id = ?
-       OR channel_name = ?
-       OR LOWER(channel_name) LIKE ?
-       OR LOWER(channel_name) LIKE ?
+       OR channel_id = ?
+       OR channel_id = ?
+       OR channel_id = ?
+       OR (channel_name IS NOT NULL AND (
+         channel_name = ?
+         OR LOWER(channel_name) = ?
+         OR LOWER(channel_name) LIKE ?
+       ))
      )
      ORDER BY message_date DESC
      LIMIT ?`,
-    [channelId || '', channelUsername, `%${clean}%`, `%${channelUsername}%`, limit]
+    [matchedId, clean, `@${clean}`, matchedUsername, matchedTitle, matchedTitle.toLowerCase(), `%${matchedUsername}%`, limit]
   );
+
   return rows.map(r => ({
     id: r.id,
     channelId: r.channel_id,

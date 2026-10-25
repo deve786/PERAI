@@ -2,7 +2,7 @@
  * Data Sources management screen - Documents, Websites, Telegram.
  */
 import React, { useCallback, useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { ActivityIndicator, Image, Linking, Modal, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@/expense/theme';
@@ -11,7 +11,7 @@ import { showDialog } from '@/dialogStore';
 import { listDocuments, deleteDocument, pickAndProcessDocument, getTotalDocumentChunks, getDocumentChunks, clearAllDocuments, cleanupEmptyDocuments, type Document } from '@/sources/documents';
 import { listWebsites, addWebsite, deleteWebsite, refreshWebsite, parseTelegramChannel, clearAllWebsites, type WebsiteData } from '@/sources/websites';
 import { extractScrapedPages, type ScrapedPageDetail } from '@/sources/websiteLogic';
-import { listTelegramChannels, addTelegramChannel, deleteTelegramChannel, syncTelegramChannel, getTelegramMessageCount, getChannelMessageCounts, getChannelMessageCount, getChannelMessages, clearAllTelegramData, type TelegramChannel } from '@/sources/telegram';
+import { listTelegramChannels, addTelegramChannel, deleteTelegramChannel, syncTelegramChannel, getTelegramMessageCount, getChannelMessageCounts, getChannelMessageCount, getChannelMessages, getAllChannelMediaStats, getChannelMediaStats, clearAllTelegramData, ocrMessagePhoto, ocrUnextractedPhotosForChannel, type TelegramChannel, type ChannelMediaStats } from '@/sources/telegram';
 import { syncSourcesNow } from '@/sources/sync';
 import { getSetting, setSetting } from '@/db/queries';
 import { getTelegramAutoSyncInterval, setTelegramAutoSyncInterval } from '@/settings';
@@ -35,6 +35,59 @@ function formatDateTime(iso: string | null | undefined): string {
   return `${date}, ${time}`;
 }
 
+function parseTelegramPhotoMessage(text?: string | null): { caption: string; ocrText: string | null; photoUrl: string | null } {
+  if (!text) return { caption: '', ocrText: null, photoUrl: null };
+
+  let photoUrl: string | null = null;
+  const photoMatch = text.match(/\[Photo:\s*([^\]]+)\]/i);
+  if (photoMatch) {
+    photoUrl = photoMatch[1].trim();
+  }
+
+  let ocrText: string | null = null;
+  const ocrMatch = text.match(/\[(?:Extracted Poster\/Image Text|Extracted Poster|Image OCR Content)[^\]]*\]:\s*([\s\S]*?)(?=(?:\n\s*\[(?:Photo|Document|Video):)|$)/i);
+  if (ocrMatch && ocrMatch[1].trim()) {
+    ocrText = ocrMatch[1].trim();
+  }
+
+  const caption = text
+    .replace(/\[(?:Extracted Poster\/Image Text|Extracted Poster|Image OCR Content)[^\]]*\]:[\s\S]*?(?=(?:\n\s*\[(?:Photo|Document|Video):)|$)/gi, '')
+    .replace(/\[Photo:[^\]]*\]/gi, '')
+    .trim();
+
+  return { caption, ocrText, photoUrl };
+}
+
+function parseTelegramDocMessage(text?: string | null): { caption: string; docText: string | null; docPath: string | null; docLink: string | null } {
+  if (!text) return { caption: '', docText: null, docPath: null, docLink: null };
+
+  let docPath: string | null = null;
+  const docMatch = text.match(/\[Document:\s*([^\]]+)\]/i);
+  if (docMatch) {
+    docPath = docMatch[1].trim();
+  }
+
+  let docLink: string | null = null;
+  const linkMatch = text.match(/\[Document Link:\s*([^\]]+)\]/i);
+  if (linkMatch) {
+    docLink = linkMatch[1].trim();
+  }
+
+  let docText: string | null = null;
+  const docTextMatch = text.match(/\[(?:Attached Cargo\/Document Content|Attached Cargo\/Document Details|Attached Document|Attached Cargo)[^\]]*\]:\s*([\s\S]*?)(?=(?:\n\s*\[(?:Photo|Document|Document Link|Video):)|$)/i);
+  if (docTextMatch && docTextMatch[1].trim()) {
+    docText = docTextMatch[1].trim();
+  }
+
+  const caption = text
+    .replace(/\[(?:Attached Cargo\/Document Content|Attached Cargo\/Document Details|Attached Document|Attached Cargo)[^\]]*\]:[\s\S]*?(?=(?:\n\s*\[(?:Photo|Document|Document Link|Video):)|$)/gi, '')
+    .replace(/\[Document:[^\]]*\]/gi, '')
+    .replace(/\[Document Link:[^\]]*\]/gi, '')
+    .trim();
+
+  return { caption, docText, docPath, docLink };
+}
+
 export default function DataSourcesScreen() {
   const { c } = useTheme();
   const router = useRouter();
@@ -46,6 +99,7 @@ export default function DataSourcesScreen() {
   const [telegramCount, setTelegramCount] = useState(0);
   const [totalDocChunks, setTotalDocChunks] = useState(0);
   const [channelCounts, setChannelCounts] = useState<Record<string, number>>({});
+  const [channelMediaStatsMap, setChannelMediaStatsMap] = useState<Record<string, ChannelMediaStats>>({});
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
 
   const [uploadingDoc, setUploadingDoc] = useState(false);
@@ -65,7 +119,7 @@ export default function DataSourcesScreen() {
 
   const loadData = useCallback(async () => {
     try {
-      const [docs, sites, chans, token, count, chunks, chCounts, lastSync, interval] = await Promise.all([
+      const [docs, sites, chans, token, count, chunks, chCounts, mediaStats, lastSync, interval] = await Promise.all([
         listDocuments(),
         listWebsites(),
         listTelegramChannels(),
@@ -73,6 +127,7 @@ export default function DataSourcesScreen() {
         getTelegramMessageCount(),
         getTotalDocumentChunks(),
         getChannelMessageCounts(),
+        getAllChannelMediaStats(),
         getSetting('sources_last_synced_at'),
         getTelegramAutoSyncInterval(),
       ]);
@@ -83,6 +138,7 @@ export default function DataSourcesScreen() {
       setTelegramCount(count);
       setTotalDocChunks(chunks);
       setChannelCounts(chCounts);
+      setChannelMediaStatsMap(mediaStats);
       setAutoSyncIntervalState(interval);
 
       const latestItemSync = [
@@ -192,6 +248,14 @@ export default function DataSourcesScreen() {
 
     if (!username || savingTelegram) {
       showDialog({ title: 'Missing information', message: 'Please provide a channel username or link (e.g. @lakport or https://t.me/lakport).' });
+      return;
+    }
+
+    if (!token && username.replace(/^@/, '').toLowerCase().endsWith('_bot')) {
+      showDialog({
+        title: 'Bot Handle Detected',
+        message: `"${username}" ends in _bot. In Telegram, bot handles cannot be scraped as public channels.\n\n• For public channels (like @lakport), enter the channel name without _bot.\n• If this is your custom bot, please enter the Bot Token from @BotFather in the field below.`,
+      });
       return;
     }
 
@@ -488,7 +552,82 @@ export default function DataSourcesScreen() {
     content: string;
     meta: string;
     websitePages?: ScrapedPageDetail[];
+    telegramMessages?: import('@/sources/telegram').TelegramMessage[];
+    telegramStats?: ChannelMediaStats;
   } | null>(null);
+  const [tgFilter, setTgFilter] = useState<'all' | 'photo' | 'document' | 'text'>('all');
+  const [extractingMsgId, setExtractingMsgId] = useState<string | null>(null);
+  const [extractingAll, setExtractingAll] = useState(false);
+  const [ocrProgressText, setOcrProgressText] = useState<string | null>(null);
+
+  async function handleOcrPhoto(m: import('@/sources/telegram').TelegramMessage, photoUrlOverride?: string) {
+    if (extractingMsgId) return;
+    const parsed = parseTelegramPhotoMessage(m.messageText);
+    const photoUrl = photoUrlOverride || parsed.photoUrl || (m.mediaPath ? m.mediaPath.split('; ')[0].trim() : null);
+    if (!photoUrl) {
+      showDialog({ title: 'Photo URL Missing', message: 'Could not find a direct photo URL for this message.' });
+      return;
+    }
+    setExtractingMsgId(m.id);
+    try {
+      const text = await ocrMessagePhoto(m.id, photoUrl);
+      if (text) {
+        setPreviewItem(prev => {
+          if (!prev || !prev.telegramMessages) return prev;
+          const updated = prev.telegramMessages.map(msg => {
+            if (msg.id === m.id) {
+              const cleaned = msg.messageText?.replace(/\[(?:Extracted Poster\/Image Text|Extracted Poster|Image OCR Content)[^\]]*\]:[\s\S]*?(?=\n+\[Photo:|$)/i, '').trim() || '';
+              const newMsgText = cleaned
+                ? `${cleaned}\n\n[Extracted Poster/Image Text]:\n${text}`
+                : `[Extracted Poster/Image Text]:\n${text}`;
+              return { ...msg, messageText: newMsgText };
+            }
+            return msg;
+          });
+          return { ...prev, telegramMessages: updated };
+        });
+        void loadData();
+        showDialog({
+          title: 'Schedule Extracted!',
+          message: `Successfully extracted text and timetable from this photo using Gemini Vision.\n\nContent is now saved and searchable!`,
+        });
+      } else {
+        showDialog({
+          title: 'No Text Found',
+          message: 'Gemini Vision scanned the photo but did not find any legible text or timetable. Check if the image contains clear text.',
+        });
+      }
+    } catch (err) {
+      showDialog({ title: 'OCR Failed', message: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setExtractingMsgId(null);
+    }
+  }
+
+  async function handleOcrAllPhotos() {
+    if (!previewItem || !previewItem.telegramMessages || extractingAll) return;
+    const channelUsername = previewItem.subtitle || previewItem.title;
+    setExtractingAll(true);
+    setOcrProgressText(null);
+    try {
+      const extractedCount = await ocrUnextractedPhotosForChannel(channelUsername, previewItem.id, (done, total) => {
+        setOcrProgressText(`${done}/${total}`);
+      });
+      const updatedMessages = await getChannelMessages(channelUsername, previewItem.id);
+      setPreviewItem(prev => prev ? { ...prev, telegramMessages: updatedMessages } : null);
+      void loadData();
+      showDialog({
+        title: 'Batch Extraction Finished',
+        message: `Extracted text and schedules for ${extractedCount} photos with Gemini Vision.`,
+      });
+    } catch (e) {
+      console.warn('Batch OCR error:', e);
+      showDialog({ title: 'Batch Extraction Error', message: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setExtractingAll(false);
+      setOcrProgressText(null);
+    }
+  }
 
   async function viewDocument(doc: Document) {
     try {
@@ -527,7 +666,9 @@ export default function DataSourcesScreen() {
 
   async function viewChannel(ch: TelegramChannel) {
     try {
-      const msgs = await getChannelMessages(ch.channelUsername, ch.id);
+      const msgs = await getChannelMessages(ch.channelUsername, ch.id, 100);
+      const stats = await getChannelMediaStats(ch.channelUsername, ch.id);
+      setTgFilter('all');
       const content = msgs.length > 0
         ? msgs.map((m) => `[${formatDateTime(m.messageDate)}] ${m.senderName || 'Channel'}:\n${m.messageText || '(Media message)'}`).join('\n\n')
         : 'No messages saved yet.';
@@ -537,7 +678,9 @@ export default function DataSourcesScreen() {
         title: ch.channelName || ch.channelUsername,
         subtitle: ch.channelUsername,
         content,
-        meta: `${msgs.length} messages saved in DB · Last synced ${ch.lastSyncedAt ? formatDateTime(ch.lastSyncedAt) : 'Never'}`,
+        meta: `${stats.total} saved · 📷 ${stats.photoCount} photos · 📄 ${stats.docCount} docs · Last synced ${ch.lastSyncedAt ? formatDateTime(ch.lastSyncedAt) : 'Never'}`,
+        telegramMessages: msgs,
+        telegramStats: stats,
       });
     } catch {
       showDialog({ title: 'Error', message: 'Could not load channel messages.' });
@@ -1002,9 +1145,15 @@ export default function DataSourcesScreen() {
                 </Card>
                 <ListCard>
                   {channels.map((ch, i) => {
-                    const msgCount = channelCounts[ch.id] ??
-                      channelCounts[ch.channelUsername.replace(/^@/, '').toLowerCase()] ??
-                      channelCounts[ch.channelUsername.toLowerCase()] ?? 0;
+                    const stats = channelMediaStatsMap[ch.id] ??
+                      channelMediaStatsMap[ch.channelUsername.toLowerCase()] ??
+                      channelMediaStatsMap[ch.channelUsername.replace(/^@/, '').toLowerCase()] ?? {
+                        total: channelCounts[ch.id] ?? 0,
+                        textCount: channelCounts[ch.id] ?? 0,
+                        photoCount: 0,
+                        docCount: 0,
+                        videoCount: 0,
+                      };
                     return (
                       <View
                         key={ch.id}
@@ -1020,14 +1169,32 @@ export default function DataSourcesScreen() {
                           <Pressable onPress={() => void viewChannel(ch)} style={{ flex: 1 }}>
                             <T size={15} numberOfLines={1}>{ch.channelName || ch.channelUsername}</T>
                             <T size={12} sub>{ch.channelUsername}</T>
-                            <Row style={{ alignItems: 'center', gap: 4, marginTop: 2 }}>
-                              <Ionicons name="checkmark-circle" size={13} color={c.good} />
-                              <T size={12} style={{ color: c.good, fontWeight: '600' }}>
-                                {msgCount} messages saved in DB
-                              </T>
+                            <Row style={{ alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: `${c.good}18`, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                                <Ionicons name="checkmark-circle" size={11} color={c.good} />
+                                <T size={11} weight="600" style={{ color: c.good }}>{stats.total} total</T>
+                              </View>
+                              {stats.photoCount > 0 && (
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: `${c.accent}18`, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                                  <Ionicons name="image" size={11} color={c.accent} />
+                                  <T size={11} weight="600" style={{ color: c.accent }}>{stats.photoCount} photos</T>
+                                </View>
+                              )}
+                              {stats.docCount > 0 && (
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: '#f59e0b18', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                                  <Ionicons name="document-text" size={11} color="#f59e0b" />
+                                  <T size={11} weight="600" style={{ color: '#f59e0b' }}>{stats.docCount} docs</T>
+                                </View>
+                              )}
+                              {stats.textCount > 0 && (
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: c.well, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                                  <Ionicons name="chatbubble-ellipses-outline" size={11} color={c.sub} />
+                                  <T size={11} style={{ color: c.sub }}>{stats.textCount} text</T>
+                                </View>
+                              )}
                             </Row>
-                            <T size={11} sub style={{ marginTop: 1 }}>
-                              Synced {ch.lastSyncedAt ? formatDateTime(ch.lastSyncedAt) : 'Never'} · Tap to view
+                            <T size={11} sub style={{ marginTop: 2 }}>
+                              Synced {ch.lastSyncedAt ? formatDateTime(ch.lastSyncedAt) : 'Never'} · Tap to view media
                             </T>
                           </Pressable>
                           <Pressable
@@ -1154,6 +1321,351 @@ export default function DataSourcesScreen() {
                   </Card>
                 ))}
               </View>
+            ) : previewItem?.type === 'telegram' ? (
+              <View style={{ gap: 12 }}>
+                {/* Media & Content Stats Breakdown Card */}
+                <Card style={{ padding: 14, gap: 10 }}>
+                  <Row style={{ alignItems: 'center', justifyContent: 'space-between' }}>
+                    <Row style={{ alignItems: 'center', gap: 6 }}>
+                      <Ionicons name="stats-chart" size={16} color={c.accent} />
+                      <T size={14} weight="700">Channel Media Breakdown</T>
+                    </Row>
+                    <T size={12} weight="700" style={{ color: c.good }}>
+                      {previewItem.telegramStats?.total ?? previewItem.telegramMessages?.length ?? 0} Total Posts
+                    </T>
+                  </Row>
+                  <Row style={{ gap: 6, flexWrap: 'wrap' }}>
+                    <View style={{ flex: 1, minWidth: 90, padding: 8, borderRadius: radius.sm, backgroundColor: c.well, alignItems: 'center', gap: 2 }}>
+                      <Row style={{ alignItems: 'center', gap: 4 }}>
+                        <Ionicons name="image" size={14} color={c.accent} />
+                        <T size={15} weight="700" style={{ color: c.accent }}>{previewItem.telegramStats?.photoCount ?? 0}</T>
+                      </Row>
+                      <T size={11} sub>Photos (OCR)</T>
+                    </View>
+                    <View style={{ flex: 1, minWidth: 90, padding: 8, borderRadius: radius.sm, backgroundColor: c.well, alignItems: 'center', gap: 2 }}>
+                      <Row style={{ alignItems: 'center', gap: 4 }}>
+                        <Ionicons name="document-text" size={14} color="#f59e0b" />
+                        <T size={15} weight="700" style={{ color: '#f59e0b' }}>{previewItem.telegramStats?.docCount ?? 0}</T>
+                      </Row>
+                      <T size={11} sub>Documents</T>
+                    </View>
+                    <View style={{ flex: 1, minWidth: 90, padding: 8, borderRadius: radius.sm, backgroundColor: c.well, alignItems: 'center', gap: 2 }}>
+                      <Row style={{ alignItems: 'center', gap: 4 }}>
+                        <Ionicons name="chatbubble-ellipses" size={14} color={c.text} />
+                        <T size={15} weight="700">{previewItem.telegramStats?.textCount ?? 0}</T>
+                      </Row>
+                      <T size={11} sub>Text Posts</T>
+                    </View>
+                  </Row>
+                </Card>
+
+                {/* Filter Pills */}
+                {previewItem.telegramMessages && previewItem.telegramMessages.length > 0 && (
+                  <Row style={{ gap: 6, flexWrap: 'wrap' }}>
+                    {[
+                      { key: 'all' as const, label: `All (${previewItem.telegramMessages.length})` },
+                      { key: 'photo' as const, label: `📷 Photos (${previewItem.telegramStats?.photoCount ?? 0})` },
+                      { key: 'document' as const, label: `📄 Documents (${previewItem.telegramStats?.docCount ?? 0})` },
+                      { key: 'text' as const, label: `💬 Text (${previewItem.telegramStats?.textCount ?? 0})` },
+                    ].map((f) => {
+                      const active = tgFilter === f.key;
+                      return (
+                        <Pressable
+                          key={f.key}
+                          onPress={() => setTgFilter(f.key)}
+                          style={{
+                            paddingVertical: 5,
+                            paddingHorizontal: 10,
+                            borderRadius: radius.sm,
+                            borderWidth: 1,
+                            borderColor: active ? c.accent : c.line,
+                            backgroundColor: active ? `${c.accent}18` : c.card,
+                          }}
+                        >
+                          <T size={12} weight={active ? '700' : '500'} style={{ color: active ? c.accent : c.text }}>
+                            {f.label}
+                          </T>
+                        </Pressable>
+                      );
+                    })}
+                  </Row>
+                )}
+
+                {/* Batch OCR Banner if unextracted photos exist */}
+                {(() => {
+                  const unextractedCount = previewItem.telegramMessages?.filter(m => {
+                    const isPhoto = m.mediaType === 'photo' || m.messageText?.includes('[Photo:');
+                    const hasOcr = !!parseTelegramPhotoMessage(m.messageText).ocrText;
+                    return isPhoto && !hasOcr;
+                  }).length || 0;
+
+                  if (unextractedCount === 0) return null;
+
+                  return (
+                    <Card style={{ padding: 12, backgroundColor: `${c.accent}12`, borderColor: `${c.accent}40`, gap: 8 }}>
+                      <Row style={{ alignItems: 'center', justifyContent: 'space-between' }}>
+                        <Row style={{ alignItems: 'center', gap: 6 }}>
+                          <Ionicons name="sparkles" size={16} color={c.accent} />
+                          <T size={13} weight="700" style={{ color: c.accent }}>
+                            {unextractedCount} Photo{unextractedCount === 1 ? '' : 's'} Not Yet Scanned
+                          </T>
+                        </Row>
+                        <Pressable
+                          onPress={() => void handleOcrAllPhotos()}
+                          disabled={extractingAll}
+                          style={{
+                            backgroundColor: c.accent,
+                            paddingHorizontal: 12,
+                            paddingVertical: 6,
+                            borderRadius: radius.sm,
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            gap: 4,
+                          }}
+                        >
+                          {extractingAll ? (
+                            <ActivityIndicator size="small" color="#fff" />
+                          ) : (
+                            <Ionicons name="scan" size={14} color="#fff" />
+                          )}
+                          <T size={12} weight="700" style={{ color: '#fff' }}>
+                            {extractingAll ? 'Extracting All...' : 'Scan All with AI'}
+                          </T>
+                        </Pressable>
+                      </Row>
+                      <T size={11} sub style={{ lineHeight: 16 }}>
+                        Run Gemini Vision on all {unextractedCount} photos to extract ship departure dates, arrival times, and island rules into your database.
+                      </T>
+                    </Card>
+                  );
+                })()}
+
+                {/* Empty State or Message List */}
+                {(!previewItem.telegramMessages || previewItem.telegramMessages.length === 0) ? (
+                  <Card style={{ padding: 18, gap: 12, alignItems: 'center' }}>
+                    <Ionicons name="alert-circle-outline" size={40} color={c.sub} />
+                    <T size={15} weight="700" style={{ textAlign: 'center' }}>No messages saved yet</T>
+                    {previewItem.subtitle.replace(/^@/, '').toLowerCase().endsWith('_bot') ? (
+                      <View style={{ backgroundColor: `${c.accent}12`, borderColor: `${c.accent}30`, borderWidth: 1, padding: 12, borderRadius: radius.md, gap: 6, width: '100%' }}>
+                        <Row style={{ alignItems: 'center', gap: 6 }}>
+                          <Ionicons name="information-circle" size={16} color={c.accent} />
+                          <T size={13} weight="700" style={{ color: c.accent }}>
+                            Bot Handle Detected ("{previewItem.subtitle}")
+                          </T>
+                        </Row>
+                        <T size={12} sub style={{ lineHeight: 18 }}>
+                          Public channels (like <T weight="700" style={{ color: c.text }}>@lakport</T>) post announcements publicly and are scraped directly with all photos, timetables, and documents.
+                          {'\n\n'}
+                          Bot accounts (ending with <T weight="700" style={{ color: c.text }}>_bot</T>) cannot be scraped as public channels; they only receive direct chats or require an admin bot token.
+                          {'\n\n'}
+                          👉 <T weight="700" style={{ color: c.good }}>Recommendation:</T> Add the public channel <T weight="700" style={{ color: c.good }}>@lakport</T> to sync Lakshadweep ship schedules, photos, and posters.
+                        </T>
+                      </View>
+                    ) : (
+                      <T size={13} sub style={{ textAlign: 'center', lineHeight: 18 }}>
+                        Tap "Sync" on the Telegram channels list to fetch the latest messages and media, or ensure the channel is public on Telegram.
+                      </T>
+                    )}
+                  </Card>
+                ) : (
+                  previewItem.telegramMessages
+                    .filter((m) => {
+                      const photoParsed = parseTelegramPhotoMessage(m.messageText);
+                      const isPhoto = m.mediaType === 'photo' || !!photoParsed.photoUrl || !!photoParsed.ocrText;
+                      const docParsed = parseTelegramDocMessage(m.messageText);
+                      const isDoc = m.mediaType === 'document' || !!docParsed.docPath || !!docParsed.docText;
+
+                      if (tgFilter === 'photo') return isPhoto;
+                      if (tgFilter === 'document') return isDoc;
+                      if (tgFilter === 'text') return !isPhoto && !isDoc;
+                      return true;
+                    })
+                    .map((m) => {
+                      const photoParsed = parseTelegramPhotoMessage(m.messageText);
+                      const docParsed = parseTelegramDocMessage(m.messageText);
+                      const isPhoto = m.mediaType === 'photo' || !!photoParsed.photoUrl || !!photoParsed.ocrText;
+                      const hasOcr = !!photoParsed.ocrText;
+                      const isDoc = m.mediaType === 'document' || !!docParsed.docPath || !!docParsed.docText;
+                      const hasDoc = !!docParsed.docText;
+                      const photoUrl = photoParsed.photoUrl || (m.mediaPath ? m.mediaPath.split('; ')[0].trim() : null);
+
+                      return (
+                        <Card key={m.id} style={{ padding: 14, gap: 10 }}>
+                          <Row style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+                            <Row style={{ alignItems: 'center', gap: 6 }}>
+                              <View
+                                style={{
+                                  paddingHorizontal: 8,
+                                  paddingVertical: 2,
+                                  borderRadius: radius.sm,
+                                  backgroundColor: isPhoto ? `${c.accent}18` : isDoc ? '#f59e0b18' : c.well,
+                                }}
+                              >
+                                <T size={11} weight="700" style={{ color: isPhoto ? c.accent : isDoc ? '#f59e0b' : c.sub }}>
+                                  {isPhoto ? (hasOcr ? '📷 Photo (Extracted)' : '📷 Photo') : isDoc ? '📄 Document' : '💬 Post'}
+                                </T>
+                              </View>
+                              <T size={12} weight="600" sub>#{m.messageId}</T>
+                            </Row>
+                            <T size={11} sub>{formatDateTime(m.messageDate)}</T>
+                          </Row>
+
+                          {/* Message Caption */}
+                          {photoParsed.caption ? (
+                            <T size={13} style={{ lineHeight: 20 }}>
+                              {photoParsed.caption}
+                            </T>
+                          ) : docParsed.caption ? (
+                            <T size={13} style={{ lineHeight: 20 }}>
+                              {docParsed.caption}
+                            </T>
+                          ) : null}
+
+                          {/* Photo Image Preview */}
+                          {isPhoto && photoUrl ? (
+                            <View style={{ borderRadius: radius.sm, overflow: 'hidden', backgroundColor: c.well, borderWidth: 1, borderColor: c.line, height: 180, width: '100%' }}>
+                              <Image
+                                source={{ uri: photoUrl }}
+                                style={{ width: '100%', height: '100%' }}
+                                resizeMode="cover"
+                              />
+                            </View>
+                          ) : null}
+
+                          {/* Extracted Photo OCR Box */}
+                          {hasOcr ? (
+                            <View style={{ backgroundColor: `${c.accent}0d`, borderColor: `${c.accent}30`, borderWidth: 1, padding: 12, borderRadius: radius.sm, gap: 6 }}>
+                              <Row style={{ alignItems: 'center', justifyContent: 'space-between' }}>
+                                <Row style={{ alignItems: 'center', gap: 6 }}>
+                                  <Ionicons name="scan-outline" size={14} color={c.accent} />
+                                  <T size={11} weight="700" style={{ color: c.accent, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                                    Vision OCR Extracted Content
+                                  </T>
+                                </Row>
+                                <View style={{ backgroundColor: `${c.good}20`, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                                  <T size={10} weight="700" style={{ color: c.good }}>AI Extracted</T>
+                                </View>
+                              </Row>
+                              <T size={13} style={{ lineHeight: 20, color: c.text }}>
+                                {photoParsed.ocrText}
+                              </T>
+                            </View>
+                          ) : isPhoto && photoUrl ? (
+                            <View style={{ gap: 6, backgroundColor: c.well, padding: 10, borderRadius: radius.sm }}>
+                              <Row style={{ alignItems: 'center', justifyContent: 'space-between' }}>
+                                <Row style={{ alignItems: 'center', gap: 6 }}>
+                                  <Ionicons name="sparkles-outline" size={16} color={c.accent} />
+                                  <T size={12} weight="600" style={{ color: c.accent }}>Text Not Yet Extracted</T>
+                                </Row>
+                                <Pressable
+                                  onPress={() => void handleOcrPhoto(m, photoUrl)}
+                                  disabled={extractingMsgId === m.id}
+                                  style={{
+                                    flexDirection: 'row',
+                                    alignItems: 'center',
+                                    gap: 4,
+                                    backgroundColor: c.accent,
+                                    paddingHorizontal: 10,
+                                    paddingVertical: 5,
+                                    borderRadius: radius.sm,
+                                  }}
+                                >
+                                  {extractingMsgId === m.id ? (
+                                    <>
+                                      <ActivityIndicator size="small" color="#fff" />
+                                      <T size={11} weight="700" style={{ color: '#fff' }}>Extracting...</T>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Ionicons name="sparkles" size={12} color="#fff" />
+                                      <T size={11} weight="700" style={{ color: '#fff' }}>Extract Text (OCR)</T>
+                                    </>
+                                  )}
+                                </Pressable>
+                              </Row>
+                            </View>
+                          ) : null}
+
+                          {/* Extracted Document Box */}
+                          {hasDoc ? (
+                            <View style={{ backgroundColor: '#f59e0b0d', borderColor: '#f59e0b30', borderWidth: 1, padding: 12, borderRadius: radius.sm, gap: 8 }}>
+                              <Row style={{ alignItems: 'center', justifyContent: 'space-between' }}>
+                                <Row style={{ alignItems: 'center', gap: 4 }}>
+                                  <Ionicons name="document-text-outline" size={14} color="#f59e0b" />
+                                  <T size={11} weight="700" style={{ color: '#f59e0b', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                                    Attached Document / Cargo Data
+                                  </T>
+                                </Row>
+                                <View style={{ backgroundColor: '#f59e0b25', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                                  <T size={10} weight="700" style={{ color: '#f59e0b' }}>Document</T>
+                                </View>
+                              </Row>
+                              {docParsed.docPath ? (
+                                <T size={12} weight="700" style={{ color: '#f59e0b' }}>{docParsed.docPath}</T>
+                              ) : null}
+                              <T size={13} style={{ lineHeight: 20, color: c.text }}>
+                                {docParsed.docText}
+                              </T>
+                              {docParsed.docLink ? (
+                                <Pressable
+                                  onPress={() => {
+                                    if (docParsed.docLink) void Linking.openURL(docParsed.docLink);
+                                  }}
+                                  style={{
+                                    flexDirection: 'row',
+                                    alignItems: 'center',
+                                    gap: 6,
+                                    backgroundColor: '#f59e0b18',
+                                    borderColor: '#f59e0b40',
+                                    borderWidth: 1,
+                                    paddingHorizontal: 12,
+                                    paddingVertical: 6,
+                                    borderRadius: radius.sm,
+                                    alignSelf: 'flex-start',
+                                    marginTop: 4,
+                                  }}
+                                >
+                                  <Ionicons name="open-outline" size={14} color="#f59e0b" />
+                                  <T size={11} weight="700" style={{ color: '#f59e0b' }}>Open PDF in Telegram</T>
+                                </Pressable>
+                              ) : null}
+                            </View>
+                          ) : isDoc && docParsed.docPath ? (
+                            <View style={{ backgroundColor: '#f59e0b0d', borderColor: '#f59e0b30', borderWidth: 1, padding: 10, borderRadius: radius.sm, gap: 6 }}>
+                              <Row style={{ alignItems: 'center', gap: 6 }}>
+                                <Ionicons name="document-text-outline" size={16} color="#f59e0b" />
+                                <T size={12} weight="600" style={{ color: '#f59e0b' }}>📄 {docParsed.docPath}</T>
+                              </Row>
+                              {docParsed.docLink ? (
+                                <Pressable
+                                  onPress={() => {
+                                    if (docParsed.docLink) void Linking.openURL(docParsed.docLink);
+                                  }}
+                                  style={{
+                                    flexDirection: 'row',
+                                    alignItems: 'center',
+                                    gap: 6,
+                                    backgroundColor: '#f59e0b18',
+                                    borderColor: '#f59e0b40',
+                                    borderWidth: 1,
+                                    paddingHorizontal: 12,
+                                    paddingVertical: 6,
+                                    borderRadius: radius.sm,
+                                    alignSelf: 'flex-start',
+                                    marginTop: 4,
+                                  }}
+                                >
+                                  <Ionicons name="open-outline" size={14} color="#f59e0b" />
+                                  <T size={11} weight="700" style={{ color: '#f59e0b' }}>Open PDF in Telegram</T>
+                                </Pressable>
+                              ) : null}
+                            </View>
+                          ) : null}
+                        </Card>
+                      );
+                    })
+                )}
+              </View>
             ) : (
               <Card style={{ padding: 16 }}>
                 <T size={11} sub weight="700" style={{ marginBottom: 10, letterSpacing: 0.5, textTransform: 'uppercase' }}>
@@ -1212,6 +1724,33 @@ export default function DataSourcesScreen() {
                           destructive: true,
                           onPress: () => {
                             void removeWebsite(siteId);
+                          },
+                        },
+                      ],
+                    });
+                  }}
+                  style={{ flex: 1, borderWidth: 1, borderColor: `${c.danger}40`, backgroundColor: `${c.danger}10` }}
+                />
+              )}
+              {previewItem?.type === 'telegram' && previewItem.id && (
+                <Button
+                  title="Delete Channel"
+                  icon="trash-outline"
+                  kind="danger"
+                  onPress={() => {
+                    const chId = previewItem.id!;
+                    const chTitle = previewItem.title;
+                    setPreviewItem(null);
+                    showDialog({
+                      title: 'Delete Telegram Channel?',
+                      message: `Remove "${chTitle}" and all its saved messages and media from your database?`,
+                      actions: [
+                        { label: 'Cancel', cancel: true },
+                        {
+                          label: 'Delete',
+                          destructive: true,
+                          onPress: () => {
+                            void removeChannel(chId);
                           },
                         },
                       ],

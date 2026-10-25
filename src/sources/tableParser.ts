@@ -328,8 +328,9 @@ export function generatePerVesselTimelines(text: string): string {
 
     for (let i = 0; i < v.entries.length; i++) {
       const e = v.entries[i];
-      const isDept = /dept/i.test(e.content) || (/kochi/i.test(e.content) && !/arr/i.test(e.content));
-      const isArr = /arr/i.test(e.content) && /kochi/i.test(e.content);
+      const isIdle = e.content === '####' || /^\s*#+\s*$/.test(e.content) || /lay\s*up/i.test(e.content) || /dry\s*dock/i.test(e.content);
+      const isDept = !isIdle && (/\bdept\b/i.test(e.content) || /departure/i.test(e.content));
+      const isArr = /\barr\b/i.test(e.content) && /kochi|cochin|cok/i.test(e.content);
 
       if (isDept && !inVoyage) {
         output += `  [Voyage ${voyageNum++}]\n`;
@@ -337,7 +338,11 @@ export function generatePerVesselTimelines(text: string): string {
       }
 
       const dayStr = e.day ? ` (${e.day})` : '';
-      output += `  • ${e.date}${dayStr}: ${e.content}\n`;
+      let contentDisplay = e.content;
+      if (isIdle && (e.content === '####' || /^\s*#+\s*$/.test(e.content))) {
+        contentDisplay = '#### (No sailing / In port)';
+      }
+      output += `  • ${e.date}${dayStr}: ${contentDisplay}\n`;
 
       if (isArr && inVoyage) {
         inVoyage = false;

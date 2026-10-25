@@ -10,6 +10,76 @@ export interface ChangelogEntry {
 /** Newest first. Add a new entry here with every release that changes user-visible behaviour. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.30.49',
+    build: 152,
+    type: 'ota',
+    date: '2026-10-25',
+    time: '08:51 PM',
+    highlights: [
+      'Fix voyage start date lay up parsing and add document detail guidance',
+    ],
+  },
+  {
+    version: '1.30.48',
+    build: 151,
+    type: 'ota',
+    date: '2026-10-25',
+    time: '08:48 PM',
+    highlights: [
+      'Fix voyage start date for #### idle days and document attachment answers',
+    ],
+  },
+  {
+    version: '1.30.47',
+    build: 150,
+    type: 'ota',
+    date: '2026-10-25',
+    time: '08:08 PM',
+    highlights: [
+      'Telegram media extraction & direct document attachments with PDF link',
+    ],
+  },
+  {
+    version: '1.30.46',
+    build: 149,
+    type: 'ota',
+    date: '2026-10-25',
+    time: '08:06 PM',
+    highlights: [
+      'Extract full photo OCR and document abstracts with Telegram PDF links',
+    ],
+  },
+  {
+    version: '1.30.45',
+    build: 148,
+    type: 'ota',
+    date: '2026-10-25',
+    time: '07:50 PM',
+    highlights: [
+      'Show extracted photo OCR text and on-demand AI scan',
+    ],
+  },
+  {
+    version: '1.30.44',
+    build: 147,
+    type: 'ota',
+    date: '2026-10-25',
+    time: '07:39 PM',
+    highlights: [
+      'Fix Telegram channel deletion sync with Supabase',
+    ],
+  },
+  {
+    version: '1.30.43',
+    build: 146,
+    type: 'ota',
+    date: '2026-10-25',
+    time: '07:32 PM',
+    highlights: [
+      'Telegram media counts and extracted photo OCR & document viewer',
+    ],
+  },
+  {
     version: '1.30.42',
     build: 145,
     type: 'ota',
