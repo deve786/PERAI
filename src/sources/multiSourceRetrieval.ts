@@ -9,6 +9,7 @@ import { searchWebsiteContent } from './websites';
 import { searchTelegramMessages } from './telegram';
 import { selectRelevantMemories } from '@/ai/retrieval';
 import { extractRelevantWebsiteSnippets } from './websiteLogic';
+import { generatePerVesselTimelines } from './tableParser';
 
 export interface MultiSourceContext {
   memories: Memory[];
@@ -100,6 +101,12 @@ export function buildUnifiedContext(
       const page = d.pages.length > 0 ? ` (Pages ${d.pages.join(', ')})` : '';
       context += `[${d.refId}] From "${d.filename}"${page}:\n`;
       context += `${d.content}\n\n`;
+
+      // Extract and append structured per-vessel timelines if document has ship schedule tables
+      const timelines = generatePerVesselTimelines(d.content);
+      if (timelines) {
+        context += `${timelines}\n\n`;
+      }
     });
   }
 

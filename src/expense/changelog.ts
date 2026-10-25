@@ -10,6 +10,16 @@ export interface ChangelogEntry {
 /** Newest first. Add a new entry here with every release that changes user-visible behaviour. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.30.40',
+    build: 143,
+    type: 'ota',
+    date: '2026-10-25',
+    time: '03:11 PM',
+    highlights: [
+      'Support per-vessel extracted timelines, direct & indirect voyages, and complete Kochi-to-Kochi circuits',
+    ],
+  },
+  {
     version: '1.30.39',
     build: 142,
     type: 'ota',

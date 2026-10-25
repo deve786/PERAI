@@ -251,3 +251,99 @@ export function extractAllTables(text: string): ParsedTable[] {
   }
   return tables;
 }
+
+/**
+ * Extracts and formats per-vessel chronological timelines and complete voyages from tables.
+ * Transforms column-oriented ship schedules into easily readable linear timelines for each vessel,
+ * preventing LLM column/row confusion and enabling full voyage tracing.
+ */
+export function generatePerVesselTimelines(text: string): string {
+  const tables = extractAllTables(text);
+  if (tables.length === 0) return '';
+
+  const vesselColumns: Array<{
+    name: string;
+    entries: Array<{ date: string; day: string; content: string }>;
+  }> = [];
+
+  for (const table of tables) {
+    let dateIdx = -1;
+    let dayIdx = -1;
+    const ships: Array<{ name: string; idx: number }> = [];
+
+    table.headers.forEach((h, idx) => {
+      const lower = h.toLowerCase();
+      if (lower.includes('date') || lower.match(/\d\d\/\d\d/)) dateIdx = idx;
+      else if (lower.includes('day')) dayIdx = idx;
+      else if (
+        lower.includes('mv') ||
+        lower.includes('sea') ||
+        lower.includes('corals') ||
+        lower.includes('lagoons') ||
+        lower.includes('vessel') ||
+        lower.includes('a/sea') ||
+        lower.includes('l/sea')
+      ) {
+        ships.push({ name: h.trim(), idx });
+      }
+    });
+
+    if (dateIdx === -1) dateIdx = 0;
+    if (ships.length === 0) continue;
+
+    for (const ship of ships) {
+      let existing = vesselColumns.find((v) => {
+        const a = v.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const b = ship.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+        return a.includes(b) || b.includes(a);
+      });
+
+      if (!existing) {
+        existing = { name: ship.name, entries: [] };
+        vesselColumns.push(existing);
+      }
+
+      for (const row of table.rows) {
+        const date = (row[dateIdx] || '').trim();
+        const day = dayIdx >= 0 ? (row[dayIdx] || '').trim() : '';
+        const content = (row[ship.idx] || '').trim();
+        if (date && content) {
+          if (!existing.entries.some((e) => e.date === date)) {
+            existing.entries.push({ date, day, content });
+          }
+        }
+      }
+    }
+  }
+
+  if (vesselColumns.length === 0) return '';
+
+  let output = '\n=== EXTRACTED VOYAGE TIMELINES PER VESSEL (COLUMN-WISE SCHEDULE) ===\n';
+  output += 'Notice: Each ship below represents ONE column across dates. A complete voyage starts with departure from Kochi, visits all listed islands in sequence, and ends when the vessel arrives back in Kochi.\n';
+
+  for (const v of vesselColumns) {
+    output += `\n🚢 VESSEL: ${v.name}\n`;
+    let voyageNum = 1;
+    let inVoyage = false;
+
+    for (let i = 0; i < v.entries.length; i++) {
+      const e = v.entries[i];
+      const isDept = /dept/i.test(e.content) || (/kochi/i.test(e.content) && !/arr/i.test(e.content));
+      const isArr = /arr/i.test(e.content) && /kochi/i.test(e.content);
+
+      if (isDept && !inVoyage) {
+        output += `  [Voyage ${voyageNum++}]\n`;
+        inVoyage = true;
+      }
+
+      const dayStr = e.day ? ` (${e.day})` : '';
+      output += `  • ${e.date}${dayStr}: ${e.content}\n`;
+
+      if (isArr && inVoyage) {
+        inVoyage = false;
+      }
+    }
+  }
+
+  return output;
+}

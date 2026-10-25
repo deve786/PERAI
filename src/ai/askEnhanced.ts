@@ -110,13 +110,25 @@ FOR LAKSHADWEEP SHIP SCHEDULES & VOYAGE TABLES:
   1. Starts with departure from Kochi (e.g. "KOCHI Dept.1430").
   2. Visits islands on intermediate days with arrival/departure timings (e.g. "KVT AGT 0800-1100. 1400-1600").
   3. Concludes with arrival back at Kochi (e.g. "KOCHI Arr.0700").
-  WHEN ASKED ABOUT A VOYAGE (e.g. "What is voyage on 27 october of Lakshadweep sea", "Next voyage to Agatti"):
-  * ALWAYS output the FULL COMPLETE VOYAGE: from Kochi departure, through all island stops with times, to Kochi arrival!
-  * Example: On 27/10/26 MV L/Sea departs Kochi at 14:30. Its complete voyage is:
-    - 27/10/26 · MV L/SEA · KOCHI Dept.1430
-    - 28/10/26 · MV L/SEA · KLT CHT 0800-1100. 1400-1700
-    - 29/10/26 · MV L/SEA · BTR CHT KLT 0700-0830 1100-1330 1530-1430
-    - 30/10/26 · MV L/SEA · KOCHI Arr.0700
+  WHEN ASKED ABOUT A VOYAGE ON A DATE OR OF A SHIP (e.g. "What is voyage on 27 october of Lakshadweep sea"):
+  * Look under the ship's timeline under "=== EXTRACTED VOYAGE TIMELINES PER VESSEL ===" for that specific vessel!
+  * NEVER combine text from adjacent columns on the same row! For example, on 27/10/26 MV L/Sea departs Kochi, and its next stops down its own column are KLT CHT (28/10) and BTR CHT KLT (29/10) returning 30/10. It does NOT go to Agatti (Agatti on 27/10 is in MV Lagoons's column)!
+  * ALWAYS output the FULL COMPLETE VOYAGE: from Kochi departure, through all island stops with times, until the ship arrives back at Kochi!
+  * In the items array, list every leg of that voyage chronologically:
+    1. 27/10/26 · M V / L SEA · KOCHI Dept.1430
+    2. 28/10/26 · M V / L SEA · KLT CHT 0800-1100. 1400-1700
+    3. 29/10/26 · M V / L SEA · BTR CHT KLT 0700-0830 1100-1330 1530-1430
+    4. 30/10/26 · M V / L SEA · KOCHI Arr.0700
+
+- DIRECT AND INDIRECT VOYAGES (CRITICAL):
+  When asked for a voyage from one place to another (e.g. "Next voyage of cok to amn", "cok to agt", "kvt to agt"):
+  * ALWAYS compare departure dates with "Current local time" above! A departure in the past (e.g. 17/10/26 when today is 25/10/26) is in the past and MUST NEVER be listed as the "next" voyage! Only consider departures strictly on or after today.
+  * Direct Voyage: A vessel departing origin and calling at destination on that same voyage.
+    - E.g. For Kochi to Amini (AMN): MV Corals departs Kochi 26/10/26 at 12:30 -> calls at KDM AMN on 27/10/26.
+    - E.g. For Kochi to Agatti (AGT): MV Lagoons departs Kochi 26/10/26 at 14:30 -> calls at KVT AGT on 27/10/26.
+  * Indirect / Connecting Voyage: Traveling via an intermediate hub island or connecting ship.
+    - E.g. For Kochi to Amini: Take MV Lagoons on 26/10/26 to Kavaratti (KVT), then connect to Amini via inter-island vessel.
+  * When answering, clearly show BOTH the direct voyage(s) and any indirect/via options, including all leg dates, ship names, and times.
 
 - RETURN & ROUND-TRIP VOYAGES (CRITICAL):
   When the user asks for a voyage AND return (e.g. "KVT to AGT then return also", "Kochi to Agatti and return"):
