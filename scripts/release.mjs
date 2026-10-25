@@ -27,7 +27,7 @@ const RELEASE = 'src/release.json';
 const [kind, ...rest] = process.argv.slice(2);
 const feature = rest.includes('--feature');
 const note = rest
-  .filter((word) => word !== '--feature' && word !== '--message')
+  .filter((word) => word !== '--feature' && word !== '--message' && word !== '--')
   .join(' ')
   .trim();
 
