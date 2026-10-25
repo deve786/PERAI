@@ -515,18 +515,36 @@ export async function cleanupEmptyDocuments(): Promise<number> {
 const ISLAND_PORT_ALIASES: Record<string, string[]> = {
   androth: ['and', 'andrott'],
   androt: ['and', 'androth'],
+  and: ['androth', 'androt'],
   kalpeni: ['klp'],
+  klp: ['kalpeni'],
   kavaratti: ['kvt'],
+  kvt: ['kavaratti'],
   agatti: ['agt'],
+  agt: ['agatti'],
   amini: ['amn'],
+  amn: ['amini'],
   kadmat: ['kdm', 'kadmath'],
   kadmath: ['kdm', 'kadmat'],
+  kdm: ['kadmat', 'kadmath'],
   kiltan: ['klt'],
+  klt: ['kiltan'],
   chetlat: ['cht'],
+  cht: ['chetlat'],
   bitra: ['btr'],
+  btr: ['bitra'],
   minicoy: ['mcy'],
-  cochin: ['kochi'],
-  kochi: ['cochin'],
+  mcy: ['minicoy'],
+  cochin: ['kochi', 'cok'],
+  kochi: ['cochin', 'cok', 'lsg'],
+  cok: ['kochi', 'cochin'],
+  lsg: ['kochi', 'local service'],
+  layup: ['lay up', 'lay'],
+  lay: ['lay up', 'layup'],
+  voyage: ['schedule', 'dept', 'arr'],
+  voyages: ['voyage', 'schedule'],
+  ship: ['mv', 'vessel', 'corals', 'lagoons'],
+  ships: ['ship', 'mv', 'vessel'],
 };
 
 export async function searchDocumentChunks(query: string, limit = 50): Promise<DocumentChunk[]> {
@@ -536,6 +554,7 @@ export async function searchDocumentChunks(query: string, limit = 50): Promise<D
 
   for (const w of rawWords) {
     if (w.length > 2) keywordsSet.add(w);
+    if (w === 'mv') keywordsSet.add('mv');
     if (w === 'shiip') keywordsSet.add('ship');
     const aliases = ISLAND_PORT_ALIASES[w];
     if (aliases) {

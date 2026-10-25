@@ -1882,6 +1882,48 @@ section('hallucination detection & grounding verification');
   check('detects hallucinated entry on 24/10/26', verifyItemGrounding('24/10/26 · MV LAGOONS · KLT CHT BTR', scheduleTable).verified === false);
   check('detects non-existent date', verifyItemGrounding('31/10/26 · MV LAGOONS · BTR CHT KLT', scheduleTable).verified === false);
   check('verifies correct details for 24/10/26', verifyItemGrounding('24/10/26 · MV LAGOONS · AMN KDM KLP', scheduleTable).verified === true);
+
+  const fullPdfSchedule = `
+Page 1
+| DATE | DAY | MV A/SEA | M V / L SEA | MV LAGOONS | MV CORALS |
+|---|---|---|---|---|---|
+| 16/10/26 | FRI | KOCHI Arr.0700 | KOCHI Dept.1430 | KVT AGT AMN | LAY UP |
+| 19/10/26 | MON | MCY 0800-1300 | LAY UP | KOCHI Dept.1430 | KOCHI Arr.0700 |
+| 20/10/26 | TUE | KOCHI Arr.0700 | LAY UP | KDM AMN | KOCHI Dept.1430 |
+| 21/10/26 | WED | KOCHI (LSG) Dept.1800 | LAY UP | KOCHI Arr.0700 | KVT AGT |
+| 22/10/26 | THU | KLP AND | LAY UP | KOCHI (LSG) Dept.1430 | KOCHI Arr.0700 |
+| 26/10/26 | MON | KLT CHT | KOCHI Arr.0700 | KOCHI Dept.1430 | KOCHI Dept.1230 |
+| 27/10/26 | TUE | KOCHI Arr.0700 | KOCHI Dept.1430 | KVT AGT 0800-1100. 1400-1600 | KDM AMN |
+| 28/10/26 | WED | KOCHI Dept.1430 | KLT CHT | KOCHI Arr.0700 | KOCHI Arr.0700 |
+| 29/10/26 | THU | MCY | BTR CHT KLT | KOCHI Dept.1800 | KOCHI Dept.1430 |
+
+Page 2
+| DATE | DAY | MV A/SEA | M V / L SEA | MV LAGOONS | MV CORALS |
+|---|---|---|---|---|---|
+| 30/10/26 | FRI | KOCHI Arr.0700 | KOCHI Arr.0700 | AND KLP | KVT AGT |
+| 01/11/26 | SUN | AGT KVT 0800-1100. 1400- 1600 | AMN KDM | KOCHI Dept.1230 | KOCHI Dept.1430 |
+| 05/11/26 | THU | KVT AGT | MCY | KLP KDM AMN | AGT KVT 0800-1100. 1400- 1600 |
+`;
+
+  // Lay up verification across multiple days
+  check('verifies lay up on 19/10/26', verifyItemGrounding('19/10/26 · M V / L SEA · LAY UP', fullPdfSchedule).verified === true);
+  check('verifies lay up on 20/10/26', verifyItemGrounding('20/10/26 · M V / L SEA · LAY UP', fullPdfSchedule).verified === true);
+  check('verifies lay up on 21/10/26', verifyItemGrounding('21/10/26 · M V / L SEA · LAY UP', fullPdfSchedule).verified === true);
+  check('verifies lay up on 22/10/26', verifyItemGrounding('22/10/26 · M V / L SEA · LAY UP', fullPdfSchedule).verified === true);
+  check('rejects false lay up on 26/10/26', verifyItemGrounding('26/10/26 · M V / L SEA · LAY UP', fullPdfSchedule).verified === false);
+
+  // Kochi departures & complete voyage legs
+  check('verifies Kochi departure for MV Lagoons on 26/10/26', verifyItemGrounding('26/10/26 · MV LAGOONS · KOCHI Dept.1430', fullPdfSchedule).verified === true);
+  check('verifies intermediate voyage stop on 27/10/26', verifyItemGrounding('27/10/26 · MV LAGOONS · KVT AGT', fullPdfSchedule).verified === true);
+  check('verifies Kochi return arrival on 30/10/26', verifyItemGrounding('30/10/26 · M V / L SEA · KOCHI Arr.0700', fullPdfSchedule).verified === true);
+
+  // Return voyages across multiple tables
+  check('verifies forward leg KVT to AGT on 27/10/26', verifyItemGrounding('27/10/26 · MV LAGOONS · KVT AGT', fullPdfSchedule).verified === true);
+  check('verifies return leg AGT to KVT on 01/11/26 on Page 2', verifyItemGrounding('01/11/26 · MV A/SEA · AGT KVT', fullPdfSchedule).verified === true);
+  check('verifies return leg AGT to KVT on 05/11/26 on Page 2', verifyItemGrounding('05/11/26 · MV CORALS · AGT KVT', fullPdfSchedule).verified === true);
+
+  // Catching hallucinations
+  check('rejects hallucinated ports for MV Lagoons on 26/10/26', verifyItemGrounding('26/10/26 · MV LAGOONS · AGT MCY', fullPdfSchedule).verified === false);
 }
 
 section('website multi-page crawling & content aggregation');

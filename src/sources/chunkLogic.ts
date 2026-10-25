@@ -103,22 +103,33 @@ export function verifyItemGrounding(itemText: string, contextText: string): Grou
   if (!contextText || !itemText) return { verified: true };
 
   const normContext = contextText.toLowerCase();
-  const normItem = itemText.toLowerCase();
 
   // Detect and parse markdown tables from context
   const tables = extractAllTablesFromText(normContext);
+
+  let tableFailureReason: string | undefined;
 
   if (tables.length > 0) {
     // Table context detected - use column-aware verification
     for (const table of tables) {
       const result = verifyAgainstTable(itemText, table);
-      if (result) return result;
+      if (result) {
+        if (result.verified) return { verified: true };
+        tableFailureReason = result.reason;
+      }
     }
-    // If table verification returned nothing, fall through to text-based check
   }
 
-  // Fall back to text-based verification for non-table contexts
-  return verifyAgainstText(itemText, contextText);
+  // Fall back to text-based verification for non-table contexts or cross-page tables
+  const textResult = verifyAgainstText(itemText, contextText);
+  if (textResult.verified) {
+    return { verified: true };
+  }
+
+  return {
+    verified: false,
+    reason: tableFailureReason || textResult.reason || 'Not verified in source context',
+  };
 }
 
 /**
@@ -131,7 +142,7 @@ function extractAllTablesFromText(text: string): ParsedTable[] {
 
   while (i < lines.length) {
     if (lines[i].includes('|')) {
-      let tableStart = i;
+      const tableStart = i;
       // Find the separator line
       let separatorIdx = -1;
       for (let j = i + 1; j < lines.length; j++) {
@@ -158,6 +169,7 @@ function extractAllTablesFromText(text: string): ParsedTable[] {
 
       // Parse rows
       const rows: string[][] = [];
+      let lastRowIdx = separatorIdx;
       for (let j = separatorIdx + 1; j < lines.length; j++) {
         if (!lines[j].includes('|')) break;
         if (/^\s*\|?[\s\-:|]+\|?\s*$/.test(lines[j])) continue;
@@ -167,7 +179,7 @@ function extractAllTablesFromText(text: string): ParsedTable[] {
           if (row.length > headers.length) row.length = headers.length;
           rows.push(row);
         }
-        i = j;
+        lastRowIdx = j;
       }
 
       if (rows.length > 0) {
@@ -178,7 +190,7 @@ function extractAllTablesFromText(text: string): ParsedTable[] {
         });
         tables.push({ headers, rows, columnMap });
       }
-      i = tableStart + 1;
+      i = lastRowIdx + 1;
     } else {
       i++;
     }
@@ -220,7 +232,10 @@ function verifyAgainstTable(itemText: string, table: ParsedTable): GroundingChec
   }
 
   // Find the ship name in the item
-  const shipNames = ['mv l/seas', 'mv l/sea', 'mv lagoons', 'mv corals', 'mv a/sea', 'mv c/sea', 'mv d/sea'];
+  const shipNames = [
+    'mv l/seas', 'mv l/sea', 'm v / l sea', 'mv lakshadweep sea', 'lakshadweep sea',
+    'mv lagoons', 'mv corals', 'mv a/sea', 'mv arabian sea', 'mv c/sea', 'mv d/sea'
+  ];
   let shipName = '';
   for (const s of shipNames) {
     if (itemText.toLowerCase().includes(s)) {
@@ -239,58 +254,75 @@ function verifyAgainstTable(itemText: string, table: ParsedTable): GroundingChec
   }
 
   if (dates.length === 0) {
-    // No date in item - just check if the port code exists anywhere in the table
-    // for the specified ship column
     if (shipName) {
       const shipColIdx = findColumnForShip(table, shipName);
-      if (shipColIdx === null) return { verified: false, reason: `Ship ${shipName} not found in schedule` };
+      if (shipColIdx === null) return null;
 
-      // Extract port code from item
-      const portCode = extractPortCode(itemText);
-      if (portCode) {
-        for (const row of table.rows) {
-          const cell = row[shipColIdx] || '';
-          if (new RegExp(`\\b${portCode}\\b`, 'i').test(cell)) {
-            return { verified: true };
+      const portCodes = extractAllPortCodes(itemText);
+      if (portCodes.length > 0) {
+        for (const p of portCodes) {
+          let foundP = false;
+          for (const row of table.rows) {
+            const cell = row[shipColIdx] || '';
+            if (new RegExp(`\\b${p}\\b`, 'i').test(cell)) {
+              foundP = true;
+              break;
+            }
           }
+          if (!foundP) return { verified: false, reason: `Port ${p} not found in ${shipName}'s column` };
         }
-        return { verified: false, reason: `Port ${portCode} not found in ${shipName}'s column` };
+        return { verified: true };
       }
     }
-    return null; // Can't verify - let caller decide
+    return null;
   }
 
-  // For each date in the item, find the row and check the ship column
+  // For each date in the item, check if this table contains that date
   for (const date of dates) {
     const rowIndex = findRowForDate(table, date, dateColIdx);
     if (rowIndex === -1) {
-      return { verified: false, reason: `Date ${date} not found in schedule` };
+      // Date not in this table - don't fail, another table may have it
+      return null;
     }
 
-    // Get the cell content from the ship's column on this date
     if (shipName) {
       const shipColIdx = findColumnForShip(table, shipName);
       if (shipColIdx === null) {
-        return { verified: false, reason: `Ship ${shipName} not found as a column` };
+        return null;
       }
 
       const cellContent = table.rows[rowIndex][shipColIdx] || '';
 
-      // Extract port code from item and check if it exists in this cell
-      const portCode = extractPortCode(itemText);
-      if (portCode) {
-        if (!new RegExp(`\\b${portCode}\\b`, 'i').test(cellContent)) {
-          // Check if the port is in the NEXT row (for voyage tracing)
-          // e.g., ship departs KOCHI on 23/10, arrives at island on 24/10
-          if (rowIndex < table.rows.length - 1) {
-            const nextRowContent = table.rows[rowIndex + 1][shipColIdx] || '';
-            if (!new RegExp(`\\b${portCode}\\b`, 'i').test(nextRowContent)) {
-              return { verified: false, reason: `Port ${portCode} not found in ${shipName}'s column on ${date}` };
-            }
-          } else {
-            return { verified: false, reason: `Port ${portCode} not found in ${shipName}'s column on ${date}` };
+      // Check for lay up
+      if (/\blay\s*up\b/i.test(itemText)) {
+        if (/lay\s*up/i.test(cellContent) || /\blay\b/i.test(cellContent)) {
+          return { verified: true };
+        }
+        return { verified: false, reason: `Ship not in lay up on ${date}` };
+      }
+
+      // Check for Kochi departures / arrivals
+      if (/\bkochi\b|\bcochin\b|\bcok\b/i.test(itemText)) {
+        if (/kochi|cochin|cok|lsg/i.test(cellContent)) {
+          return { verified: true };
+        }
+      }
+
+      // Extract all port codes from item and verify every single one exists in cell (or next row if departure)
+      const portCodes = extractAllPortCodes(itemText);
+      if (portCodes.length > 0) {
+        const isDept = /dept/i.test(cellContent) || /kochi/i.test(cellContent);
+        const nextRowContent = (isDept && rowIndex < table.rows.length - 1)
+          ? (table.rows[rowIndex + 1][shipColIdx] || '')
+          : '';
+        const combined = `${cellContent} ${nextRowContent}`;
+
+        for (const p of portCodes) {
+          if (!new RegExp(`\\b${p}\\b`, 'i').test(combined)) {
+            return { verified: false, reason: `Port ${p} not found in ${shipName}'s column on ${date}` };
           }
         }
+        return { verified: true };
       }
     }
   }
@@ -299,30 +331,41 @@ function verifyAgainstTable(itemText: string, table: ParsedTable): GroundingChec
 }
 
 /**
- * Find the column index for a ship by matching header text.
+ * Find the column index for a ship by matching header text with robust normalization.
  */
 function findColumnForShip(table: ParsedTable, shipName: string): number | null {
-  const normalizedShip = shipName.toLowerCase();
-  // Try direct match
+  const clean = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const targetClean = clean(shipName);
+
   for (let i = 0; i < table.headers.length; i++) {
-    const header = table.headers[i].toLowerCase();
-    if (header.includes(normalizedShip) || normalizedShip.includes(header)) {
+    const headerClean = clean(table.headers[i]);
+    if (!headerClean) continue;
+
+    if (headerClean.includes(targetClean) || targetClean.includes(headerClean)) {
       return i;
     }
-    // Handle common aliases
-    if (normalizedShip === 'mv l/seas' || normalizedShip === 'mv l/sea') {
-      if (header.includes('l/sea') || header.includes('lakshadweep')) return i;
+
+    // MV Lakshadweep Sea aliases (e.g. "M V / L SEA", "MV L/SEA", "LAKSHADWEEP")
+    if (targetClean.includes('lsea') || targetClean.includes('lakshadweep')) {
+      if (headerClean.includes('lsea') || headerClean.includes('lakshadweep')) return i;
     }
-    if (normalizedShip === 'mv lagoons') {
-      if (header.includes('lagoons')) return i;
+
+    // MV Lagoons aliases
+    if (targetClean.includes('lagoon')) {
+      if (headerClean.includes('lagoon')) return i;
     }
-    if (normalizedShip === 'mv corals') {
-      if (header.includes('corals')) return i;
+
+    // MV Corals aliases
+    if (targetClean.includes('coral')) {
+      if (headerClean.includes('coral')) return i;
     }
-    if (normalizedShip === 'mv a/sea') {
-      if (header.includes('a/sea')) return i;
+
+    // MV Arabian Sea aliases
+    if (targetClean.includes('asea') || targetClean.includes('arabian')) {
+      if (headerClean.includes('asea') || headerClean.includes('arabian')) return i;
     }
   }
+
   return null;
 }
 
@@ -330,15 +373,12 @@ function findColumnForShip(table: ParsedTable, shipName: string): number | null 
  * Find the row index containing a specific date.
  */
 function findRowForDate(table: ParsedTable, date: string, dateColIdx: number): number {
-  // Normalize the date for matching
   const normalizedDate = date.toLowerCase();
 
   for (let i = 0; i < table.rows.length; i++) {
     const rowDate = table.rows[i][dateColIdx]?.toLowerCase() || '';
-    // Try various date formats
     if (rowDate.includes(normalizedDate)) return i;
 
-    // Try matching components
     const dateParts = normalizedDate.split(/\W+/).filter(Boolean);
     if (dateParts.length >= 2) {
       const [day, month] = dateParts;
@@ -346,23 +386,32 @@ function findRowForDate(table: ParsedTable, date: string, dateColIdx: number): n
     }
   }
 
+  // Also check if any other column has the date (in case date is not col 0)
+  for (let i = 0; i < table.rows.length; i++) {
+    for (let c = 0; c < table.rows[i].length; c++) {
+      if (c === dateColIdx) continue;
+      const cell = table.rows[i][c]?.toLowerCase() || '';
+      if (cell.includes(normalizedDate)) return i;
+    }
+  }
+
   return -1;
 }
 
 /**
- * Extract port/island code from text (e.g., BTR, AND, KLP, KVT, AGT, AMN, KDM, KLT, CHT, MCY).
+ * Extract all port/island codes from text (e.g., BTR, AND, KLP, KVT, AGT, AMN, KDM, KLT, CHT, MCY, KOCHI, COK).
  */
-function extractPortCode(text: string): string | null {
-  const portCodes = ['AND', 'KLP', 'KVT', 'AGT', 'AMN', 'KDM', 'KLT', 'CHT', 'BTR', 'MCY', 'KOCHI', 'Kochi'];
+function extractAllPortCodes(text: string): string[] {
+  const portCodes = ['AND', 'KLP', 'KVT', 'AGT', 'AMN', 'KDM', 'KLT', 'CHT', 'BTR', 'MCY', 'KOCHI', 'COCHIN', 'COK', 'LSG'];
   const upperText = text.toUpperCase();
+  const found: string[] = [];
 
   for (const code of portCodes) {
     if (new RegExp(`\\b${code}\\b`, 'i').test(upperText)) {
-      return code;
+      found.push(code === 'COCHIN' || code === 'COK' || code === 'LSG' ? 'KOCHI' : code);
     }
   }
 
-  // Also check for island names mentioned in aliases
   const lowerText = text.toLowerCase();
   const islandNames: Record<string, string> = {
     'bitra': 'BTR',
@@ -375,15 +424,22 @@ function extractPortCode(text: string): string | null {
     'kiltan': 'KLT',
     'chetlat': 'CHT',
     'minicoy': 'MCY',
+    'cochin': 'KOCHI',
+    'kochi': 'KOCHI',
   };
 
   for (const [name, code] of Object.entries(islandNames)) {
     if (new RegExp(`\\b${name}\\b`, 'i').test(lowerText)) {
-      return code;
+      found.push(code);
     }
   }
 
-  return null;
+  return Array.from(new Set(found));
+}
+
+function extractPortCode(text: string): string | null {
+  const all = extractAllPortCodes(text);
+  return all.length > 0 ? all[0] : null;
 }
 
 /**

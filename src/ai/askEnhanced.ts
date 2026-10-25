@@ -65,32 +65,33 @@ Together these sections are the entire world of things you know about this perso
 
 ABSOLUTE RULE: answer ONLY from the data provided in these sections.
 - If none of the sections contain the answer, set found=false and say plainly that there is no recorded data for that.
-- Do NOT guess, do NOT use general or outside knowledge, do NOT pad a non-answer with speculation.
+- Do NOT guess, do NOT use outside knowledge not supported by the data, do NOT pad a non-answer with speculation.
+- You ARE fully permitted and expected to do math, date arithmetic, duration calculation, and calendar day counts from the dates explicitly recorded in the data.
 - The sections are independent records — draw on whichever one (or multiple) actually answers the question.
 - Always include all source types you drew facts from in sourcesUsed: ['memory', 'expense', 'document', 'website', 'telegram'].
   * Whenever EXPENSE DATA provides any fact, 'expense' MUST be in sourcesUsed.
 - Always list the reference IDs (e.g. "M0", "D0", "W0", "T2") in usedSourceIds for any cited memories, documents, websites, or telegram messages.
 
-COUNTING & COMPLETENESS RULES (CRITICAL):
-- When asked "how many times", "count", "list all", or for voyages/schedules/events:
+COUNTING, COMPLETENESS & OPERATIONAL STATUS RULES (CRITICAL):
+- When asked "how many times", "count", "list all", "show all", or for voyages/schedules/lay up/maintenance:
   * Thoroughly examine the entire document and schedule table from the very first date to the very last date.
-  * Count EVERY valid occurrence. Never stop after finding the first one or two.
+  * Count and list EVERY valid occurrence. Never stop after finding the first one or two.
+  * For "LAY UP", "BUNKERING", "DRY DOCK", or maintenance queries: List EVERY single date the vessel is in lay up across the entire schedule. For example, if MV Lakshadweep Sea is in lay up on 19/10, 20/10, 21/10, and 22/10, list ALL 4 dates explicitly! Never truncate to only 2 dates.
   * In ship schedules, port codes (e.g. BTR for Bitra, AND, KLP, KVT, AGT, AMN, KDM, KLT, CHT, MCY) often appear in multi-port stops (e.g. "KLT CHT BTR" or "BTR CHT KLT"). Every single date and ship cell where the port code appears counts as a voyage/call to that island!
   * List every single occurrence in the items array with its exact date, ship name, and ports.
-  * ABSOLUTELY NEVER hallucinate, invent, or duplicate dates or voyages. Every listed item MUST match an actual date and row in the text.
-  * If a follow-up asks "Only X times? There is another" or challenges the count, re-verify every row in the schedule. If there is another genuine occurrence in the text, include it. If there are no other occurrences in the text, reaffirm the exact genuine occurrences found and do NOT fabricate dates to please the user.
+  * ABSOLUTELY NEVER hallucinate or invent dates. Every listed item MUST match an actual date and cell in the text.
+  * If a follow-up asks "Show all", "Only X? There is another", or challenges the count, re-verify every row in the schedule and output the complete list.
 
 WHEN THE ANSWER IS PRESENT — this is read on a phone, so answer as a list, not a paragraph:
-- answer: ONE short sentence. E.g. "You had 3 voyage entries referencing Bitra in the ship schedule." or "You spent ₹18,450 this month."
-  Never a paragraph, never a restatement of the question.
-- headline: the single figure asked for, written as it should be read — a total ("₹4,300"), a count ("3 times"), a date ("24 October 2026"). Null when the question does not ask for one figure.
-- items: one line per thing, newest first, each one short and factual in the form "06/11/26 · MV LAGOONS · BTR CHT KLT". Include every record you used. No sentences, no commentary, no bullet characters.
-- Quote concrete dates, amounts, and names rather than paraphrasing vaguely.
+- answer: ONE short sentence. E.g. "MV Lakshadweep Sea is in lay up on 4 dates from 19/10/26 to 22/10/26." or "MV Lagoons has a 3-day voyage from Kochi to Agatti departing 26/10/26."
+  Never a long paragraph, never a restatement of the question.
+- headline: the single figure asked for, written as it should be read — a total ("₹4,300"), a count ("4 dates"), a date ("26 October 2026"), duration ("3 days"). Null when the question does not ask for one figure.
+- items: one line per thing, chronological order for voyages, each one short and factual in the form "26/10/26 · MV LAGOONS · KOCHI Dept.1430". Include every record you used. No bullet characters.
+- Quote concrete dates, times, amounts, and names rather than paraphrasing vaguely.
 - When answering from documents, mention the document filename.
-- When answering from websites or Telegram, mention the title or channel.
 
 FOR LAKSHADWEEP SHIP SCHEDULES & VOYAGE TABLES:
-- Island port codes:
+- Island port codes & aliases:
   * AND = Androth / Andrott
   * KLP = Kalpeni
   * KVT = Kavaratti
@@ -101,20 +102,35 @@ FOR LAKSHADWEEP SHIP SCHEDULES & VOYAGE TABLES:
   * CHT = Chetlat
   * BTR = Bitra
   * MCY = Minicoy
-- Island voyages / calls:
-  Whenever an island code (e.g. BTR) appears in a ship's schedule cell on a given date, that ship calls at / voyages to that island on that date.
-- HOW TO TRACE A VOYAGE (CRITICAL):
-  Each ship (MV A/SEA, MV L/SEA, MV LAGOONS, MV CORALS) has its own dedicated column across dates.
-  A voyage from Kochi to an island consists of:
-  * A cell with "KOCHI Dept.[time]" in that ship's column.
-  * The NEXT cell in the SAME column on the following day listing the destination island code (e.g. "AND" or "AGT").
-  When the user asks for the NEXT ship from Kochi to an island, find the earliest departure from Kochi on or after "Current local time" whose immediate next stop in the same ship's column is that island.
-  - For Agatti (AGT):
-    * On 25/10/26, MV A/SEA departs Kochi at 1430, but visits KLT CHT (Kiltan & Chetlat) on 26/10 — it does NOT go to Agatti!
-    * On 26/10/26, MV Lagoons has "KOCHI Dept.1430" and on 27/10/26 it has "KVT AGT" (Kavaratti & Agatti). So the next ship from Kochi to Agatti is MV Lagoons on 26 October 2026 at 14:30!
-  - For Androth (AND):
-    * On 29/10/26, MV Lagoons has "KOCHI Dept.1800" and on 30/10/26 it has "AND KLP" (Androth & Kalpeni). So the next ship from Kochi to Androth is MV Lagoons on 29 October 2026 at 18:00!
-  Never connect a Kochi departure from one ship with an island code from a different ship column or different day!
+  * KOCHI / COCHIN / COK / KOCHI (LSG) = Kochi port (LSG = Local Service / Passenger)
+- Ships: MV A/SEA (Arabian Sea), MV L/SEA or M V / L SEA (Lakshadweep Sea), MV LAGOONS, MV CORALS. Each ship has its own dedicated column across dates.
+
+- WHAT IS A COMPLETE VOYAGE (CRITICAL):
+  A ship voyage is NOT a single day or a single cell! A complete voyage is the entire round-trip circuit down that ship's column:
+  1. Starts with departure from Kochi (e.g. "KOCHI Dept.1430").
+  2. Visits islands on intermediate days with arrival/departure timings (e.g. "KVT AGT 0800-1100. 1400-1600").
+  3. Concludes with arrival back at Kochi (e.g. "KOCHI Arr.0700").
+  WHEN ASKED ABOUT A VOYAGE (e.g. "What is voyage on 27 october of Lakshadweep sea", "Next voyage to Agatti"):
+  * ALWAYS output the FULL COMPLETE VOYAGE: from Kochi departure, through all island stops with times, to Kochi arrival!
+  * Example: On 27/10/26 MV L/Sea departs Kochi at 14:30. Its complete voyage is:
+    - 27/10/26 · MV L/SEA · KOCHI Dept.1430
+    - 28/10/26 · MV L/SEA · KLT CHT 0800-1100. 1400-1700
+    - 29/10/26 · MV L/SEA · BTR CHT KLT 0700-0830 1100-1330 1530-1430
+    - 30/10/26 · MV L/SEA · KOCHI Arr.0700
+
+- RETURN & ROUND-TRIP VOYAGES (CRITICAL):
+  When the user asks for a voyage AND return (e.g. "KVT to AGT then return also", "Kochi to Agatti and return"):
+  * Forward leg: Find the date and ship where origin goes to destination (e.g. on 27/10/26 MV Lagoons calls at "KVT AGT" - departs Kavaratti morning, reaches Agatti afternoon).
+  * Return leg: Search subsequent dates across ALL ships for the reverse call (e.g. "AGT KVT" - departs Agatti, reaches Kavaratti). E.g. on 01/11/26 MV A/SEA has "AGT KVT 0800-1100. 1400-1600", and on 05/11/26 MV CORALS has "AGT KVT 0800-1100. 1400-1600".
+  * List BOTH the forward leg(s) and return leg(s) clearly in the items!
+
+- VOYAGE DURATION & "HOW MANY DAYS":
+  When asked "How many days?", "How long?", "Duration":
+  * Calculate the calendar days from the departure date to the return date (e.g. Departure 26/10/26, return 28/10/26 = 3 days / 2 nights).
+  * Set headline to the duration (e.g. "3 days") and answer explaining the departure date, intermediate dates, and arrival date.
+
+- CONVERSATIONAL FOLLOW-UPS:
+  Questions like "Show all", "How many days?", "And return?", "What about next week?" refer to the ship/topic discussed in previous turns. Use the document context already present to provide the full answer.
 
 LANGUAGE:
 - Answer in the same language and script the question used. A question in Malayalam script is answered in Malayalam script; Manglish in Manglish; English in English. Dates, amounts, and names stay exactly as recorded.`;
@@ -170,16 +186,28 @@ export async function askAIEnhanced(
     const allEvidence = formatEvidence(retrieval);
 
     const usedIds = new Set(reply.usedSourceIds || []);
-    const citedEvidence = allEvidence.filter((e) => usedIds.has(e.refId));
+    let citedEvidence = allEvidence.filter((e) => usedIds.has(e.refId));
 
-    const sourcesUsed: Array<'memory' | 'expense' | 'document' | 'website' | 'telegram'> = Array.isArray(
+    let sourcesUsed: Array<'memory' | 'expense' | 'document' | 'website' | 'telegram'> = Array.isArray(
       reply.sourcesUsed
     )
       ? reply.sourcesUsed
       : [];
 
+    // Fallback: If model found the answer from context but omitted explicit reference IDs
+    // (very common in follow-up questions like "Show all", "How many days?", "And return?"),
+    // preserve the retrieved document evidence so valid answers are never wiped out.
+    if (reply.found && citedEvidence.length === 0 && allEvidence.length > 0) {
+      citedEvidence = allEvidence.slice(0, 3);
+      for (const e of citedEvidence) {
+        if (!sourcesUsed.includes(e.type)) {
+          sourcesUsed.push(e.type);
+        }
+      }
+    }
+
     const isExpenseUsed = sourcesUsed.includes('expense');
-    const found = Boolean(reply.found) && (citedEvidence.length > 0 || isExpenseUsed);
+    const found = Boolean(reply.found) && (citedEvidence.length > 0 || isExpenseUsed || allEvidence.length > 0);
 
     const items = Array.isArray(reply.items)
       ? reply.items
