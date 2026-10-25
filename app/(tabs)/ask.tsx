@@ -94,7 +94,11 @@ export default function AskScreen() {
   const [question, setQuestion] = useState('');
   const [asking, setAsking] = useState('');
   /** The conversation, newest first — a follow-up is answered knowing these. */
-  const [thread, setThread] = useState<{ question: string; result: AskResult | EnhancedAskResult }[]>([]);
+  const [thread, setThread] = useState<{
+    question: string;
+    result: AskResult | EnhancedAskResult;
+    durationMs?: number;
+  }[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /** A change worked out from an instruction, waiting to be confirmed. */
@@ -296,10 +300,12 @@ export default function AskScreen() {
       const trip = tripSpendQuestion(q, all);
       const tripAnswer = trip ? await answerTripSpend(trip) : null;
 
+      const startTime = Date.now();
       const result =
         tripAnswer ?? (await askAIEnhanced(q, new Date().toISOString(), all, history, expenseContext));
+      const durationMs = Date.now() - startTime;
       scrollToNewest.current = true;
-      setThread((current) => [{ question: q, result }, ...current]);
+      setThread((current) => [{ question: q, result, durationMs }, ...current]);
       await saveQuestion(q);
       await loadRecent();
     } catch (err) {
@@ -471,7 +477,7 @@ export default function AskScreen() {
             </View>
           ) : null}
 
-          {conversation.map(({ question: asked, result }, index) => {
+          {conversation.map(({ question: asked, result, durationMs }, index) => {
             const newest = index === conversation.length - 1;
             return (
               <View
@@ -496,20 +502,44 @@ export default function AskScreen() {
                       dates and amounts almost unreadable. */}
                   {result.items.length > 0 ? (
                     <View style={styles.items}>
-                      {result.items.map((item, i) => (
-                        <View key={`${item}-${i}`} style={styles.item}>
-                          <Text style={[type.gutter, styles.itemMark]}>{i + 1}</Text>
-                          <Text style={[type.body, styles.itemText]}>{item}</Text>
-                        </View>
-                      ))}
+                      {result.items.map((item, i) => {
+                        const status = 'itemStatuses' in result && result.itemStatuses ? result.itemStatuses[i] : undefined;
+                        const isUnverified = status && !status.verified;
+                        return (
+                          <View key={`${item}-${i}`} style={styles.item}>
+                            <Text style={[type.gutter, styles.itemMark]}>{i + 1}</Text>
+                            <View style={styles.itemContentCol}>
+                              <Text style={[type.body, styles.itemText]}>{item}</Text>
+                              {isUnverified ? (
+                                <View style={styles.unverifiedBadge}>
+                                  <Ionicons name="warning-outline" size={11} color={colors.alert} />
+                                  <Text style={styles.unverifiedBadgeText}>
+                                    Unverified in source{status.reason ? ` · ${status.reason}` : ''}
+                                  </Text>
+                                </View>
+                              ) : null}
+                            </View>
+                          </View>
+                        );
+                      })}
                     </View>
                   ) : null}
 
                   {result.found ? (
                     <>
-                      <Text style={[type.fine, { marginTop: 10, color: colors.mist }]}>
-                        {sourceLabel(result)}
-                      </Text>
+                      <View style={styles.sourceRow}>
+                        <Text style={[type.fine, { color: colors.mist }]}>
+                          {sourceLabel(result)}
+                        </Text>
+                        {durationMs !== undefined ? (
+                          <View style={styles.timeBadge}>
+                            <Ionicons name="flash-outline" size={10} color={colors.moss} />
+                            <Text style={styles.timeBadgeText}>
+                              {durationMs < 1000 ? `${durationMs}ms` : `${(durationMs / 1000).toFixed(1)}s`}
+                            </Text>
+                          </View>
+                        ) : null}
+                      </View>
                       {result.evidence.length > 0 ? (
                         <View style={styles.evidence}>
                           <View style={styles.evidenceInner}>
@@ -740,15 +770,19 @@ export default function AskScreen() {
               placeholder={
                 listening
                   ? 'Listening…'
-                  : thread.length > 0
-                    ? 'Follow on, or ask something new'
-                    : 'Ask anything…'
+                  : busy
+                    ? 'Type next message…'
+                    : thread.length > 0
+                      ? 'Follow on, or ask something new'
+                      : 'Ask anything…'
               }
               placeholderTextColor={colors.mist}
               style={styles.input}
-              editable={voice.stage === 'idle' && !busy}
+              editable={voice.stage === 'idle'}
               returnKeyType="search"
-              onSubmitEditing={() => void ask(question)}
+              onSubmitEditing={() => {
+                if (canSend && !busy) void ask(question);
+              }}
               accessibilityLabel="Your question"
               multiline
             />
@@ -777,15 +811,17 @@ export default function AskScreen() {
               )}
             </Pressable>
             <Pressable
-              onPress={() => void ask(question)}
-              disabled={!canSend}
+              onPress={() => {
+                if (canSend && !busy) void ask(question);
+              }}
+              disabled={!canSend || busy}
               hitSlop={6}
               accessibilityRole="button"
               accessibilityLabel="Ask"
               style={({ pressed }) => [
                 styles.round,
                 styles.send,
-                !canSend && !busy && styles.sendOff,
+                (!canSend || busy) && styles.sendOff,
                 pressed && styles.pressed,
               ]}
             >
@@ -870,10 +906,51 @@ function makeStyles(colors: Colors) {
       color: colors.ink,
     },
     answerSmall: { fontFamily: FONTS.sans, fontSize: 15, lineHeight: 22, color: colors.ink },
-    items: { gap: 2 },
-    item: { flexDirection: 'row', alignItems: 'baseline', gap: 10, paddingVertical: 4 },
-    itemMark: { width: 18, color: colors.mist },
-    itemText: { flex: 1, color: colors.ink },
+    items: { gap: 4 },
+    item: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingVertical: 4 },
+    itemMark: { width: 18, color: colors.mist, marginTop: 2 },
+    itemContentCol: { flex: 1, gap: 2 },
+    itemText: { color: colors.ink },
+    unverifiedBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      marginTop: 3,
+      paddingHorizontal: 7,
+      paddingVertical: 2,
+      borderRadius: RADIUS.input,
+      backgroundColor: colors.alertSoft,
+      borderWidth: 1,
+      borderColor: colors.alert,
+      alignSelf: 'flex-start',
+    },
+    unverifiedBadgeText: {
+      fontFamily: FONTS.sansMedium,
+      fontSize: 11,
+      color: colors.alert,
+    },
+    sourceRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginTop: 10,
+    },
+    timeBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 3,
+      paddingHorizontal: 7,
+      paddingVertical: 2,
+      borderRadius: RADIUS.pill,
+      backgroundColor: colors.well,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.rule,
+    },
+    timeBadgeText: {
+      fontFamily: FONTS.mono,
+      fontSize: 11,
+      color: colors.mist,
+    },
     evidence: {
       marginTop: 4,
       marginBottom: -4,

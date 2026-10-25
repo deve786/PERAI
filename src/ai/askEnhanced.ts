@@ -1,10 +1,8 @@
-/**
- * Enhanced AI Ask with multi-source support (memories + expenses + documents + websites + telegram).
- */
 import type { Memory } from '../types';
 import { localTimestamp } from '../format';
 import { getEffectiveAskModel, requestJson } from './client';
 import { retrieveRelevantContent, buildUnifiedContext, formatEvidence, type EvidenceItem } from '@/sources/multiSourceRetrieval';
+import { verifyItemGrounding, type GroundingCheckResult } from '@/sources/chunkLogic';
 import { conversationQuery, HISTORY_TURNS, type AskTurn } from './ask';
 
 export interface EnhancedAskResult {
@@ -12,6 +10,8 @@ export interface EnhancedAskResult {
   answer: string;
   /** The things the answer is made of, one per line. */
   items: string[];
+  /** Verification status for each item against the source context to flag hallucinations. */
+  itemStatuses?: GroundingCheckResult[];
   /** A figure the question asked for, shown large above the list. */
   headline: string | null;
   /** All evidence items across all sources. */
@@ -193,11 +193,14 @@ export async function askAIEnhanced(
         ? reply.headline.trim()
         : null;
 
+    const itemStatuses = found ? items.map((item: string) => verifyItemGrounding(item, context)) : [];
+
     return {
       answer: found
         ? (reply.answer || 'Found relevant records.')
         : (reply.answer || 'Nothing in your record matches this.'),
       items: found ? items : [],
+      itemStatuses: found ? itemStatuses : [],
       headline: found ? headline : null,
       evidence: citedEvidence,
       sourcesUsed: found ? sourcesUsed : [],

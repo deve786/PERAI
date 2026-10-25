@@ -64,7 +64,7 @@ import { stockGain } from '../src/expense/accountsLogic';
 import { toSentence } from '../src/format';
 import { refundReminderTimes } from '../src/expense/refundSchedule';
 import { monthsWithData, OVERALL, periodLabel, periodRange, previousMonth } from '../src/expense/period';
-import { stitchChunkContents, groupAndStitchDocumentChunks } from '../src/sources/chunkLogic';
+import { stitchChunkContents, groupAndStitchDocumentChunks, verifyItemGrounding } from '../src/sources/chunkLogic';
 import type { DocumentChunk } from '../src/sources/types';
 import { needsTranslation, normalizeMoney, normalizeQuery } from '../src/manglish';
 import {
@@ -1847,6 +1847,23 @@ section('document chunk stitching and grouping');
   check('grouped entry has refId D0', grouped[0].refId === 'D0');
   check('pages are aggregated', grouped[0].pages.length === 2 && grouped[0].pages[0] === 1 && grouped[0].pages[1] === 2);
   check('stitched content has all 3 voyages', (grouped[0].content.match(/BTR/g) || []).length === 3);
+}
+
+section('hallucination detection & grounding verification');
+{
+  const scheduleTable = `
+| 23/10/26 | FRI | KVT AND KLP | KOCHI Dept.1430 | KLT CHT BTR 0800-1100 | KOCHI Dept.1800 |
+| 24/10/26 | SAT | KOCHI Arr.0700 | MCY 0800-1300 | AMN KDM KLP 0800-1100 | AND KLP 0800-1100 |
+| 29/10/26 | THU | MCY 0800-1300 | BTR CHT KLT 0800-1100 | KOCHI Dept.1800 | KOCHI Dept.1430 |
+| 06/11/26 | FRI | KOCHI Arr.0700 | KOCHI Arr.0700 | BTR CHT KLT 0800-1100 | KOCHI Arr.0700 |
+`;
+
+  check('verifies authentic entry on 23/10/26', verifyItemGrounding('23/10/26 · MV LAGOONS · KLT CHT BTR', scheduleTable).verified === true);
+  check('verifies authentic entry on 29/10/26', verifyItemGrounding('29/10/26 · MV L/SEA · BTR CHT KLT', scheduleTable).verified === true);
+  check('verifies authentic entry on 06/11/26', verifyItemGrounding('06/11/26 · MV LAGOONS · BTR CHT KLT', scheduleTable).verified === true);
+  check('detects hallucinated entry on 24/10/26', verifyItemGrounding('24/10/26 · MV LAGOONS · KLT CHT BTR', scheduleTable).verified === false);
+  check('detects non-existent date', verifyItemGrounding('31/10/26 · MV LAGOONS · BTR CHT KLT', scheduleTable).verified === false);
+  check('verifies correct details for 24/10/26', verifyItemGrounding('24/10/26 · MV LAGOONS · AMN KDM KLP', scheduleTable).verified === true);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

@@ -88,3 +88,86 @@ export function groupAndStitchDocumentChunks(chunks: DocumentChunk[]): GroupedDo
   }
   return result;
 }
+
+export interface GroundingCheckResult {
+  verified: boolean;
+  reason?: string;
+}
+
+/**
+ * Checks whether an item returned by the AI is grounded in the retrieved context.
+ * Detects hallucinations such as fabricated dates, non-existent port stops, or invented figures.
+ */
+export function verifyItemGrounding(itemText: string, contextText: string): GroundingCheckResult {
+  if (!contextText || !itemText) return { verified: true };
+
+  const normContext = contextText.toLowerCase();
+  const normItem = itemText.toLowerCase();
+
+  // Extract dates (e.g. 24/10/26, 24/10, 24 Oct, 2026-10-24)
+  const datePatterns = [
+    /\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/g,
+    /\b\d{1,2}(?:st|nd|rd|th)?\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*(?:\s+\d{2,4})?\b/g,
+    /\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+\d{1,2}(?:,\s*\d{2,4})?\b/g,
+    /\b\d{4}-\d{2}-\d{2}\b/g,
+  ];
+
+  const dates: string[] = [];
+  for (const pat of datePatterns) {
+    const matches = normItem.match(pat);
+    if (matches) dates.push(...matches);
+  }
+
+  if (dates.length > 0) {
+    for (const d of dates) {
+      const dIndex = normContext.indexOf(d);
+      if (dIndex === -1) {
+        return { verified: false, reason: `Date ${d} not found in source` };
+      }
+
+      // Find the specific line or bounded snippet containing this date
+      const lineStart = normContext.lastIndexOf('\n', dIndex);
+      const nextLine = normContext.indexOf('\n', dIndex);
+      const rowSnippet = normContext.slice(
+        lineStart === -1 ? 0 : lineStart,
+        nextLine === -1 ? normContext.length : nextLine
+      );
+
+      // Extract specific island/route/subject codes from the item
+      const dateParts = d.split(/\D+/).filter(Boolean);
+      const itemTokens = normItem
+        .split(/[\s·,|/–—]+/)
+        .map(t => t.trim())
+        .filter(t => t.length >= 2 && !['mv', 'the', 'and', 'for', 'with', 'arr', 'dept', 'at', 'in', 'sea', 'corals', 'lagoons', 'arabian', 'lakshadweep'].includes(t))
+        .filter(t => !dates.includes(t) && !dateParts.includes(t));
+
+      if (itemTokens.length > 0) {
+        // Words must match as distinct whole tokens or port codes (e.g. \bbtr\b)
+        const matchingTokens = itemTokens.filter(tok => {
+          const reg = new RegExp(`\\b${tok}\\b`, 'i');
+          return reg.test(rowSnippet);
+        });
+        if (matchingTokens.length === 0) {
+          return { verified: false, reason: `Details not found on date ${d}` };
+        }
+      }
+    }
+    return { verified: true };
+  }
+
+  // If no date, verify general key token presence in context
+  const allWords = normItem
+    .split(/[\s·,|-]+/)
+    .map(w => w.trim())
+    .filter(w => w.length >= 3 && !['the', 'and', 'for', 'with'].includes(w));
+
+  if (allWords.length > 0) {
+    const matched = allWords.filter(w => normContext.includes(w)).length;
+    if (matched / allWords.length < 0.4) {
+      return { verified: false, reason: 'Key terms not found in source' };
+    }
+  }
+
+  return { verified: true };
+}
+
