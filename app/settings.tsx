@@ -24,6 +24,7 @@ import {
   setSelectedAiModel,
   getGroqApiKey,
   setGroqApiKey,
+  getTelegramAutoSyncInterval,
   type TitleLanguage,
   type VoiceLanguage,
   type AiModelChoice,
@@ -71,10 +72,12 @@ export default function Settings() {
   const [groqKey, setGroqKey] = useState('');
   const [editingGroqKey, setEditingGroqKey] = useState(false);
   const [groqKeyText, setGroqKeyText] = useState('');
+  const [telegramInterval, setTelegramInterval] = useState(5);
 
   useEffect(() => {
     void getVoiceLanguage().then(setVoice);
     void getTitleLanguage().then(setTitles);
+    void getTelegramAutoSyncInterval().then(setTelegramInterval);
     void getSelectedAiModel().then((m) => {
       setSelectedAskModel(m);
       setSelectedModelInMemory(m);
@@ -317,6 +320,18 @@ export default function Settings() {
               icon="download-outline"
               label="Export expenses (CSV)"
               onPress={() => void exportExpenses()}
+            />
+            <ListRow
+              icon="documents-outline"
+              label="Data sources"
+              value="Docs · Sites · Telegram"
+              onPress={() => router.push('/data-sources' as any)}
+            />
+            <ListRow
+              icon="paper-plane-outline"
+              label="Telegram auto-update"
+              value={telegramInterval > 0 ? `Every ${telegramInterval}m (incremental)` : 'Off'}
+              onPress={() => router.push('/data-sources' as any)}
               last
             />
           </ListCard>

@@ -235,12 +235,30 @@ export interface PublicTelegramResult {
   formattedSummary: string;
 }
 
+export interface FetchPublicTelegramOptions {
+  lastMessageId?: number;
+  daysToScrape?: number;
+  maxPages?: number;
+  maxPhotosToOcr?: number;
+}
+
 export async function fetchPublicTelegramChannel(
   username: string,
-  daysToScrape = 21,
-  maxPages = 12,
-  maxPhotosToOcr = 2
+  options: FetchPublicTelegramOptions | number = 21,
+  legacyMaxPages = 12,
+  legacyMaxPhotosToOcr = 2
 ): Promise<PublicTelegramResult> {
+  const opts: FetchPublicTelegramOptions = typeof options === 'number'
+    ? { daysToScrape: options, maxPages: legacyMaxPages, maxPhotosToOcr: legacyMaxPhotosToOcr }
+    : options;
+
+  const {
+    lastMessageId,
+    daysToScrape = lastMessageId ? 0 : 21,
+    maxPages = lastMessageId ? 3 : 12,
+    maxPhotosToOcr = 2,
+  } = opts;
+
   const clean = username.replace(/^@/, '').replace(/^(?:https?:\/\/)?t\.me\/(?:s\/)?/, '').replace(/\/$/, '').trim();
   let nextUrl: string | null = `https://t.me/s/${clean}`;
   const cutoffTime = daysToScrape > 0 ? Date.now() - daysToScrape * 24 * 60 * 60 * 1000 : 0;
@@ -278,6 +296,7 @@ export async function fetchPublicTelegramChannel(
       const titleMatch = html.match(/<meta property="og:title" content="([^"]*)"/i) || html.match(/<title>([^<]*)<\/title>/i);
       if (titleMatch && titleMatch[1]) channelTitle = titleMatch[1].trim();
 
+      let foundKnownOnThisPage = false;
       const blocks = html.split('<div class="tgme_widget_message_wrap');
       for (let i = 1; i < blocks.length; i++) {
         const b = blocks[i];
@@ -291,6 +310,13 @@ export async function fetchPublicTelegramChannel(
 
         if (cutoffTime > 0 && msgDateMs > 0 && msgDateMs < cutoffTime) {
           reachedCutoff = true;
+          continue;
+        }
+
+        // Incremental check: if this message is already known (messageId <= lastMessageId),
+        // we skip it and note that we have reached the known historical messages.
+        if (lastMessageId && msgNum > 0 && msgNum <= lastMessageId) {
+          foundKnownOnThisPage = true;
           continue;
         }
 
@@ -347,6 +373,11 @@ export async function fetchPublicTelegramChannel(
         }
       }
 
+      // If we hit already-synced messages on this page, do not paginate backwards
+      if (lastMessageId && foundKnownOnThisPage) {
+        reachedCutoff = true;
+      }
+
       if (reachedCutoff) break;
 
       const prevMatch = html.match(/href="([^"]*\?before=[^"]*)"/i);
@@ -360,7 +391,17 @@ export async function fetchPublicTelegramChannel(
     }
   }
 
-  const unique = [];
+  const unique: Array<{
+    postPath: string;
+    messageId: number;
+    date: string;
+    text: string;
+    mediaType: 'photo' | 'video' | 'document' | 'none';
+    mediaPath: string | null;
+    photos: string[];
+    docInfo: string | null;
+    ocrText?: string | null;
+  }> = [];
   const seen = new Set<string | number>();
   for (const m of rawMessages) {
     const key = m.messageId || m.postPath || (m.date + m.text);
@@ -437,26 +478,72 @@ export async function fetchPublicTelegramChannel(
 }
 
 export async function savePublicTelegramChannel(
-  username: string
+  username: string,
+  lastMessageId?: number
 ): Promise<{ channel: TelegramChannel; messagesCount: number; summary: string }> {
-  const result = await fetchPublicTelegramChannel(username);
-  if (result.messages.length === 0) {
-    throw new Error(`Could not find any messages for channel @${username.replace(/^@/, '')}. Check if the channel is public.`);
+  const clean = username.replace(/^@/, '').replace(/^(?:https?:\/\/)?t\.me\/(?:s\/)?/, '').replace(/\/$/, '').trim();
+  const db = await getSourcesDb();
+
+  // If lastMessageId not explicitly passed, inspect existing channel in DB
+  let effectiveLastId = lastMessageId;
+  let existingChannelId: string | null = null;
+  if (!effectiveLastId) {
+    const existing = await db.getFirstAsync<{ id: string; last_message_id: number | null }>(
+      'SELECT id, last_message_id FROM telegram_channels WHERE channel_username = ? OR channel_username = ?',
+      [`@${clean}`, clean]
+    );
+    if (existing) {
+      existingChannelId = existing.id;
+      if (existing.last_message_id) {
+        effectiveLastId = existing.last_message_id;
+      }
+    }
   }
 
-  const db = await getSourcesDb();
+  const result = await fetchPublicTelegramChannel(username, { lastMessageId: effectiveLastId });
   const now = new Date().toISOString();
-  const channelId = uuid();
-  const lastMessageId = result.messages.length > 0 ? Math.max(...result.messages.map(m => m.messageId)) : null;
+
+  // If already up to date (no new messages found)
+  if (result.messages.length === 0 && effectiveLastId) {
+    await db.runAsync(
+      `UPDATE telegram_channels
+       SET last_synced_at = ?
+       WHERE channel_username = ? OR channel_username = ?`,
+      [now, `@${clean}`, clean]
+    );
+
+    return {
+      channel: {
+        id: existingChannelId || uuid(),
+        channelUsername: `@${clean}`,
+        channelName: result.channelName,
+        lastMessageId: effectiveLastId,
+        lastSyncedAt: now,
+        autoSync: true,
+        createdAt: now,
+        messagesSaved: 0,
+      },
+      messagesCount: 0,
+      summary: `Channel @${clean} is already up to date. (0 new messages)`,
+    };
+  }
+
+  if (result.messages.length === 0) {
+    throw new Error(`Could not find any messages for channel @${clean}. Check if the channel is public.`);
+  }
+
+  const channelId = existingChannelId || uuid();
+  const newMaxId = Math.max(...result.messages.map(m => m.messageId));
+  const finalLastMessageId = effectiveLastId ? Math.max(effectiveLastId, newMaxId) : newMaxId;
 
   await db.runAsync(
     `INSERT INTO telegram_channels (id, channel_username, channel_name, last_message_id, last_synced_at, auto_sync, created_at)
      VALUES (?, ?, ?, ?, ?, 1, ?)
      ON CONFLICT(channel_username) DO UPDATE SET
        channel_name = excluded.channel_name,
-       last_message_id = COALESCE(excluded.last_message_id, telegram_channels.last_message_id),
+       last_message_id = excluded.last_message_id,
        last_synced_at = excluded.last_synced_at`,
-    [channelId, result.channelUsername, result.channelName, lastMessageId, now, now]
+    [channelId, result.channelUsername, result.channelName, finalLastMessageId, now, now]
   );
 
   await db.withTransactionAsync(async () => {
@@ -482,7 +569,7 @@ export async function savePublicTelegramChannel(
     id: channelId,
     channelUsername: result.channelUsername,
     channelName: result.channelName,
-    lastMessageId,
+    lastMessageId: finalLastMessageId,
     lastSyncedAt: now,
     autoSync: true,
     createdAt: now,
@@ -603,7 +690,7 @@ export async function syncTelegramChannel(
   if (!channel) throw new Error('Channel not found');
 
   if (!botToken || !botToken.trim() || !botToken.includes(':')) {
-    const res = await savePublicTelegramChannel(channel.channel_username);
+    const res = await savePublicTelegramChannel(channel.channel_username, channel.last_message_id ?? undefined);
     return res.messagesCount;
   }
 
@@ -615,8 +702,12 @@ export async function syncTelegramChannel(
     );
 
     if (messages.length === 0) {
-      const res = await savePublicTelegramChannel(channel.channel_username);
-      return res.messagesCount;
+      // Up to date
+      await db.runAsync(
+        'UPDATE telegram_channels SET last_synced_at = ? WHERE id = ?',
+        [new Date().toISOString(), channelId]
+      );
+      return 0;
     }
 
     for (const msg of messages) {
@@ -637,9 +728,40 @@ export async function syncTelegramChannel(
 
     return messages.length;
   } catch {
-    const res = await savePublicTelegramChannel(channel.channel_username);
+    const res = await savePublicTelegramChannel(channel.channel_username, channel.last_message_id ?? undefined);
     return res.messagesCount;
   }
+}
+
+/**
+ * Incrementally syncs all active Telegram channels (auto_sync = 1).
+ * Only fetches new messages since the last synced message ID, saving bandwidth and battery.
+ */
+export async function syncAllActiveTelegramChannels(
+  botToken?: string
+): Promise<{ syncedChannels: number; newMessagesTotal: number }> {
+  const db = await getSourcesDb();
+  const channels = await db.getAllAsync<{
+    id: string;
+    channel_username: string;
+    last_message_id: number | null;
+    auto_sync: number;
+  }>('SELECT id, channel_username, last_message_id, auto_sync FROM telegram_channels WHERE auto_sync = 1');
+
+  let newMessagesTotal = 0;
+  for (const ch of channels) {
+    try {
+      const count = await syncTelegramChannel(botToken || '', ch.id);
+      newMessagesTotal += count;
+    } catch (e) {
+      console.warn(`[telegram-auto-sync] Failed to sync ${ch.channel_username}:`, e);
+    }
+  }
+
+  return {
+    syncedChannels: channels.length,
+    newMessagesTotal,
+  };
 }
 
 export async function deleteTelegramChannel(id: string): Promise<void> {

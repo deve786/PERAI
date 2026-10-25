@@ -74,6 +74,12 @@ import {
   extractRelevantWebsiteSnippets,
   type ScrapedPage,
 } from '../src/sources/websiteLogic';
+import {
+  filterIncrementalTelegramPosts,
+  isAutoSyncDue,
+  formatAutoSyncInterval,
+  type RawTelegramPost,
+} from '../src/sources/telegramLogic';
 import type { DocumentChunk } from '../src/sources/types';
 import { needsTranslation, normalizeMoney, normalizeQuery } from '../src/manglish';
 import {
@@ -1917,6 +1923,46 @@ section('website multi-page crawling & content aggregation');
 
   const snippet = extractRelevantWebsiteSnippets(aggregated.content, 'What is the fare for a ticket?', 5000);
   check('extracts relevant subpage based on query keywords', snippet.includes('Bunk ticket is 350 INR.'));
+}
+
+section('telegram incremental sync & auto-sync intervals');
+{
+  const posts: RawTelegramPost[] = [
+    { postPath: 'ch/100', messageId: 100, date: '2026-10-25T01:00:00Z', text: 'Old message', mediaType: 'none', mediaPath: null, photos: [], docInfo: null },
+    { postPath: 'ch/101', messageId: 101, date: '2026-10-25T02:00:00Z', text: 'Old message 2', mediaType: 'none', mediaPath: null, photos: [], docInfo: null },
+    { postPath: 'ch/102', messageId: 102, date: '2026-10-25T03:00:00Z', text: 'New post A', mediaType: 'none', mediaPath: null, photos: [], docInfo: null },
+    { postPath: 'ch/103', messageId: 103, date: '2026-10-25T04:00:00Z', text: 'New post B', mediaType: 'none', mediaPath: null, photos: [], docInfo: null },
+  ];
+
+  // 1. Initial sync (no lastMessageId)
+  const initial = filterIncrementalTelegramPosts(posts, null);
+  check('returns all posts when lastMessageId is not set', initial.newPosts.length === 4);
+  check('signals reachedKnown=false on initial sync', initial.reachedKnown === false);
+
+  // 2. Incremental sync with lastMessageId = 101
+  const incremental = filterIncrementalTelegramPosts(posts, 101);
+  check('only returns posts newer than lastMessageId', incremental.newPosts.length === 2);
+  check('retains post 102 and 103', incremental.newPosts[0].messageId === 102 && incremental.newPosts[1].messageId === 103);
+  check('signals reachedKnown=true when older messages found on page', incremental.reachedKnown === true);
+
+  // 3. Up to date check with lastMessageId = 103
+  const upToDate = filterIncrementalTelegramPosts(posts, 103);
+  check('returns 0 new posts when already up to date', upToDate.newPosts.length === 0);
+  check('signals reachedKnown=true to stop crawling immediately', upToDate.reachedKnown === true);
+
+  // 4. Auto sync intervals
+  const baseTime = new Date('2026-10-25T08:00:00Z').getTime();
+  const fiveMinAgo = new Date('2026-10-25T07:55:00Z').toISOString();
+  const fourMinAgo = new Date('2026-10-25T07:56:00Z').toISOString();
+
+  check('auto sync is due after 5 minutes', isAutoSyncDue(fiveMinAgo, 5, baseTime) === true);
+  check('auto sync is not due before 5 minutes', isAutoSyncDue(fourMinAgo, 5, baseTime) === false);
+  check('auto sync is not due when interval is 0 (off)', isAutoSyncDue(fiveMinAgo, 0, baseTime) === false);
+  check('auto sync is due when lastSyncedAt is null', isAutoSyncDue(null, 5, baseTime) === true);
+
+  check('formats 5m label correctly', formatAutoSyncInterval(5) === 'Every 5 minutes');
+  check('formats 0m label as Off', formatAutoSyncInterval(0) === 'Off');
+  check('formats 60m label as 1 hour', formatAutoSyncInterval(60) === 'Every 1 hour');
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

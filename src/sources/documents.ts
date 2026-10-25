@@ -6,6 +6,7 @@ import { File, Directory, Paths } from 'expo-file-system';
 import * as FileSystem from 'expo-file-system/legacy';
 import { getSourcesDb, uuid } from './client';
 import { extractText } from './extractors';
+import { containsMarkdownTable, extractAllTables, findShipColumn, extractShipVoyage, findPortInShipVoyage, findNextVoyageFromPort, type ParsedTable, type TableColumn } from './tableParser';
 
 export interface Document {
   id: string;
@@ -27,6 +28,9 @@ export interface DocumentChunk {
   pageNumber: number | null;
   createdAt: string;
   filename?: string;
+  tableHeaders?: string[];
+  columnIndex?: number;
+  isTableData?: boolean;
 }
 
 // File size limits (in bytes)
@@ -88,6 +92,121 @@ function chunkText(text: string, chunkSize = 12000, overlap = 500): string[] {
   }
 
   return chunks.filter(c => c.length > 0);
+}
+
+/**
+ * Parse text into table-aware chunks.
+ * For markdown tables, stores the full table as a single chunk with metadata.
+ * For non-table text, uses standard chunking.
+ */
+interface ChunkWithMetadata {
+  content: string;
+  tableHeaders?: string[];
+  isTableData?: boolean;
+}
+
+function chunkTextWithTables(text: string, chunkSize = 12000, overlap = 500): ChunkWithMetadata[] {
+  const trimmed = text.trim();
+  if (!trimmed) return [];
+
+  // Check if text contains markdown tables
+  if (!containsMarkdownTable(trimmed)) {
+    const chunks = chunkText(trimmed, chunkSize, overlap);
+    return chunks.map(c => ({ content: c }));
+  }
+
+  // Extract tables and split text around them
+  const tables = extractAllTables(trimmed);
+  if (tables.length === 0) {
+    const chunks = chunkText(trimmed, chunkSize, overlap);
+    return chunks.map(c => ({ content: c }));
+  }
+
+  const result: ChunkWithMetadata[] = [];
+  let remainingText = trimmed;
+
+  for (const table of tables) {
+    // Reconstruct the table markdown for storage
+    const tableMarkdown = reconstructTableMarkdown(table);
+
+    // Find the table in the text
+    const tableIndex = remainingText.indexOf(tableMarkdown);
+    if (tableIndex === -1) {
+      // Try to find by header match
+      const headerLine = table.headers.join(' | ');
+      const headerIdx = remainingText.indexOf(headerLine);
+      if (headerIdx === -1) continue;
+
+      // Extract the table region
+      const lines = remainingText.split('\n');
+      let startLine = -1;
+      let endLine = -1;
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].includes(headerLine)) {
+          startLine = i;
+          // Find end of table (next non-pipe line or empty)
+          for (let j = i + 1; j < lines.length; j++) {
+            if (!lines[j].includes('|') && lines[j].trim() !== '') {
+              endLine = j;
+              break;
+            }
+          }
+          if (endLine === -1) endLine = lines.length;
+          break;
+        }
+      }
+
+      if (startLine === -1) continue;
+      const before = lines.slice(0, startLine).join('\n').trim();
+      const tableText = lines.slice(startLine, endLine).join('\n').trim();
+      const after = lines.slice(endLine).join('\n').trim();
+
+      if (before) {
+        const beforeChunks = chunkText(before, chunkSize, overlap);
+        beforeChunks.forEach(c => result.push({ content: c }));
+      }
+
+      result.push({
+        content: tableText,
+        tableHeaders: table.headers,
+        isTableData: true,
+      });
+
+      remainingText = after;
+      continue;
+    }
+
+    const before = remainingText.slice(0, tableIndex).trim();
+    const after = remainingText.slice(tableIndex + tableMarkdown.length).trim();
+
+    if (before) {
+      const beforeChunks = chunkText(before, chunkSize, overlap);
+      beforeChunks.forEach(c => result.push({ content: c }));
+    }
+
+    result.push({
+      content: tableMarkdown,
+      tableHeaders: table.headers,
+      isTableData: true,
+    });
+
+    remainingText = after;
+  }
+
+  // Add any remaining text after the last table
+  if (remainingText.trim()) {
+    const afterChunks = chunkText(remainingText.trim(), chunkSize, overlap);
+    afterChunks.forEach(c => result.push({ content: c }));
+  }
+
+  return result.filter(c => c.content.length > 0);
+}
+
+function reconstructTableMarkdown(table: ParsedTable): string {
+  const headerLine = '| ' + table.headers.join(' | ') + ' |';
+  const separator = '| ' + table.headers.map(() => '---').join(' | ') + ' |';
+  const rowLines = table.rows.map(r => '| ' + r.join(' | ') + ' |');
+  return [headerLine, separator, ...rowLines].join('\n');
 }
 
 export async function pickAndProcessDocument(): Promise<Document> {
@@ -168,25 +287,26 @@ export async function pickAndProcessDocument(): Promise<Document> {
       throw new Error('Could not extract enough text from document. File may be empty or corrupted.');
     }
 
-    const chunks = chunkText(text);
+    const chunksWithMetadata = chunkTextWithTables(text);
 
-    if (chunks.length === 0) {
+    if (chunksWithMetadata.length === 0) {
       throw new Error('Document chunking failed. No searchable content created.');
     }
 
-    // Save chunks
-    for (let i = 0; i < chunks.length; i++) {
+    // Save chunks with table metadata
+    for (let i = 0; i < chunksWithMetadata.length; i++) {
+      const chunk = chunksWithMetadata[i];
       await db.runAsync(
         `INSERT INTO document_chunks (id, document_id, chunk_index, content, page_number, created_at)
          VALUES (?, ?, ?, ?, NULL, ?)`,
-        [uuid(), docId, i, chunks[i], now]
+        [uuid(), docId, i, chunk.content, now]
       );
     }
 
     // Mark as processed
     await db.runAsync(
       `UPDATE documents SET processed = 1, chunk_count = ?, deleted = 0, dirty = 1, updated_at = ? WHERE id = ?`,
-      [chunks.length, now, docId]
+      [chunksWithMetadata.length, now, docId]
     );
 
     return {
@@ -197,7 +317,7 @@ export async function pickAndProcessDocument(): Promise<Document> {
       fileUri: finalStoragePath,
       uploadedAt: now,
       processed: true,
-      chunkCount: chunks.length,
+      chunkCount: chunksWithMetadata.length,
       updatedAt: now,
     };
   } catch (err) {

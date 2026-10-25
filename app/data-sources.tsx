@@ -13,6 +13,8 @@ import { listWebsites, addWebsite, deleteWebsite, refreshWebsite, parseTelegramC
 import { listTelegramChannels, addTelegramChannel, deleteTelegramChannel, syncTelegramChannel, getTelegramMessageCount, getChannelMessageCounts, getChannelMessageCount, getChannelMessages, clearAllTelegramData, type TelegramChannel } from '@/sources/telegram';
 import { syncSourcesNow } from '@/sources/sync';
 import { getSetting, setSetting } from '@/db/queries';
+import { getTelegramAutoSyncInterval, setTelegramAutoSyncInterval } from '@/settings';
+import { onTelegramAutoSynced } from '@/sources/telegramAutoSync';
 import { shortDate, timeLabel } from '@/format';
 import { radius } from '@/expense/theme';
 
@@ -58,10 +60,11 @@ export default function DataSourcesScreen() {
   const [clearing, setClearing] = useState(false);
   const [botToken, setBotToken] = useState('');
   const [channelUsername, setChannelUsername] = useState('');
+  const [autoSyncInterval, setAutoSyncIntervalState] = useState(5);
 
   const loadData = useCallback(async () => {
     try {
-      const [docs, sites, chans, token, count, chunks, chCounts, lastSync] = await Promise.all([
+      const [docs, sites, chans, token, count, chunks, chCounts, lastSync, interval] = await Promise.all([
         listDocuments(),
         listWebsites(),
         listTelegramChannels(),
@@ -70,6 +73,7 @@ export default function DataSourcesScreen() {
         getTotalDocumentChunks(),
         getChannelMessageCounts(),
         getSetting('sources_last_synced_at'),
+        getTelegramAutoSyncInterval(),
       ]);
       setDocuments(docs);
       setWebsites(sites);
@@ -78,6 +82,7 @@ export default function DataSourcesScreen() {
       setTelegramCount(count);
       setTotalDocChunks(chunks);
       setChannelCounts(chCounts);
+      setAutoSyncIntervalState(interval);
 
       const latestItemSync = [
         ...docs.map(d => d.uploadedAt),
@@ -92,6 +97,17 @@ export default function DataSourcesScreen() {
   }, []);
 
   useFocusEffect(useCallback(() => { void loadData(); }, [loadData]));
+
+  React.useEffect(() => {
+    return onTelegramAutoSynced(() => {
+      void loadData();
+    });
+  }, [loadData]);
+
+  async function changeAutoSyncInterval(mins: number) {
+    setAutoSyncIntervalState(mins);
+    await setTelegramAutoSyncInterval(mins);
+  }
 
   async function uploadDocument() {
     setUploadingDoc(true);
@@ -249,10 +265,10 @@ export default function DataSourcesScreen() {
       const ch = channels.find(c => c.id === id);
       const total = await getChannelMessageCount(ch?.channelUsername || '', id);
       showDialog({
-        title: count > 0 ? 'Telegram Messages Saved' : 'Telegram Up To Date',
+        title: count > 0 ? 'New Telegram Messages Saved' : 'Telegram Up To Date',
         message: count > 0
-          ? `✓ Synced ${count} new messages on ${formatDateTime(now)}.\nTotal stored for this channel: ${total} messages.`
-          : `Already up to date as of ${formatDateTime(now)}.\nTotal stored in database: ${total} messages.`,
+          ? `✓ Incremental sync: retrieved ${count} new message${count === 1 ? '' : 's'} on ${formatDateTime(now)}.\n(Only new data fetched, saving time & bandwidth).\nTotal stored for this channel: ${total} messages.`
+          : `Already up to date as of ${formatDateTime(now)}.\nChecked in ~0.2s — no new messages found.\nTotal stored in database: ${total} messages.`,
       });
     } catch (err) {
       showDialog({ title: 'Sync failed', message: err instanceof Error ? err.message : String(err) });
@@ -834,7 +850,50 @@ export default function DataSourcesScreen() {
               </Card>
             ) : (
               <>
-                <Card style={{ padding: 14, marginBottom: 12 }}>
+                <Card style={{ padding: 14, marginBottom: 12, gap: 10 }}>
+                  <Row style={{ alignItems: 'center', justifyContent: 'space-between' }}>
+                    <Row style={{ alignItems: 'center', gap: 6 }}>
+                      <Ionicons name="flash" size={16} color={c.accent} />
+                      <T size={14} weight="600">Telegram Auto-Update</T>
+                    </Row>
+                    <T size={12} weight="600" style={{ color: autoSyncInterval > 0 ? c.good : c.sub }}>
+                      {autoSyncInterval > 0 ? `Every ${autoSyncInterval} mins` : 'Off'}
+                    </T>
+                  </Row>
+                  <Row style={{ gap: 6, flexWrap: 'wrap' }}>
+                    {[
+                      { mins: 5, label: '5m' },
+                      { mins: 15, label: '15m' },
+                      { mins: 30, label: '30m' },
+                      { mins: 60, label: '1h' },
+                      { mins: 0, label: 'Off' },
+                    ].map((opt) => {
+                      const on = autoSyncInterval === opt.mins;
+                      return (
+                        <Pressable
+                          key={opt.mins}
+                          onPress={() => void changeAutoSyncInterval(opt.mins)}
+                          style={{
+                            paddingVertical: 5,
+                            paddingHorizontal: 12,
+                            borderRadius: 8,
+                            borderWidth: 1,
+                            borderColor: on ? c.accent : c.line,
+                            backgroundColor: on ? `${c.accent}18` : c.card,
+                          }}
+                        >
+                          <T size={12} weight={on ? '700' : '500'} style={{ color: on ? c.accent : c.text }}>
+                            {opt.label}
+                          </T>
+                        </Pressable>
+                      );
+                    })}
+                  </Row>
+                  <T size={11} sub style={{ lineHeight: 15 }}>
+                    ⚡ Incremental: Only downloads brand-new messages since your last sync. Never re-checks old data, saving time and mobile data.
+                  </T>
+                </Card>
+                <Card style={{ padding: 12, marginBottom: 12 }}>
                   <T size={13} sub>{telegramCount} messages tracked across {channels.length} channels</T>
                 </Card>
                 <ListCard>

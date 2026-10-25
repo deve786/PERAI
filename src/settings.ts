@@ -154,6 +154,26 @@ export async function setSelectedAiModel(model: AiModelChoice): Promise<void> {
   await setSetting(AI_MODEL_KEY, model);
 }
 
+export const TELEGRAM_AUTO_SYNC_INTERVAL_KEY = 'sources.telegram_auto_sync_interval';
+
+/**
+ * Auto sync interval in minutes for Telegram channels.
+ * 0 = Off
+ * Default = 5 (every 5 minutes)
+ */
+export async function getTelegramAutoSyncInterval(): Promise<number> {
+  const val = await getSetting(TELEGRAM_AUTO_SYNC_INTERVAL_KEY);
+  if (val !== null && val !== undefined) {
+    const parsed = parseInt(val, 10);
+    if (!isNaN(parsed) && parsed >= 0) return parsed;
+  }
+  return 5; // Default: 5 minutes
+}
+
+export async function setTelegramAutoSyncInterval(minutes: number): Promise<void> {
+  await setSetting(TELEGRAM_AUTO_SYNC_INTERVAL_KEY, String(minutes));
+}
+
 /** Read at startup, so a saved choice survives a restart. */
 export async function applySavedVoiceLanguage(): Promise<void> {
   const language = await getVoiceLanguage();

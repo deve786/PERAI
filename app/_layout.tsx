@@ -30,6 +30,7 @@ import { useNotificationActions } from '@/useNotificationActions';
 import { useShareIntentCapture } from '@/useShareIntentCapture';
 import { startWidgetSync } from '@/widget/widgetSync';
 import { useSync as useExpenseSync } from '@/expense/sync/useSync';
+import { startTelegramAutoSync } from '@/sources/telegramAutoSync';
 
 /**
  * Without this, an error while rendering any screen unmounts the whole app
@@ -61,6 +62,7 @@ export default function RootLayout() {
   // Anything whose time has gone by is recorded as done, not just drawn struck.
   useEffect(() => (dbReady ? startOverdueSweep() : undefined), [dbReady]);
   useEffect(() => (dbReady ? startWidgetSync() : undefined), [dbReady]);
+  useEffect(() => (dbReady ? startTelegramAutoSync() : undefined), [dbReady]);
 
   // The recognizer follows the phone's own English unless a language was saved.
   useEffect(() => {
