@@ -64,6 +64,8 @@ import { stockGain } from '../src/expense/accountsLogic';
 import { toSentence } from '../src/format';
 import { refundReminderTimes } from '../src/expense/refundSchedule';
 import { monthsWithData, OVERALL, periodLabel, periodRange, previousMonth } from '../src/expense/period';
+import { stitchChunkContents, groupAndStitchDocumentChunks } from '../src/sources/chunkLogic';
+import type { DocumentChunk } from '../src/sources/types';
 import { needsTranslation, normalizeMoney, normalizeQuery } from '../src/manglish';
 import {
   changeLabel,
@@ -1814,6 +1816,37 @@ section('refund reminders every 2 days');
   check('rescheduling later does not move them', refundReminderTimes(since, new Date(2026, 9, 11, 22, 0), 1)[0].getTime() === times[0].getTime());
   check('a reminder less than a minute away is skipped', refundReminderTimes(since, new Date(2026, 9, 12, 9, 59, 30), 1)[0].getTime() === new Date(2026, 9, 14, 10, 0).getTime());
   check('a bad date gives nothing', refundReminderTimes('not a date', now, 3).length === 0);
+}
+
+section('document chunk stitching and grouping');
+{
+  const chunkA: DocumentChunk = {
+    id: 'c1',
+    documentId: 'doc1',
+    chunkIndex: 0,
+    content: 'Line 1: Schedule starts\nLine 2: 23/10/26 MV LAGOONS KLT CHT BTR\nLine 3: 29/10/26 MV L/SEA',
+    pageNumber: 1,
+    createdAt: '2026-10-24T18:02:00Z',
+    filename: 'Schedule.pdf',
+  };
+  const chunkB: DocumentChunk = {
+    id: 'c2',
+    documentId: 'doc1',
+    chunkIndex: 1,
+    content: '29/10/26 MV L/SEA BTR CHT KLT\nLine 4: 06/11/26 MV LAGOONS BTR CHT KLT',
+    pageNumber: 2,
+    createdAt: '2026-10-24T18:02:00Z',
+    filename: 'Schedule.pdf',
+  };
+
+  const stitched = stitchChunkContents([chunkA, chunkB]);
+  check('stitches overlapping lines without repeating duplicate header', stitched.includes('23/10/26') && stitched.includes('06/11/26'));
+
+  const grouped = groupAndStitchDocumentChunks([chunkA, chunkB]);
+  check('groups chunks into a single document entry', grouped.length === 1);
+  check('grouped entry has refId D0', grouped[0].refId === 'D0');
+  check('pages are aggregated', grouped[0].pages.length === 2 && grouped[0].pages[0] === 1 && grouped[0].pages[1] === 2);
+  check('stitched content has all 3 voyages', (grouped[0].content.match(/BTR/g) || []).length === 3);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

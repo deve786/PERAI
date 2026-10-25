@@ -85,7 +85,7 @@ export function getEffectiveAskModel(): string {
   );
 }
 
-/** Gemini's free tier is capped per minute; it tells us how long to wait. */
+/** Free tier quota / rate limits tell us how long to wait. */
 function retryDelayMs(err: unknown): number | null {
   const status = (err as { status?: number })?.status;
   const message = err instanceof Error ? err.message : String(err);
@@ -93,10 +93,10 @@ function retryDelayMs(err: unknown): number | null {
     return null;
   }
 
-  const suggested = message.match(/retry in ([\d.]+)s/i);
-  const seconds = suggested ? Number(suggested[1]) : 20;
-  // Cap it: a user staring at a spinner will not wait a full minute.
-  return Math.min(Math.ceil(seconds) + 1, 30) * 1000;
+  const suggested = message.match(/(?:retry|try again) in ([\d.]+)s/i);
+  const seconds = suggested ? Number(suggested[1]) : 5;
+  // Cap it: wait at least 1s and at most 15s so the UI remains responsive
+  return Math.max(1, Math.min(Math.ceil(seconds) + 1, 15)) * 1000;
 }
 
 const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
@@ -276,9 +276,34 @@ async function sendOnce(options: {
   schema: object;
 }): Promise<string> {
   if (isGroqModel(options.model)) {
-    return sendGroqOnce(options);
+    try {
+      return await sendGroqOnce(options);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`Groq model ${options.model} call failed:`, msg);
+      if (options.model !== 'qwen/qwen3.8-27b') {
+        try {
+          return await sendGroqOnce({ ...options, model: 'qwen/qwen3.8-27b' });
+        } catch {}
+      }
+      if (hasApiKey()) {
+        try {
+          return await sendGeminiOnce({ ...options, model: ASK_MODEL });
+        } catch {}
+      }
+      throw err;
+    }
   }
 
+  return sendGeminiOnce(options);
+}
+
+async function sendGeminiOnce(options: {
+  model: string;
+  system: string;
+  user: string;
+  schema: object;
+}): Promise<string> {
   const interaction = await getClient().interactions.create({
     model: options.model,
     system_instruction: options.system,

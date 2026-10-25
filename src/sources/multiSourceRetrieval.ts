@@ -88,11 +88,12 @@ export function buildUnifiedContext(result: RetrievalResult, expenseContext?: un
   }
 
   // Document chunks section
-  if (result.documentChunks.length > 0) {
+  const groupedDocs = groupAndStitchDocumentChunks(result.documentChunks);
+  if (groupedDocs.length > 0) {
     context += '\n\n=== DOCUMENTS ===\n';
-    result.documentChunks.forEach((d, i) => {
-      const page = d.pageNumber ? ` (page ${d.pageNumber})` : '';
-      context += `[D${i}] From "${d.filename}"${page}:\n`;
+    groupedDocs.forEach((d) => {
+      const page = d.pages.length > 0 ? ` (Pages ${d.pages.join(', ')})` : '';
+      context += `[${d.refId}] From "${d.filename}"${page}:\n`;
       context += `${d.content}\n\n`;
     });
   }
@@ -170,6 +171,13 @@ export interface EvidenceItem {
   metadata?: Record<string, unknown>;
 }
 
+export {
+  type GroupedDocument,
+  stitchChunkContents,
+  groupAndStitchDocumentChunks,
+} from './chunkLogic';
+import { groupAndStitchDocumentChunks } from './chunkLogic';
+
 export function formatEvidence(result: RetrievalResult): EvidenceItem[] {
   const evidence: EvidenceItem[] = [];
 
@@ -188,8 +196,9 @@ export function formatEvidence(result: RetrievalResult): EvidenceItem[] {
     });
   });
 
-  // Add document evidence
-  result.documentChunks.forEach((d, i) => {
+  // Add document evidence from grouped and stitched documents
+  const groupedDocs = groupAndStitchDocumentChunks(result.documentChunks);
+  groupedDocs.forEach((d) => {
     const filename = d.filename || 'Document';
     const lower = filename.toLowerCase();
     let sourceKind: SourceBadgeKind = 'document';
@@ -209,15 +218,19 @@ export function formatEvidence(result: RetrievalResult): EvidenceItem[] {
       badgeLabel = '📄 Text Doc';
     }
 
-    const chunkInfo = d.pageNumber ? `Page ${d.pageNumber}` : `Section ${d.chunkIndex + 1}`;
+    const pageInfo = d.pages.length > 0
+      ? `Pages ${d.pages.join(', ')}`
+      : d.chunkCount > 1
+        ? `${d.chunkCount} Sections`
+        : 'Document';
     const dateInfo = d.createdAt ? formatToIST(d.createdAt) : '';
 
     evidence.push({
-      refId: `D${i}`,
+      refId: d.refId,
       type: 'document',
-      id: d.id,
+      id: d.documentId,
       title: filename,
-      subtitle: dateInfo ? `${chunkInfo} · ${dateInfo}` : chunkInfo,
+      subtitle: dateInfo ? `${pageInfo} · ${dateInfo}` : pageInfo,
       sourceKind,
       badgeLabel,
       content: d.content.substring(0, 200),

@@ -68,16 +68,22 @@ function getFileType(mimeType?: string, filename?: string): Document['fileType']
 }
 
 /**
- * Chunk text into smaller pieces for better retrieval.
- * Overlapping chunks help maintain context.
+ * Chunk text into cohesive pieces for retrieval.
+ * Uses 12,000 characters so multi-page tables, voyage schedules, and letters
+ * stay together without severing markdown rows or losing headers.
  */
-function chunkText(text: string, chunkSize = 2500, overlap = 400): string[] {
+function chunkText(text: string, chunkSize = 12000, overlap = 500): string[] {
+  const trimmed = text.trim();
+  if (trimmed.length <= chunkSize) {
+    return trimmed.length > 0 ? [trimmed] : [];
+  }
+
   const chunks: string[] = [];
   let start = 0;
 
-  while (start < text.length) {
-    const end = Math.min(start + chunkSize, text.length);
-    chunks.push(text.slice(start, end).trim());
+  while (start < trimmed.length) {
+    const end = Math.min(start + chunkSize, trimmed.length);
+    chunks.push(trimmed.slice(start, end).trim());
     start += chunkSize - overlap;
   }
 
@@ -440,7 +446,7 @@ export async function searchDocumentChunks(query: string, limit = 50): Promise<D
   for (const c of allCandidateChunks) {
     const meta = matchedDocs.get(c.document_id);
     if (!meta) continue;
-    if (meta.chunkCount <= 12) {
+    if (meta.chunkCount <= 25) {
       finalChunks.push(c);
     } else {
       const isNearMatch = Array.from(meta.matchedIndices).some(
