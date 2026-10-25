@@ -68,9 +68,23 @@ if (kind === 'build') {
   process.exit(1);
 }
 
+const CHANGELOG = 'src/expense/changelog.ts';
+const originalChangelog = readFileSync(CHANGELOG, 'utf8');
+
 const label = `${release.version} (build ${release.build})`;
 args.push('--message', `${label}${note ? `: ${note}` : ''}`, '--non-interactive');
 if (kind === 'build') args.push('--no-wait');
+
+// Update changelog with the new version and build number
+const dateStr = new Date().toISOString().split('T')[0];
+const entryNote = note || (kind === 'build' ? 'New APK build release' : 'OTA update with enhancements and bug fixes');
+const changelogMarker = 'export const CHANGELOG: ChangelogEntry[] = [\n';
+const newChangelogEntry = `  {\n    version: '${release.version}',\n    build: ${release.build},\n    type: '${kind === 'build' ? 'build' : 'ota'}',\n    date: '${dateStr}',\n    highlights: [\n      '${entryNote.replace(/'/g, "\\'")}',\n    ],\n  },\n`;
+
+if (originalChangelog.includes(changelogMarker)) {
+  const updatedChangelog = originalChangelog.replace(changelogMarker, changelogMarker + newChangelogEntry);
+  writeFileSync(CHANGELOG, updatedChangelog);
+}
 
 writeFileSync(APP, JSON.stringify(app, null, 2) + '\n');
 writeFileSync(RELEASE, JSON.stringify(release, null, 2) + '\n');
@@ -84,6 +98,7 @@ const result = spawnSync(['npx', ...args].map(quote).join(' '), { stdio: 'inheri
 if (result.status !== 0) {
   writeFileSync(APP, original.app);
   writeFileSync(RELEASE, original.release);
+  writeFileSync(CHANGELOG, originalChangelog);
   const was = JSON.parse(original.release);
   console.error(`\n${kind} failed — rolled back to ${was.version} (build ${was.build})`);
   process.exit(result.status ?? 1);

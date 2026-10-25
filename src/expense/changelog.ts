@@ -1,11 +1,76 @@
 export interface ChangelogEntry {
   version: string;
+  build?: number;
+  type?: 'build' | 'ota';
   date: string; // YYYY-MM-DD
   highlights: string[];
 }
 
 /** Newest first. Add a new entry here with every release that changes user-visible behaviour. */
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '1.30.33',
+    build: 136,
+    type: 'ota',
+    date: '2026-10-25',
+    highlights: [
+      'Telegram auto-update: automatically checks for updates in background every 5 minutes (customizable to 5m, 15m, 30m, 1h, or Off in Data Sources)',
+      'Incremental Telegram sync: only checks and downloads brand-new messages since your last sync, taking ~0.2s when up to date and saving battery and mobile data',
+    ],
+  },
+  {
+    version: '1.30.32',
+    build: 135,
+    type: 'ota',
+    date: '2026-10-25',
+    highlights: [
+      'Deep multi-page website crawler: automatically crawls and extracts all subpages under a website instead of just the landing page',
+      'Intelligent subpage retrieval: feeds up to 8,000 characters of relevant subpage content and tables directly into Ask RAG prompts',
+      'Live crawling progress indicator showing page count during scraping in Data Sources',
+    ],
+  },
+  {
+    version: '1.30.31',
+    build: 134,
+    type: 'ota',
+    date: '2026-10-25',
+    highlights: [
+      'Draft message while generating: text field remains active so you can type your next question in advance while an answer is generating',
+      'Response time badge: displays precise duration (⚡ e.g. 1.2s) on completed answers in Ask tab',
+      'Hallucination tag: automatically detects ungrounded or fabricated details and flags them with an inline ⚠️ Unverified tag',
+    ],
+  },
+  {
+    version: '1.30.30',
+    build: 133,
+    type: 'ota',
+    date: '2026-10-25',
+    highlights: [
+      'Cohesive document chunk stitching: ensures markdown schedules and voyage tables across page breaks stay intact',
+      'Model grounding improvements to eliminate date hallucinations in travel schedules',
+    ],
+  },
+  {
+    version: '1.30.28',
+    build: 131,
+    type: 'ota',
+    date: '2026-10-25',
+    highlights: [
+      'Groq multi-model support: switch between GPT OSS 120B, Qwen 3.8 27B, and Gemini Flash Lite in Settings',
+      'Faster RAG generation with top open-source reasoning models',
+    ],
+  },
+  {
+    version: '1.30.0',
+    build: 100,
+    type: 'build',
+    date: '2026-10-24',
+    highlights: [
+      'Multi-Source Data Hub: search across uploaded Documents (PDF, Word, TXT, Images), Websites, and Telegram channels',
+      'Gemini Vision OCR: automatic OCR extraction for posters, timetables, and schedules in English & Malayalam',
+      'Unified search in Ask tab with source citations and evidence badges',
+    ],
+  },
   {
     version: '1.18.0',
     date: '2026-10-19',

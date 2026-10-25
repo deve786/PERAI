@@ -578,7 +578,46 @@ export async function searchDocumentChunks(query: string, limit = 50): Promise<D
     }
   }
 
-  return finalChunks.map((row) => ({
+  // For table-based documents (schedules), also gather chunks from the same document
+  // that contain ship names or port codes to enable column-wise voyage lookup
+  for (const docId of allDocIds) {
+    const doc = await db.getFirstAsync<{ filename: string; file_type: string }>(
+      'SELECT filename, file_type FROM documents WHERE id = ?',
+      [docId]
+    );
+
+    if (doc?.file_type === 'pdf') {
+      // For PDF documents, retrieve all chunks to enable column-wise search
+      const pdfChunks = await db.getAllAsync<{
+        id: string;
+        document_id: string;
+        chunk_index: number;
+        content: string;
+        page_number: number | null;
+        created_at: string;
+        filename: string;
+      }>(
+        `SELECT c.id, c.document_id, c.chunk_index, c.content, c.page_number, c.created_at, d.filename
+         FROM document_chunks c
+         JOIN documents d ON c.document_id = d.id
+         WHERE c.document_id = ? AND d.deleted = 0
+         ORDER BY c.chunk_index ASC`,
+        [docId]
+      );
+
+      // Add chunks from this document that weren't already included
+      for (const c of pdfChunks) {
+        if (!finalChunks.some(f => f.id === c.id)) {
+          finalChunks.push(c);
+        }
+      }
+    }
+  }
+
+  // Deduplicate by id
+  const uniqueChunks = finalChunks.filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i);
+
+  return uniqueChunks.map((row) => ({
     id: row.id,
     documentId: row.document_id,
     chunkIndex: row.chunk_index,
