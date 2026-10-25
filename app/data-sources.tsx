@@ -11,10 +11,11 @@ import { showDialog } from '@/dialogStore';
 import { listDocuments, deleteDocument, pickAndProcessDocument, getTotalDocumentChunks, getDocumentChunks, clearAllDocuments, cleanupEmptyDocuments, type Document } from '@/sources/documents';
 import { listWebsites, addWebsite, deleteWebsite, refreshWebsite, parseTelegramChannel, clearAllWebsites, type WebsiteData } from '@/sources/websites';
 import { extractScrapedPages, type ScrapedPageDetail } from '@/sources/websiteLogic';
-import { listTelegramChannels, addTelegramChannel, deleteTelegramChannel, syncTelegramChannel, getTelegramMessageCount, getChannelMessageCounts, getChannelMessageCount, getChannelMessages, getAllChannelMediaStats, getChannelMediaStats, clearAllTelegramData, ocrMessagePhoto, ocrUnextractedPhotosForChannel, type TelegramChannel, type ChannelMediaStats } from '@/sources/telegram';
+import { listTelegramChannels, addTelegramChannel, deleteTelegramChannel, syncTelegramChannel, getTelegramMessageCount, getChannelMessageCounts, getChannelMessageCount, getChannelMessages, getAllChannelMediaStats, getChannelMediaStats, clearAllTelegramData, ocrMessagePhoto, ocrUnextractedPhotosForChannel, downloadAndExtractTelegramFileViaBridge, extractUnextractedDocumentsForChannel, type TelegramChannel, type ChannelMediaStats } from '@/sources/telegram';
+import { getSourcesDb } from '@/sources/client';
 import { syncSourcesNow } from '@/sources/sync';
 import { getSetting, setSetting } from '@/db/queries';
-import { getTelegramAutoSyncInterval, setTelegramAutoSyncInterval } from '@/settings';
+import { getTelegramAutoSyncInterval, setTelegramAutoSyncInterval, getTelegramBridgeUrl, setTelegramBridgeUrl } from '@/settings';
 import { onTelegramAutoSynced } from '@/sources/telegramAutoSync';
 import { shortDate, timeLabel } from '@/format';
 import { radius } from '@/expense/theme';
@@ -58,8 +59,8 @@ function parseTelegramPhotoMessage(text?: string | null): { caption: string; ocr
   return { caption, ocrText, photoUrl };
 }
 
-function parseTelegramDocMessage(text?: string | null): { caption: string; docText: string | null; docPath: string | null; docLink: string | null } {
-  if (!text) return { caption: '', docText: null, docPath: null, docLink: null };
+function parseTelegramDocMessage(text?: string | null): { caption: string; docText: string | null; docPath: string | null; docLink: string | null; isExtracted: boolean } {
+  if (!text) return { caption: '', docText: null, docPath: null, docLink: null, isExtracted: false };
 
   let docPath: string | null = null;
   const docMatch = text.match(/\[Document:\s*([^\]]+)\]/i);
@@ -74,18 +75,20 @@ function parseTelegramDocMessage(text?: string | null): { caption: string; docTe
   }
 
   let docText: string | null = null;
-  const docTextMatch = text.match(/\[(?:Attached Cargo\/Document Content|Attached Cargo\/Document Details|Attached Document|Attached Cargo)[^\]]*\]:\s*([\s\S]*?)(?=(?:\n\s*\[(?:Photo|Document|Document Link|Video):)|$)/i);
+  const docTextMatch = text.match(/\[(?:Extracted Document|Attached Cargo\/Document Content|Attached Cargo\/Document Details|Attached Document|Attached Cargo)[^\]]*\]:\s*([\s\S]*?)(?=(?:\n\s*\[(?:Photo|Document|Document Link|Video):)|$)/i);
   if (docTextMatch && docTextMatch[1].trim()) {
     docText = docTextMatch[1].trim();
   }
 
+  const isExtracted = /\[Extracted Document/i.test(text);
+
   const caption = text
-    .replace(/\[(?:Attached Cargo\/Document Content|Attached Cargo\/Document Details|Attached Document|Attached Cargo)[^\]]*\]:[\s\S]*?(?=(?:\n\s*\[(?:Photo|Document|Document Link|Video):)|$)/gi, '')
+    .replace(/\[(?:Extracted Document|Attached Cargo\/Document Content|Attached Cargo\/Document Details|Attached Document|Attached Cargo)[^\]]*\]:[\s\S]*?(?=(?:\n\s*\[(?:Photo|Document|Document Link|Video):)|$)/gi, '')
     .replace(/\[Document:[^\]]*\]/gi, '')
     .replace(/\[Document Link:[^\]]*\]/gi, '')
     .trim();
 
-  return { caption, docText, docPath, docLink };
+  return { caption, docText, docPath, docLink, isExtracted };
 }
 
 export default function DataSourcesScreen() {
@@ -116,10 +119,13 @@ export default function DataSourcesScreen() {
   const [botToken, setBotToken] = useState('');
   const [channelUsername, setChannelUsername] = useState('');
   const [autoSyncInterval, setAutoSyncIntervalState] = useState(5);
+  const [bridgeUrl, setBridgeUrl] = useState('');
+  const [testingBridge, setTestingBridge] = useState(false);
+  const [extractingAllDocs, setExtractingAllDocs] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
-      const [docs, sites, chans, token, count, chunks, chCounts, mediaStats, lastSync, interval] = await Promise.all([
+      const [docs, sites, chans, token, count, chunks, chCounts, mediaStats, lastSync, interval, savedBridgeUrl] = await Promise.all([
         listDocuments(),
         listWebsites(),
         listTelegramChannels(),
@@ -130,6 +136,7 @@ export default function DataSourcesScreen() {
         getAllChannelMediaStats(),
         getSetting('sources_last_synced_at'),
         getTelegramAutoSyncInterval(),
+        getTelegramBridgeUrl(),
       ]);
       setDocuments(docs);
       setWebsites(sites);
@@ -140,6 +147,7 @@ export default function DataSourcesScreen() {
       setChannelCounts(chCounts);
       setChannelMediaStatsMap(mediaStats);
       setAutoSyncIntervalState(interval);
+      setBridgeUrl(savedBridgeUrl || '');
 
       const latestItemSync = [
         ...docs.map(d => d.uploadedAt),
@@ -625,6 +633,117 @@ export default function DataSourcesScreen() {
       showDialog({ title: 'Batch Extraction Error', message: e instanceof Error ? e.message : String(e) });
     } finally {
       setExtractingAll(false);
+      setOcrProgressText(null);
+    }
+  }
+
+  async function testBridgeConnection() {
+    const url = bridgeUrl.trim().replace(/\/$/, '');
+    if (!url) {
+      showDialog({
+        title: 'Bridge URL Empty',
+        message: 'Please enter your Telegram Media Bridge URL (e.g. https://my-bridge.onrender.com or http://10.0.2.2:8000).',
+      });
+      return;
+    }
+    setTestingBridge(true);
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8000);
+      const res = await fetch(`${url}/health`, { signal: controller.signal });
+      clearTimeout(timer);
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+      const data = await res.json();
+      showDialog({
+        title: 'Bridge Connected ✓',
+        message: `Successfully connected to Telegram Media Bridge!\n\n• Service: ${data.service || 'OK'}\n• Telegram Authorized: ${data.authenticated ? 'Yes ✓' : 'No (run python login.py)'}\n\nAttached PDFs will now be downloaded and parsed automatically with Gemini.`,
+      });
+    } catch (err) {
+      showDialog({
+        title: 'Bridge Connection Failed',
+        message: `Could not reach ${url}/health.\n\nError: ${err instanceof Error ? err.message : String(err)}\n\nPlease ensure your bridge server is running and accessible.`,
+      });
+    } finally {
+      setTestingBridge(false);
+    }
+  }
+
+  async function handleExtractDoc(m: import('@/sources/telegram').TelegramMessage, channelUsername: string) {
+    if (extractingMsgId) return;
+    const cleanBridge = bridgeUrl.trim().replace(/\/$/, '');
+    if (!cleanBridge) {
+      showDialog({
+        title: 'Bridge URL Required',
+        message: 'Please configure your Telegram Media Bridge URL in the settings above to automatically download and extract attached documents.',
+      });
+      return;
+    }
+    const docParsed = parseTelegramDocMessage(m.messageText);
+    const docName = docParsed.docPath || m.mediaPath || 'document.pdf';
+    setExtractingMsgId(m.id);
+    try {
+      const text = await downloadAndExtractTelegramFileViaBridge(cleanBridge, channelUsername, m.messageId, docName);
+      if (text) {
+        const db = await getSourcesDb();
+        const updatedText = m.messageText
+          ? `${m.messageText}\n\n[Extracted Document: ${docName}]:\n${text}`
+          : `[Extracted Document: ${docName}]:\n${text}`;
+        await db.runAsync('UPDATE telegram_messages SET message_text = ? WHERE id = ?', [updatedText, m.id]);
+        m.messageText = updatedText;
+        setPreviewItem(prev => {
+          if (!prev || !prev.telegramMessages) return prev;
+          const updated = prev.telegramMessages.map(msg => msg.id === m.id ? { ...msg, messageText: updatedText } : msg);
+          return { ...prev, telegramMessages: updated };
+        });
+        void loadData();
+        showDialog({
+          title: 'Document Content Extracted!',
+          message: `Successfully extracted cargo tables and voyages from "${docName}" using Gemini!\n\nAll tables and schedules are now indexed and searchable.`,
+        });
+      } else {
+        showDialog({
+          title: 'Extraction Incomplete',
+          message: 'The bridge connected, but Gemini could not parse structured text from this file. Check if the PDF contains legible text.',
+        });
+      }
+    } catch (err) {
+      showDialog({
+        title: 'Document Extraction Error',
+        message: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setExtractingMsgId(null);
+    }
+  }
+
+  async function handleExtractAllDocs() {
+    if (!previewItem || !previewItem.telegramMessages || extractingAllDocs) return;
+    const cleanBridge = bridgeUrl.trim().replace(/\/$/, '');
+    if (!cleanBridge) {
+      showDialog({
+        title: 'Bridge URL Required',
+        message: 'Please configure your Telegram Media Bridge URL in the settings above to automatically download and extract attached documents.',
+      });
+      return;
+    }
+    const channelUsername = previewItem.subtitle || previewItem.title;
+    setExtractingAllDocs(true);
+    setOcrProgressText(null);
+    try {
+      const extractedCount = await extractUnextractedDocumentsForChannel(channelUsername, previewItem.id || '', (done, total) => {
+        setOcrProgressText(`${done}/${total}`);
+      });
+      const updatedMessages = await getChannelMessages(channelUsername, previewItem.id);
+      setPreviewItem(prev => prev ? { ...prev, telegramMessages: updatedMessages } : null);
+      void loadData();
+      showDialog({
+        title: 'Batch Document Extraction Finished',
+        message: `Extracted tables and cargo lists for ${extractedCount} document${extractedCount === 1 ? '' : 's'} with Gemini.`,
+      });
+    } catch (e) {
+      showDialog({ title: 'Batch Extraction Error', message: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setExtractingAllDocs(false);
       setOcrProgressText(null);
     }
   }
@@ -1140,6 +1259,44 @@ export default function DataSourcesScreen() {
                     ⚡ Incremental: Only downloads brand-new messages since your last sync. Never re-checks old data, saving time and mobile data.
                   </T>
                 </Card>
+
+                {/* Telegram Media Bridge Configuration Card */}
+                <Card style={{ padding: 14, marginBottom: 12, gap: 10 }}>
+                  <Row style={{ alignItems: 'center', justifyContent: 'space-between' }}>
+                    <Row style={{ alignItems: 'center', gap: 6 }}>
+                      <Ionicons name="cloud-download-outline" size={16} color={c.accent} />
+                      <T size={14} weight="600">Telegram Media Bridge (PDF Auto-Extract)</T>
+                    </Row>
+                    <View style={{ backgroundColor: bridgeUrl.trim() ? `${c.good}20` : c.well, paddingHorizontal: 8, paddingVertical: 2, borderRadius: radius.sm }}>
+                      <T size={11} weight="700" style={{ color: bridgeUrl.trim() ? c.good : c.sub }}>
+                        {bridgeUrl.trim() ? 'Active ✓' : 'Optional'}
+                      </T>
+                    </View>
+                  </Row>
+                  <T size={12} sub style={{ lineHeight: 18 }}>
+                    Connects to your bridge micro-service to automatically stream and extract full tables from attached Telegram PDFs (like HSC 26 & 27.pdf).
+                  </T>
+                  <Field
+                    label="Bridge Service URL"
+                    value={bridgeUrl}
+                    onChangeText={(val) => {
+                      setBridgeUrl(val);
+                      void setTelegramBridgeUrl(val);
+                    }}
+                    placeholder="e.g. https://my-bridge.onrender.com or http://10.0.2.2:8000"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    containerStyle={{ marginBottom: 4 }}
+                  />
+                  <Row style={{ justifyContent: 'flex-end', gap: 8 }}>
+                    <Button
+                      title={testingBridge ? 'Testing...' : 'Test Connection'}
+                      kind="ghost"
+                      disabled={!bridgeUrl.trim() || testingBridge}
+                      onPress={() => void testBridgeConnection()}
+                    />
+                  </Row>
+                </Card>
                 <Card style={{ padding: 12, marginBottom: 12 }}>
                   <T size={13} sub>{telegramCount} messages tracked across {channels.length} channels</T>
                 </Card>
@@ -1440,6 +1597,60 @@ export default function DataSourcesScreen() {
                   );
                 })()}
 
+                {/* Batch Document Extraction Banner if bridge is configured and unextracted docs exist */}
+                {(() => {
+                  const unextractedDocs = previewItem.telegramMessages?.filter(m => {
+                    const isDoc = m.mediaType === 'document' || m.messageText?.includes('[Document:');
+                    const parsed = parseTelegramDocMessage(m.messageText);
+                    return isDoc && !parsed.isExtracted;
+                  }).length || 0;
+
+                  if (unextractedDocs === 0 || !bridgeUrl.trim()) return null;
+
+                  return (
+                    <Card style={{ padding: 12, backgroundColor: '#f59e0b12', borderColor: '#f59e0b40', gap: 8 }}>
+                      <Row style={{ alignItems: 'center', justifyContent: 'space-between' }}>
+                        <Row style={{ alignItems: 'center', gap: 6 }}>
+                          <Ionicons name="document-text" size={16} color="#f59e0b" />
+                          <T size={13} weight="700" style={{ color: '#f59e0b' }}>
+                            {unextractedDocs} PDF Document{unextractedDocs === 1 ? '' : 's'} Not Yet Parsed
+                          </T>
+                        </Row>
+                        <Pressable
+                          onPress={() => void handleExtractAllDocs()}
+                          disabled={extractingAllDocs}
+                          style={{
+                            backgroundColor: '#f59e0b',
+                            paddingHorizontal: 12,
+                            paddingVertical: 6,
+                            borderRadius: radius.sm,
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            gap: 4,
+                          }}
+                        >
+                          {extractingAllDocs ? (
+                            <>
+                              <ActivityIndicator size="small" color="#fff" />
+                              <T size={12} weight="700" style={{ color: '#fff' }}>
+                                Extracting {ocrProgressText || '...'}
+                              </T>
+                            </>
+                          ) : (
+                            <>
+                              <Ionicons name="sparkles" size={12} color="#fff" />
+                              <T size={12} weight="700" style={{ color: '#fff' }}>Extract All Documents</T>
+                            </>
+                          )}
+                        </Pressable>
+                      </Row>
+                      <T size={11} sub style={{ lineHeight: 16 }}>
+                        Download attached PDFs via Telegram Media Bridge and parse full cargo manifests and timetable tables with Gemini.
+                      </T>
+                    </Card>
+                  );
+                })()}
+
                 {/* Empty State or Message List */}
                 {(!previewItem.telegramMessages || previewItem.telegramMessages.length === 0) ? (
                   <Card style={{ padding: 18, gap: 12, alignItems: 'center' }}>
@@ -1596,8 +1807,10 @@ export default function DataSourcesScreen() {
                                     Attached Document / Cargo Data
                                   </T>
                                 </Row>
-                                <View style={{ backgroundColor: '#f59e0b25', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
-                                  <T size={10} weight="700" style={{ color: '#f59e0b' }}>Document</T>
+                                <View style={{ backgroundColor: docParsed.isExtracted ? `${c.good}20` : '#f59e0b25', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                                  <T size={10} weight="700" style={{ color: docParsed.isExtracted ? c.good : '#f59e0b' }}>
+                                    {docParsed.isExtracted ? 'AI Extracted ✓' : 'Document Abstract'}
+                                  </T>
                                 </View>
                               </Row>
                               {docParsed.docPath ? (
@@ -1606,29 +1819,56 @@ export default function DataSourcesScreen() {
                               <T size={13} style={{ lineHeight: 20, color: c.text }}>
                                 {docParsed.docText}
                               </T>
-                              {docParsed.docLink ? (
-                                <Pressable
-                                  onPress={() => {
-                                    if (docParsed.docLink) void Linking.openURL(docParsed.docLink);
-                                  }}
-                                  style={{
-                                    flexDirection: 'row',
-                                    alignItems: 'center',
-                                    gap: 6,
-                                    backgroundColor: '#f59e0b18',
-                                    borderColor: '#f59e0b40',
-                                    borderWidth: 1,
-                                    paddingHorizontal: 12,
-                                    paddingVertical: 6,
-                                    borderRadius: radius.sm,
-                                    alignSelf: 'flex-start',
-                                    marginTop: 4,
-                                  }}
-                                >
-                                  <Ionicons name="open-outline" size={14} color="#f59e0b" />
-                                  <T size={11} weight="700" style={{ color: '#f59e0b' }}>Open PDF in Telegram</T>
-                                </Pressable>
-                              ) : null}
+                              <Row style={{ gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
+                                {!docParsed.isExtracted && bridgeUrl.trim() ? (
+                                  <Pressable
+                                    onPress={() => void handleExtractDoc(m, previewItem?.subtitle || previewItem?.title || '')}
+                                    disabled={extractingMsgId === m.id}
+                                    style={{
+                                      flexDirection: 'row',
+                                      alignItems: 'center',
+                                      gap: 4,
+                                      backgroundColor: '#f59e0b',
+                                      paddingHorizontal: 12,
+                                      paddingVertical: 6,
+                                      borderRadius: radius.sm,
+                                    }}
+                                  >
+                                    {extractingMsgId === m.id ? (
+                                      <>
+                                        <ActivityIndicator size="small" color="#fff" />
+                                        <T size={11} weight="700" style={{ color: '#fff' }}>Extracting PDF...</T>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Ionicons name="sparkles" size={12} color="#fff" />
+                                        <T size={11} weight="700" style={{ color: '#fff' }}>Extract Tables with Bridge</T>
+                                      </>
+                                    )}
+                                  </Pressable>
+                                ) : null}
+                                {docParsed.docLink ? (
+                                  <Pressable
+                                    onPress={() => {
+                                      if (docParsed.docLink) void Linking.openURL(docParsed.docLink);
+                                    }}
+                                    style={{
+                                      flexDirection: 'row',
+                                      alignItems: 'center',
+                                      gap: 6,
+                                      backgroundColor: '#f59e0b18',
+                                      borderColor: '#f59e0b40',
+                                      borderWidth: 1,
+                                      paddingHorizontal: 12,
+                                      paddingVertical: 6,
+                                      borderRadius: radius.sm,
+                                    }}
+                                  >
+                                    <Ionicons name="open-outline" size={14} color="#f59e0b" />
+                                    <T size={11} weight="700" style={{ color: '#f59e0b' }}>Open PDF in Telegram</T>
+                                  </Pressable>
+                                ) : null}
+                              </Row>
                             </View>
                           ) : isDoc && docParsed.docPath ? (
                             <View style={{ backgroundColor: '#f59e0b0d', borderColor: '#f59e0b30', borderWidth: 1, padding: 10, borderRadius: radius.sm, gap: 6 }}>
