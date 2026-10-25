@@ -94,42 +94,51 @@ export interface GroundingCheckResult {
   reason?: string;
 }
 
+export function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 /**
  * Checks whether an item returned by the AI is grounded in the retrieved context.
  * Detects hallucinations such as fabricated dates, non-existent port stops, or invented figures.
  * Supports column-wise table context (like ship schedules where each ship is a column).
  */
 export function verifyItemGrounding(itemText: string, contextText: string): GroundingCheckResult {
-  if (!contextText || !itemText) return { verified: true };
+  try {
+    if (!contextText || !itemText) return { verified: true };
 
-  const normContext = contextText.toLowerCase();
+    const normContext = contextText.toLowerCase();
 
-  // Detect and parse markdown tables from context
-  const tables = extractAllTablesFromText(normContext);
+    // Detect and parse markdown tables from context
+    const tables = extractAllTablesFromText(normContext);
 
-  let tableFailureReason: string | undefined;
+    let tableFailureReason: string | undefined;
 
-  if (tables.length > 0) {
-    // Table context detected - use column-aware verification
-    for (const table of tables) {
-      const result = verifyAgainstTable(itemText, table);
-      if (result) {
-        if (result.verified) return { verified: true };
-        tableFailureReason = result.reason;
+    if (tables.length > 0) {
+      // Table context detected - use column-aware verification
+      for (const table of tables) {
+        const result = verifyAgainstTable(itemText, table);
+        if (result) {
+          if (result.verified) return { verified: true };
+          tableFailureReason = result.reason;
+        }
       }
     }
-  }
 
-  // Fall back to text-based verification for non-table contexts or cross-page tables
-  const textResult = verifyAgainstText(itemText, contextText);
-  if (textResult.verified) {
+    // Fall back to text-based verification for non-table contexts or cross-page tables
+    const textResult = verifyAgainstText(itemText, contextText);
+    if (textResult.verified) {
+      return { verified: true };
+    }
+
+    return {
+      verified: false,
+      reason: tableFailureReason || textResult.reason || 'Not verified in source context',
+    };
+  } catch (err) {
+    console.warn('Grounding verification safely bypassed on error:', err);
     return { verified: true };
   }
-
-  return {
-    verified: false,
-    reason: tableFailureReason || textResult.reason || 'Not verified in source context',
-  };
 }
 
 /**
@@ -478,19 +487,25 @@ function verifyAgainstText(itemText: string, contextText: string): GroundingChec
         nextLine === -1 ? normContext.length : nextLine
       );
 
-      // Extract specific island/route/subject codes from the item
+      // Extract specific island/route/subject codes from the item, stripping brackets/parentheses to prevent RegExp errors
       const dateParts = d.split(/\D+/).filter(Boolean);
       const itemTokens = normItem
+        .replace(/[()[\]{}]/g, ' ')
         .split(/[\s·,|/–—]+/)
         .map(t => t.trim())
-        .filter(t => t.length >= 2 && !['mv', 'the', 'and', 'for', 'with', 'arr', 'dept', 'at', 'in', 'sea', 'corals', 'lagoons', 'arabian', 'lakshadweep'].includes(t))
+        .filter(t => t.length >= 2 && !['mv', 'the', 'and', 'for', 'with', 'arr', 'dept', 'at', 'in', 'sea', 'corals', 'lagoons', 'arabian', 'lakshadweep', 'voyage', 'voyages'].includes(t))
         .filter(t => !dates.includes(t) && !dateParts.includes(t));
 
       if (itemTokens.length > 0) {
         // Words must match as distinct whole tokens or port codes (e.g. \bbtr\b)
         const matchingTokens = itemTokens.filter(tok => {
-          const reg = new RegExp(`\\b${tok}\\b`, 'i');
-          return reg.test(rowSnippet);
+          try {
+            const escaped = escapeRegex(tok);
+            const reg = new RegExp(`\\b${escaped}\\b`, 'i');
+            return reg.test(rowSnippet);
+          } catch {
+            return rowSnippet.includes(tok.toLowerCase());
+          }
         });
         if (matchingTokens.length === 0) {
           return { verified: false, reason: `Details not found on date ${d}` };

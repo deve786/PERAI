@@ -110,15 +110,36 @@ FOR LAKSHADWEEP SHIP SCHEDULES & VOYAGE TABLES:
   1. Starts with departure from Kochi (e.g. "KOCHI Dept.1430").
   2. Visits islands on intermediate days with arrival/departure timings (e.g. "KVT AGT 0800-1100. 1400-1600").
   3. Concludes with arrival back at Kochi (e.g. "KOCHI Arr.0700").
-  WHEN ASKED ABOUT A VOYAGE ON A DATE OR OF A SHIP (e.g. "What is voyage on 27 october of Lakshadweep sea"):
+  WHEN ASKED ABOUT A SPECIFIC VOYAGE (e.g. "What is voyage on 27 october of Lakshadweep sea"):
   * Look under the ship's timeline under "=== EXTRACTED VOYAGE TIMELINES PER VESSEL ===" for that specific vessel!
   * NEVER combine text from adjacent columns on the same row! For example, on 27/10/26 MV L/Sea departs Kochi, and its next stops down its own column are KLT CHT (28/10) and BTR CHT KLT (29/10) returning 30/10. It does NOT go to Agatti (Agatti on 27/10 is in MV Lagoons's column)!
   * ALWAYS output the FULL COMPLETE VOYAGE: from Kochi departure, through all island stops with times, until the ship arrives back at Kochi!
-  * In the items array, list every leg of that voyage chronologically:
+  * List every leg of that voyage chronologically:
     1. 27/10/26 · M V / L SEA · KOCHI Dept.1430
     2. 28/10/26 · M V / L SEA · KLT CHT 0800-1100. 1400-1700
     3. 29/10/26 · M V / L SEA · BTR CHT KLT 0700-0830 1100-1330 1530-1430
     4. 30/10/26 · M V / L SEA · KOCHI Arr.0700
+
+- LISTING MULTIPLE VOYAGES ("SHOW ALL VOYAGES FROM X TO Y") (CRITICAL):
+  When asked to list or show all voyages between two places (e.g. "Show all voyages from koc to amn"):
+  * Search ALL ships across the ENTIRE schedule from the first date to the last date (e.g. MV Corals, MV L/Sea, MV Lagoons, MV A/Sea). Do not stop after finding only 1 or 2!
+  * Number each item in the items array as ONE COMPLETE VOYAGE (so the numbers 1, 2, 3... represent distinct voyages, not individual days):
+    1. Voyage 1: 26/10/26 to 28/10/26 · MV CORALS · KOCHI Dept.1230 → KDM AMN (27/10) → KOCHI Arr.0700
+    2. Voyage 2: 31/10/26 to 02/11/26 · M V / L SEA · KOCHI Dept.1430 → AMN KDM (01/11) → KOCHI Arr.0700
+    3. Voyage 3: 04/11/26 to 07/11/26 · MV LAGOONS · KOCHI Dept.1800 → KLP KDM AMN (05/11) → KOCHI Arr.0700
+  * Headline should be the total count of voyages found (e.g. "3 voyages").
+
+- CURRENT SHIP LOCATION & "WHERE IS THE SHIP NOW" (CRITICAL):
+  When asked "Where is [ship] now?" or "Where are they currently?":
+  * Check "Current local time" (both the DATE and the CURRENT TIME):
+  * Check TELEGRAM live messages and document schedule together!
+  * If a vessel DEPARTED earlier today/yesterday and has an ETA in the future (e.g. departed Kochi at 14:45 with ETA Kiltan tomorrow 26/10 at 07:00):
+    - The vessel is CURRENTLY AT SEA / EN ROUTE! It has NOT reached the island yet!
+    - Headline MUST be: "En route to [Island]" or "At sea" (NEVER name the future destination island as the current location!).
+    - E.g. MV Arabian Sea departed Kochi on 25/10 at 14:45 heading towards Kiltan with ETA 26/10 07:00 -> Current location is "At sea (en route to Kiltan)".
+  * If the current time is within port hours at an island (e.g. 08:00 - 11:00 or 14:00 - 17:00), the vessel is currently berthed at that specific island port.
+  * If the vessel arrived at Kochi (e.g. KOCHI Arr.0700) and hasn't departed yet, it is at Kochi port.
+  * When asked "Where are they currently?" for all vessels: report the exact current status of all 4 vessels with their specific island/sea location.
 
 - DIRECT AND INDIRECT VOYAGES (CRITICAL):
   When asked for a voyage from one place to another (e.g. "Next voyage of cok to amn", "cok to agt", "kvt to agt"):

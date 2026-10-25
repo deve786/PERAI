@@ -10,6 +10,16 @@ export interface ChangelogEntry {
 /** Newest first. Add a new entry here with every release that changes user-visible behaviour. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.30.41',
+    build: 144,
+    type: 'ota',
+    date: '2026-10-25',
+    time: '04:24 PM',
+    highlights: [
+      'Fix RegExp parenthesis error, number voyages per entry, and fix current ship location reasoning',
+    ],
+  },
+  {
     version: '1.30.40',
     build: 143,
     type: 'ota',
