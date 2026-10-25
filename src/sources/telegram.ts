@@ -4,6 +4,7 @@
 import { getSourcesDb, uuid } from './client';
 import { getClient, EXTRACT_MODEL, hasApiKey } from '@/ai/client';
 import { currentUserId, getSupabase, isConfigured } from '@/sync/client';
+import { getTelegramBridgeUrl } from '@/settings';
 
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
@@ -233,6 +234,115 @@ Format any tables as clean markdown tables. Do not add commentary.`,
     console.warn('[telegram-doc] Could not extract document:', err);
     return null;
   }
+}
+
+/**
+ * Downloads and extracts attached documents via the Telegram Media Bridge service.
+ * Fetches raw PDF bytes from ${bridgeUrl}/download?channel=${channel}&post=${messageId}
+ * and extracts all tables, manifests, and shipping data with Gemini.
+ */
+export async function downloadAndExtractTelegramFileViaBridge(
+  bridgeUrl: string,
+  channel: string,
+  messageId: number,
+  fileName?: string
+): Promise<string | null> {
+  if (!hasApiKey()) return null;
+  const cleanBridge = bridgeUrl.trim().replace(/\/$/, '');
+  const cleanChannel = channel.replace(/^@/, '').trim();
+  if (!cleanBridge || !cleanChannel || !messageId) return null;
+
+  try {
+    const downloadUrl = `${cleanBridge}/download?channel=${encodeURIComponent(cleanChannel)}&post=${messageId}`;
+    const fileRes = await fetchWithTimeout(downloadUrl, 45000);
+    if (!fileRes.ok) {
+      console.warn(`[telegram-bridge] Failed to fetch doc (${fileRes.status}): ${downloadUrl}`);
+      return null;
+    }
+
+    const buf = await fileRes.arrayBuffer();
+    if (!buf || buf.byteLength < 50) return null;
+
+    const base64 = arrayBufferToBase64(buf);
+    const client = getClient();
+    const isPdf = !fileName || fileName.toLowerCase().endsWith('.pdf');
+
+    const response = await client.models.generateContent({
+      model: EXTRACT_MODEL,
+      contents: [
+        {
+          text: `Extract all text, cargo manifests, shipping tables, quantities, container numbers, island destination ports, passenger details, and remarks from this document completely.
+Format any tables as clean markdown tables. Do not add commentary.`,
+        },
+        {
+          inlineData: {
+            mimeType: isPdf ? 'application/pdf' : 'application/pdf',
+            data: base64,
+          },
+        },
+      ],
+    });
+
+    return response.text?.trim() || null;
+  } catch (err) {
+    console.warn('[telegram-bridge] Could not extract document via bridge:', err);
+    return null;
+  }
+}
+
+/**
+ * Iterates through all document messages in a channel that have not yet had their inner
+ * tables extracted and calls the Telegram Media Bridge to download and OCR them with Gemini.
+ */
+export async function extractUnextractedDocumentsForChannel(
+  channelUsername: string,
+  channelId: string,
+  onProgress?: (current: number, total: number) => void
+): Promise<number> {
+  const bridgeUrl = await getTelegramBridgeUrl();
+  if (!bridgeUrl) {
+    throw new Error('Telegram Media Bridge URL is not configured in Settings.');
+  }
+  const db = await getSourcesDb();
+  const rows = await db.getAllAsync<{
+    id: string;
+    message_id: number;
+    message_text: string;
+    media_path: string | null;
+  }>(
+    `SELECT id, message_id, message_text, media_path FROM telegram_messages
+     WHERE channel_id = ? AND media_type = 'document'
+       AND message_text NOT LIKE '%[Extracted Document:%'
+     ORDER BY message_id DESC`,
+    [channelId]
+  );
+
+  if (rows.length === 0) return 0;
+  let successCount = 0;
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const docName = row.media_path || 'document.pdf';
+    try {
+      const extracted = await downloadAndExtractTelegramFileViaBridge(
+        bridgeUrl,
+        channelUsername,
+        row.message_id,
+        docName
+      );
+      if (extracted) {
+        const updatedText = row.message_text
+          ? `${row.message_text}\n\n[Extracted Document: ${docName}]:\n${extracted}`
+          : `[Extracted Document: ${docName}]:\n${extracted}`;
+        await db.runAsync('UPDATE telegram_messages SET message_text = ? WHERE id = ?', [updatedText, row.id]);
+        successCount++;
+      }
+    } catch (err) {
+      console.warn(`[telegram-bridge] Failed to extract doc for row ${row.message_id}:`, err);
+    }
+    onProgress?.(i + 1, rows.length);
+  }
+  return successCount;
 }
 
 export interface TelegramChannel {
@@ -465,6 +575,7 @@ export interface FetchPublicTelegramOptions {
   daysToScrape?: number;
   maxPages?: number;
   maxPhotosToOcr?: number;
+  bridgeUrl?: string;
 }
 
 /**
@@ -740,6 +851,30 @@ export async function fetchPublicTelegramChannel(
     }
   }
 
+  // Extract attached documents via Telegram Media Bridge if configured
+  const effectiveBridgeUrl = (opts.bridgeUrl || (await getTelegramBridgeUrl())).trim().replace(/\/$/, '');
+  if (effectiveBridgeUrl) {
+    const docsToExtract = unique.filter(m => m.mediaType === 'document' && m.messageId > 0);
+    for (const m of docsToExtract) {
+      try {
+        const docText = await downloadAndExtractTelegramFileViaBridge(
+          effectiveBridgeUrl,
+          clean,
+          m.messageId,
+          m.docInfo || undefined
+        );
+        if (docText) {
+          const docLabel = m.docInfo || 'Attached Document';
+          m.text = m.text
+            ? `${m.text}\n\n[Extracted Document: ${docLabel}]:\n${docText}`
+            : `[Extracted Document: ${docLabel}]:\n${docText}`;
+        }
+      } catch (docErr) {
+        console.warn(`[telegram-bridge] Could not extract doc for post ${m.messageId}:`, docErr);
+      }
+    }
+  }
+
   const now = new Date().toISOString();
   const messages: TelegramMessage[] = unique.map(m => ({
     id: uuid(),
@@ -1009,6 +1144,15 @@ export async function syncTelegramChannel(
       await ocrUnextractedPhotosForChannel(channel.channel_username, channelId);
     } catch (e) {
       console.warn('[telegram] Photo backfill OCR error:', e);
+    }
+    // Also backfill any unextracted documents via bridge if configured
+    try {
+      const bridge = await getTelegramBridgeUrl();
+      if (bridge) {
+        await extractUnextractedDocumentsForChannel(channel.channel_username, channelId);
+      }
+    } catch (e) {
+      console.warn('[telegram] Doc backfill error:', e);
     }
     return res.messagesCount;
   }

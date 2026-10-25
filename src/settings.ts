@@ -174,8 +174,24 @@ export async function setTelegramAutoSyncInterval(minutes: number): Promise<void
   await setSetting(TELEGRAM_AUTO_SYNC_INTERVAL_KEY, String(minutes));
 }
 
+export const TELEGRAM_BRIDGE_URL_KEY = 'sources.telegram_bridge_url';
+
+/**
+ * URL for self-hosted or cloud Telegram Media Bridge service.
+ * Allows downloading attached PDF documents from public channels.
+ */
+export async function getTelegramBridgeUrl(): Promise<string> {
+  const val = await getSetting(TELEGRAM_BRIDGE_URL_KEY);
+  return val ? val.trim() : '';
+}
+
+export async function setTelegramBridgeUrl(url: string): Promise<void> {
+  await setSetting(TELEGRAM_BRIDGE_URL_KEY, url.trim());
+}
+
 /** Read at startup, so a saved choice survives a restart. */
 export async function applySavedVoiceLanguage(): Promise<void> {
   const language = await getVoiceLanguage();
   setSpeechLanguage(language === null ? null : localeFor(language));
 }
+
