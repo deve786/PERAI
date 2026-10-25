@@ -11,6 +11,8 @@ import {
   validateUrl,
   buildAggregatedWebsiteContent,
   extractScrapedPages,
+  extractSpaPages,
+  COMMON_SPA_PROBE_PATHS,
   type ScrapedPage,
   type ScrapedPageDetail,
 } from './websiteLogic';
@@ -146,8 +148,36 @@ export async function crawlWebsite(
         continue;
       }
 
-      const title = extractTitle(html);
+      let title = extractTitle(html);
       let content = extractTextFromHtml(html);
+
+      // If at root page (next.depth === 0), also check for modern SPA embedded pages
+      // (Turbopack, Next.js, i18n client dictionaries, live alerts/announcement APIs)
+      if (next.depth === 0) {
+        try {
+          const spaPages = await extractSpaPages(html, next.url, async (fetchUrl) => {
+            try {
+              const r = await fetchWithTimeout(fetchUrl, 10000);
+              return r.ok ? await r.text() : '';
+            } catch {
+              return '';
+            }
+          });
+
+          for (const sp of spaPages) {
+            if (sp.url === next.url && sp.content.length > content.length) {
+              // Better content for root page from SPA dictionary
+              content = sp.content;
+              if (sp.title) title = sp.title;
+            } else if (!visited.has(sp.url) && sp.content.length >= MIN_CONTENT_LENGTH) {
+              visited.add(sp.url);
+              pages.push(sp);
+            }
+          }
+        } catch (err) {
+          console.warn('SPA extraction note:', err);
+        }
+      }
 
       if (content.length < MIN_CONTENT_LENGTH) {
         if (html.length > 50) {
@@ -157,7 +187,18 @@ export async function crawlWebsite(
         }
       }
 
-      if (content.length >= MIN_CONTENT_LENGTH || pages.length === 0) {
+      // Check if page with this URL was already added
+      const existingIdx = pages.findIndex(p => p.url === next.url);
+      if (existingIdx !== -1) {
+        if (content.length > pages[existingIdx].content.length) {
+          pages[existingIdx] = {
+            url: next.url,
+            title: title || pages[existingIdx].title,
+            content,
+            depth: next.depth,
+          };
+        }
+      } else if (content.length >= MIN_CONTENT_LENGTH || pages.length === 0) {
         pages.push({
           url: next.url,
           title,
@@ -174,6 +215,20 @@ export async function crawlWebsite(
             visited.add(link);
             queue.push({ url: link, depth: next.depth + 1 });
           }
+        }
+
+        // If very few links found (SPA with client-side router navigation), probe common SPA paths
+        if (next.depth === 0 && foundLinks.length < 3) {
+          try {
+            const baseOrigin = new URL(next.url).origin;
+            for (const probePath of COMMON_SPA_PROBE_PATHS) {
+              const candidate = `${baseOrigin}${probePath}`;
+              if (!visited.has(candidate) && visited.size < maxPages * 3) {
+                visited.add(candidate);
+                queue.push({ url: candidate, depth: 1 });
+              }
+            }
+          } catch {}
         }
       }
     } catch (err) {

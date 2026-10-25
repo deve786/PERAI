@@ -10,15 +10,39 @@ export interface ScrapedPage {
   depth: number;
 }
 
+export const COMMON_SPA_PROBE_PATHS = [
+  '/faq',
+  '/cancellation-policy',
+  '/alert-announcements',
+  '/circular-announcements',
+  '/about',
+  '/about-us',
+  '/about-lakshadweep',
+  '/about-irctc',
+  '/terms',
+  '/terms-conditions',
+  '/privacy',
+  '/privacy-policy',
+  '/contact',
+  '/contact-us',
+  '/help',
+  '/support',
+  '/help-support',
+  '/boarding-steps',
+  '/schedule',
+  '/booking',
+  '/services',
+  '/gallery',
+];
+
 /**
  * Extracts links pointing to pages under the same website / domain.
+ * Supports standard <a> tags, <link> tags, routerLink/data-href attributes,
+ * and client-side route paths inside scripts.
  * Filters out external domains, fragments, tracking params, and non-HTML assets.
  */
 export function extractLinksFromHtml(html: string, baseUrl: string): string[] {
   const links: string[] = [];
-  const regex = /<a\b[^>]*?\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^>\s]+))[^>]*>/gi;
-  let match: RegExpExecArray | null;
-
   let parsedBase: URL;
   try {
     parsedBase = new URL(baseUrl);
@@ -26,29 +50,29 @@ export function extractLinksFromHtml(html: string, baseUrl: string): string[] {
     return [];
   }
 
-  while ((match = regex.exec(html)) !== null) {
-    const rawHref = (match[1] || match[2] || match[3] || '').trim();
+  const considerHref = (rawHref: string) => {
+    const trimmed = (rawHref || '').trim();
     if (
-      !rawHref ||
-      rawHref.startsWith('#') ||
-      rawHref.startsWith('javascript:') ||
-      rawHref.startsWith('mailto:') ||
-      rawHref.startsWith('tel:')
+      !trimmed ||
+      trimmed.startsWith('#') ||
+      trimmed.startsWith('javascript:') ||
+      trimmed.startsWith('mailto:') ||
+      trimmed.startsWith('tel:')
     ) {
-      continue;
+      return;
     }
 
     try {
-      const resolved = new URL(rawHref, baseUrl);
+      const resolved = new URL(trimmed, baseUrl);
 
       // Only HTTP or HTTPS
       if (resolved.protocol !== 'http:' && resolved.protocol !== 'https:') {
-        continue;
+        return;
       }
 
       // Must be same hostname (same website)
       if (resolved.hostname.toLowerCase() !== parsedBase.hostname.toLowerCase()) {
-        continue;
+        return;
       }
 
       // Strip hash
@@ -77,7 +101,7 @@ export function extractLinksFromHtml(html: string, baseUrl: string): string[] {
           pathname
         )
       ) {
-        continue;
+        return;
       }
 
       // Normalize trailing slash if not root
@@ -89,6 +113,42 @@ export function extractLinksFromHtml(html: string, baseUrl: string): string[] {
       links.push(cleanUrl);
     } catch {
       // Ignore invalid URLs
+    }
+  };
+
+  // 1. Standard <a> tags
+  const aRegex = /<a\b[^>]*?\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^>\s]+))[^>]*>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = aRegex.exec(html)) !== null) {
+    considerHref(match[1] || match[2] || match[3]);
+  }
+
+  // 2. Canonical and alternate <link> tags
+  const linkRegex = /<link\b[^>]*?\brel\s*=\s*["'](?:canonical|alternate)["'][^>]*?\bhref\s*=\s*(?:"([^"]*)"|'([^']*)')[^>]*>/gi;
+  while ((match = linkRegex.exec(html)) !== null) {
+    considerHref(match[1] || match[2]);
+  }
+
+  // 3. SPA router attributes: routerLink, data-href, data-url, to
+  const spaAttrRegex = /\b(?:routerLink|data-href|data-url|to)\s*=\s*(?:"([^"]*)"|'([^']*)')[^>]*>/gi;
+  while ((match = spaAttrRegex.exec(html)) !== null) {
+    considerHref(match[1] || match[2]);
+  }
+
+  // 4. Quoted route paths inside scripts or attributes like "/faq", "/about", etc.
+  const pathRegex = /["'`]((\/(?:[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_-]+))["'`]/g;
+  while ((match = pathRegex.exec(html)) !== null) {
+    const p = match[1];
+    if (
+      p.length > 2 &&
+      p.length < 50 &&
+      !p.startsWith('/_next') &&
+      !p.startsWith('/static') &&
+      !p.startsWith('/node_modules') &&
+      !p.includes('.') &&
+      !p.includes('(')
+    ) {
+      considerHref(p);
     }
   }
 
@@ -110,9 +170,19 @@ export function extractTitle(html: string): string | null {
 
 /**
  * Enhanced HTML text extraction.
- * Preserves paragraphs, line breaks, bullet lists, tables, and image descriptions.
+ * Preserves paragraphs, line breaks, bullet lists, tables, image descriptions,
+ * meta descriptions, and JSON-LD structured data.
  */
 export function extractTextFromHtml(html: string): string {
+  // Capture meta description for SPAs with minimal static HTML
+  let metaDesc = '';
+  const metaMatch = html.match(
+    /<meta\b[^>]*?\b(?:name|property)\s*=\s*["'](?:description|og:description)["'][^>]*?\bcontent\s*=\s*["']([^"']+)["'][^>]*>/i
+  );
+  if (metaMatch && metaMatch[1]) {
+    metaDesc = metaMatch[1].trim();
+  }
+
   // Remove script, style, and svg tags
   let text = html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
   text = text.replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '');
@@ -139,13 +209,299 @@ export function extractTextFromHtml(html: string): string {
   text = text.replace(/&#39;/g, "'");
 
   // Clean lines: trim each line and preserve meaningful paragraph breaks
-  text = text
+  const cleaned = text
     .split('\n')
     .map((line) => line.trim())
     .filter((line, i, arr) => line.length > 0 || (i > 0 && arr[i - 1].length > 0))
-    .join('\n');
+    .join('\n')
+    .trim();
 
-  return text.trim();
+  if (cleaned.length < 30 && metaDesc.length > 0) {
+    return cleaned ? `${cleaned}\n\n${metaDesc}` : metaDesc;
+  }
+
+  return cleaned;
+}
+
+/**
+ * Extracts rich pages embedded in modern SPA bundles (Turbopack, Next.js, i18n dictionaries, and live API endpoints).
+ * Allows full page-by-page extraction of client-side rendered portals like lakshadweep.irctc.co.in.
+ */
+export async function extractSpaPages(
+  html: string,
+  rootUrl: string,
+  fetchFn: (url: string) => Promise<string>
+): Promise<ScrapedPage[]> {
+  const pages: ScrapedPage[] = [];
+
+  let rootHost = '';
+  try {
+    rootHost = new URL(rootUrl).hostname.toLowerCase();
+  } catch {
+    return [];
+  }
+
+  // 1. Discover script tags on the same domain
+  const scriptRegex = /<script\b[^>]*src=["']([^"']+)["'][^>]*>/gi;
+  let m: RegExpExecArray | null;
+  const scriptUrls: string[] = [];
+
+  while ((m = scriptRegex.exec(html)) !== null) {
+    let sUrl = m[1].trim();
+    if (sUrl.startsWith('//')) sUrl = 'https:' + sUrl;
+    else if (sUrl.startsWith('/')) {
+      try {
+        sUrl = new URL(sUrl, rootUrl).toString();
+      } catch {}
+    }
+    try {
+      const parsed = new URL(sUrl);
+      if (parsed.hostname.toLowerCase() === rootHost && !scriptUrls.includes(sUrl)) {
+        scriptUrls.push(sUrl);
+      }
+    } catch {}
+  }
+
+  // 2. Scan scripts for client dictionaries (e.g. Next.js Turbopack JSON.parse('{"en":{...}}') or i18n JSON)
+  let dictData: any = null;
+  for (const sUrl of scriptUrls) {
+    try {
+      const code = await fetchFn(sUrl);
+      if (!code) continue;
+
+      const marker = "JSON.parse('";
+      let startIdx = 0;
+      while ((startIdx = code.indexOf(marker, startIdx)) !== -1) {
+        const strStart = startIdx + marker.length;
+        const endIdx = code.indexOf("')", strStart);
+        if (endIdx > strStart) {
+          try {
+            const rawLiteral = code.slice(strStart, endIdx);
+            // evaluate escaped string literal
+            // eslint-disable-next-line no-eval
+            const jsonStr = eval("'" + rawLiteral + "'");
+            const parsed = JSON.parse(jsonStr);
+            if (parsed && (parsed.en || parsed.aboutLakshadweep || parsed.faq || parsed.cancellationPolicy)) {
+              dictData = parsed;
+              break;
+            }
+          } catch {}
+        }
+        startIdx = strStart + 1;
+      }
+      if (dictData) break;
+    } catch {}
+  }
+
+  // 3. Check for live schedule/announcement APIs (e.g. /api/v1/alert)
+  try {
+    const alertUrl = new URL('/api/v1/alert', rootUrl).toString();
+    const alertRaw = await fetchFn(alertUrl);
+    if (alertRaw) {
+      try {
+        const alertJson = JSON.parse(alertRaw);
+        const list = alertJson?.data?.alertList;
+        if (Array.isArray(list) && list.length > 0) {
+          let alertContent = 'LAKSHADWEEP VOYAGE ALERTS & NOTICES\n\n';
+          list.forEach((item: any, i: number) => {
+            const title = (item.title || 'Notice').trim();
+            const desc = (item.description || '').trim();
+            alertContent += `========================================\n`;
+            alertContent += `Notice ${i + 1}: ${title}\n`;
+            if (desc) alertContent += `Details:\n${desc}\n`;
+            alertContent += `\n`;
+          });
+          pages.push({
+            url: new URL('/alert-announcements', rootUrl).toString(),
+            title: 'Alerts & Voyage Announcements',
+            content: alertContent.trim(),
+            depth: 1,
+          });
+        }
+      } catch {}
+    }
+  } catch {}
+
+  if (dictData) {
+    const dict = dictData.en || dictData;
+
+    // Home / Overview Page
+    let homeText = `${extractTitle(html) || 'Lakshadweep Tourism - Official Portal'}\n\n`;
+    if (dict.hero) {
+      if (dict.hero.title) homeText += `${dict.hero.title}\n`;
+      if (dict.hero.subtitle) homeText += `${dict.hero.subtitle}\n\n`;
+    }
+    if (dict.about) {
+      for (const v of Object.values(dict.about)) {
+        if (typeof v === 'string') homeText += `${v}\n\n`;
+      }
+    }
+    if (dict.bookingSteps) {
+      homeText += 'BOOKING PROCESS:\n';
+      for (const [k, v] of Object.entries(dict.bookingSteps)) {
+        if (typeof v === 'string') homeText += `• ${v}\n`;
+      }
+      homeText += '\n';
+    }
+    pages.push({
+      url: rootUrl,
+      title: 'Lakshadweep Tourism - Official Portal',
+      content: homeText.trim(),
+      depth: 0,
+    });
+
+    // FAQ Page
+    if (dict.faq || dict.faqItems) {
+      let faqText = 'FREQUENTLY ASKED QUESTIONS & ANSWERS\n\n';
+      const catLabels: Record<string, string> = dict.faq?.categories || {};
+      if (Array.isArray(dict.faq?.questions)) {
+        let currentCat = '';
+        for (const item of dict.faq.questions) {
+          const cat = item.category || 'General';
+          if (cat !== currentCat) {
+            currentCat = cat;
+            const heading = catLabels[cat] || cat.toUpperCase();
+            faqText += `\n=== CATEGORY: ${heading} ===\n\n`;
+          }
+          faqText += `Q: ${item.question}\n`;
+          if (Array.isArray(item.answer)) {
+            faqText += `A:\n${item.answer.map((a: string) => `  • ${a}`).join('\n')}\n\n`;
+          } else if (item.answer) {
+            faqText += `A: ${item.answer}\n\n`;
+          } else {
+            faqText += `\n`;
+          }
+        }
+      }
+      pages.push({
+        url: new URL('/faq', rootUrl).toString(),
+        title: 'Frequently Asked Questions (FAQ)',
+        content: faqText.trim(),
+        depth: 1,
+      });
+    }
+
+    // Cancellation Policy Page
+    if (dict.cancellationPolicy) {
+      let cpText = 'CANCELLATION & REFUND POLICY\n\n';
+      for (const [k, v] of Object.entries(dict.cancellationPolicy)) {
+        if (typeof v === 'string') {
+          const label = k.replace(/([A-Z])/g, ' $1').replace(/^./, (str) => str.toUpperCase());
+          cpText += `${label}: ${v}\n`;
+        }
+      }
+      pages.push({
+        url: new URL('/cancellation-policy', rootUrl).toString(),
+        title: 'Cancellation and Refund Policy',
+        content: cpText.trim(),
+        depth: 1,
+      });
+    }
+
+    // Terms and Conditions Page
+    if (dict.termsConditions) {
+      let tcText = 'TERMS & CONDITIONS\n\n';
+      for (const [k, v] of Object.entries(dict.termsConditions)) {
+        if (typeof v === 'string') {
+          const label = k.replace(/([A-Z])/g, ' $1').replace(/^./, (str) => str.toUpperCase());
+          tcText += `${label}: ${v}\n`;
+        }
+      }
+      pages.push({
+        url: new URL('/terms-conditions', rootUrl).toString(),
+        title: 'Terms and Conditions',
+        content: tcText.trim(),
+        depth: 1,
+      });
+    }
+
+    // About Lakshadweep Islands Page
+    if (dict.aboutLakshadweep) {
+      let alText = 'ABOUT LAKSHADWEEP ISLANDS\n\n';
+      for (const [k, v] of Object.entries(dict.aboutLakshadweep)) {
+        if (typeof v === 'string') {
+          const label = k.replace(/([A-Z])/g, ' $1').replace(/^./, (str) => str.toUpperCase());
+          alText += `${label}: ${v}\n`;
+        }
+      }
+      pages.push({
+        url: new URL('/about-lakshadweep', rootUrl).toString(),
+        title: 'About Lakshadweep Islands & Ports',
+        content: alText.trim(),
+        depth: 1,
+      });
+    }
+
+    // Boarding Steps Page
+    if (dict.boardingSteps) {
+      let bsText = 'PASSENGER BOARDING & WEB CHECK-IN GUIDELINES\n\n';
+      for (const [k, v] of Object.entries(dict.boardingSteps)) {
+        if (typeof v === 'string') {
+          const label = k.replace(/([A-Z])/g, ' $1').replace(/^./, (str) => str.toUpperCase());
+          bsText += `${label}: ${v}\n`;
+        }
+      }
+      pages.push({
+        url: new URL('/boarding-steps', rootUrl).toString(),
+        title: 'Passenger Boarding & Web Check-in Guidelines',
+        content: bsText.trim(),
+        depth: 1,
+      });
+    }
+
+    // Help & Support Page
+    if (dict.helpSupport) {
+      let hsText = 'HELP & CUSTOMER SUPPORT\n\n';
+      for (const [k, v] of Object.entries(dict.helpSupport)) {
+        if (typeof v === 'string') {
+          const label = k.replace(/([A-Z])/g, ' $1').replace(/^./, (str) => str.toUpperCase());
+          hsText += `${label}: ${v}\n`;
+        }
+      }
+      pages.push({
+        url: new URL('/help-support', rootUrl).toString(),
+        title: 'Help & Customer Support',
+        content: hsText.trim(),
+        depth: 1,
+      });
+    }
+
+    // About IRCTC Page
+    if (dict.aboutIrctc) {
+      let aiText = 'ABOUT IRCTC\n\n';
+      for (const [k, v] of Object.entries(dict.aboutIrctc)) {
+        if (typeof v === 'string') {
+          const label = k.replace(/([A-Z])/g, ' $1').replace(/^./, (str) => str.toUpperCase());
+          aiText += `${label}: ${v}\n`;
+        }
+      }
+      pages.push({
+        url: new URL('/about-irctc', rootUrl).toString(),
+        title: 'About IRCTC Enterprise',
+        content: aiText.trim(),
+        depth: 1,
+      });
+    }
+
+    // Announcements Page
+    if (dict.announcements) {
+      let annText = 'LAKSHADWEEP TOURISM ANNOUNCEMENTS\n\n';
+      for (const [k, v] of Object.entries(dict.announcements)) {
+        if (typeof v === 'string') {
+          const label = k.replace(/([A-Z])/g, ' $1').replace(/^./, (str) => str.toUpperCase());
+          annText += `${label}: ${v}\n`;
+        }
+      }
+      pages.push({
+        url: new URL('/announcements', rootUrl).toString(),
+        title: 'Official Announcements',
+        content: annText.trim(),
+        depth: 1,
+      });
+    }
+  }
+
+  return pages;
 }
 
 /**

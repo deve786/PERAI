@@ -10,6 +10,16 @@ export interface ChangelogEntry {
 /** Newest first. Add a new entry here with every release that changes user-visible behaviour. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.30.38',
+    build: 141,
+    type: 'ota',
+    date: '2026-10-25',
+    time: '09:34 AM',
+    highlights: [
+      'Show all scraped pages with URLs and per-page data view for websites',
+    ],
+  },
+  {
     version: '1.30.37',
     build: 140,
     type: 'ota',

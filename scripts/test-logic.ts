@@ -73,6 +73,8 @@ import {
   buildAggregatedWebsiteContent,
   extractRelevantWebsiteSnippets,
   extractScrapedPages,
+  extractSpaPages,
+  COMMON_SPA_PROBE_PATHS,
   type ScrapedPage,
 } from '../src/sources/websiteLogic';
 import {
@@ -1933,6 +1935,40 @@ section('website multi-page crawling & content aggregation');
 
   const fallbackParsed = extractScrapedPages('Just some legacy scraped text here.', 'https://single.com');
   check('extracts single fallback page for legacy/unmarked content', fallbackParsed.length === 1 && fallbackParsed[0].url === 'https://single.com' && fallbackParsed[0].content === 'Just some legacy scraped text here.');
+
+  // SPA link discovery
+  const spaHtml = `
+    <!DOCTYPE html><html><head><link rel="canonical" href="https://spa.org/canonical"/></head>
+    <body>
+      <div routerLink="/portal">Portal</div>
+      <button data-href="/contact-support">Contact</button>
+      <script>
+        const nav = ['/faq', '/cancellation-policy'];
+      </script>
+    </body></html>
+  `;
+  const spaLinks = extractLinksFromHtml(spaHtml, 'https://spa.org');
+  check('discovers canonical links', spaLinks.includes('https://spa.org/canonical'));
+  check('discovers routerLink attribute', spaLinks.includes('https://spa.org/portal'));
+  check('discovers data-href attribute', spaLinks.includes('https://spa.org/contact-support'));
+  check('discovers script router paths', spaLinks.includes('https://spa.org/faq') && spaLinks.includes('https://spa.org/cancellation-policy'));
+  check('common SPA probe paths include faq and cancellation', COMMON_SPA_PROBE_PATHS.includes('/faq') && COMMON_SPA_PROBE_PATHS.includes('/cancellation-policy'));
+
+  // Test extractSpaPages async logic
+  const mockSpaHtml = `<html><head><title>Portal</title><script src="https://spa.org/_next/static/chunks/data.js"></script></head><body><div hidden=""></div></body></html>`;
+  const mockChunk = `(globalThis.TURBOPACK||[]).push(["data.js",1,(e,t)=>{t.exports=JSON.parse('{\\"en\\":{\\"faq\\":{\\"questions\\":[{\\"question\\":\\"How to book?\\",\\"answer\\":\\"Online.\\"}]},\\"cancellationPolicy\\":{\\"tenPercentDeduction\\":\\"10% deduction more than 48 hours\\"},\\"aboutLakshadweep\\":{\\"intro\\":\\"36 islands\\"},\\"boardingSteps\\":{\\"step1\\":\\"Bring ID proof\\"}}})}')]);`;
+  const mockAlertJson = JSON.stringify({ status: 'success', data: { alertList: [{ title: 'Special HSC Schedule', description: 'KVT-AGT' }] } });
+
+  void extractSpaPages(mockSpaHtml, 'https://spa.org', async (url) => {
+    if (url.includes('data.js')) return mockChunk;
+    if (url.includes('/api/v1/alert')) return mockAlertJson;
+    return '';
+  }).then((spaExtracted) => {
+    check('extracts multiple distinct SPA subpages', spaExtracted.length >= 4);
+    check('extracts FAQ page with questions', spaExtracted.some(p => p.url === 'https://spa.org/faq' && p.content.includes('How to book?')));
+    check('extracts Cancellation Policy page', spaExtracted.some(p => p.url === 'https://spa.org/cancellation-policy' && p.content.includes('10% deduction')));
+    check('extracts live Alerts page', spaExtracted.some(p => p.url === 'https://spa.org/alert-announcements' && p.content.includes('Special HSC Schedule')));
+  });
 }
 
 section('telegram incremental sync & auto-sync intervals');
