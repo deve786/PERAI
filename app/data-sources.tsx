@@ -206,27 +206,81 @@ export default function DataSourcesScreen() {
     try {
       await deleteDocument(id);
       await loadData();
+      void syncSourcesNow();
     } catch (err) {
       showDialog({ title: 'Delete failed', message: err instanceof Error ? err.message : String(err) });
     }
+  }
+
+  function confirmDeleteDocument(doc: Document) {
+    showDialog({
+      title: 'Delete Document?',
+      message: `Remove "${doc.filename}" and its ${doc.chunkCount} search chunks from your database? This cannot be undone.`,
+      actions: [
+        { label: 'Cancel', cancel: true },
+        {
+          label: 'Delete',
+          destructive: true,
+          onPress: () => {
+            void removeDocument(doc.id);
+          },
+        },
+      ],
+    });
   }
 
   async function removeWebsite(id: string) {
     try {
       await deleteWebsite(id);
       await loadData();
+      void syncSourcesNow();
     } catch (err) {
       showDialog({ title: 'Delete failed', message: err instanceof Error ? err.message : String(err) });
     }
+  }
+
+  function confirmDeleteWebsite(site: WebsiteData) {
+    showDialog({
+      title: 'Delete Website?',
+      message: `Remove "${site.title || site.url}" and all its scraped pages from your database?`,
+      actions: [
+        { label: 'Cancel', cancel: true },
+        {
+          label: 'Delete',
+          destructive: true,
+          onPress: () => {
+            void removeWebsite(site.id);
+          },
+        },
+      ],
+    });
   }
 
   async function removeChannel(id: string) {
     try {
       await deleteTelegramChannel(id);
       await loadData();
+      void syncSourcesNow();
     } catch (err) {
       showDialog({ title: 'Delete failed', message: err instanceof Error ? err.message : String(err) });
     }
+  }
+
+  function confirmDeleteChannel(ch: TelegramChannel) {
+    showDialog({
+      title: 'Delete Telegram Channel?',
+      message: `Remove "${ch.channelName || ch.channelUsername}" and all its saved messages from your database?`,
+      actions: [
+        { label: 'Cancel', cancel: true },
+        {
+          label: 'Delete',
+          destructive: true,
+          onPress: () => {
+            void removeChannel(ch.id);
+          },
+        },
+      ],
+    });
   }
 
   async function refreshWebsiteData(id: string) {
@@ -410,6 +464,8 @@ export default function DataSourcesScreen() {
   }
 
   const [previewItem, setPreviewItem] = useState<{
+    id?: string;
+    type?: 'document' | 'website' | 'telegram';
     title: string;
     subtitle: string;
     content: string;
@@ -423,6 +479,8 @@ export default function DataSourcesScreen() {
         ? chunks.map((c, i) => `=== Search Chunk ${i + 1} (Page ${c.pageNumber ?? 1}) ===\n${c.content}`).join('\n\n')
         : 'No text extracted.';
       setPreviewItem({
+        id: doc.id,
+        type: 'document',
         title: doc.filename,
         subtitle: `${doc.chunkCount} search chunks · ${(doc.fileSize / 1024).toFixed(0)} KB`,
         content,
@@ -436,6 +494,8 @@ export default function DataSourcesScreen() {
   function viewWebsite(site: WebsiteData) {
     const words = site.content.trim() ? Math.round(site.content.trim().split(/\s+/).length) : 0;
     setPreviewItem({
+      id: site.id,
+      type: 'website',
       title: site.title || site.url,
       subtitle: site.url,
       content: site.content,
@@ -450,6 +510,8 @@ export default function DataSourcesScreen() {
         ? msgs.map((m) => `[${formatDateTime(m.messageDate)}] ${m.senderName || 'Channel'}:\n${m.messageText || '(Media message)'}`).join('\n\n')
         : 'No messages saved yet.';
       setPreviewItem({
+        id: ch.id,
+        type: 'telegram',
         title: ch.channelName || ch.channelUsername,
         subtitle: ch.channelUsername,
         content,
@@ -610,20 +672,24 @@ export default function DataSourcesScreen() {
             ) : (
               <ListCard>
                 {documents.map((doc, i) => (
-                  <Pressable
+                  <View
                     key={doc.id}
-                    onPress={() => void viewDocument(doc)}
-                    style={({ pressed }) => ({
+                    style={{
                       paddingVertical: 12,
                       paddingHorizontal: 4,
                       borderBottomWidth: i === documents.length - 1 ? 0 : StyleSheet.hairlineWidth,
                       borderBottomColor: c.line,
-                      opacity: pressed ? 0.6 : 1,
-                    })}
+                    }}
                   >
                     <Row style={{ alignItems: 'center', gap: 12 }}>
                       <Ionicons name="document-text" size={20} color={c.accent} />
-                      <View style={{ flex: 1 }}>
+                      <Pressable
+                        onPress={() => void viewDocument(doc)}
+                        style={({ pressed }) => ({
+                          flex: 1,
+                          opacity: pressed ? 0.6 : 1,
+                        })}
+                      >
                         <T size={15} numberOfLines={1}>{doc.filename}</T>
                         <Row style={{ alignItems: 'center', gap: 4, marginTop: 2 }}>
                           <Ionicons name="checkmark-circle" size={13} color={c.good} />
@@ -634,12 +700,20 @@ export default function DataSourcesScreen() {
                         <T size={11} sub style={{ marginTop: 1 }}>
                           {(doc.fileSize / 1024).toFixed(0)} KB · Synced {formatDateTime(doc.uploadedAt)} · Tap to view
                         </T>
-                      </View>
-                      <Pressable onPress={() => void removeDocument(doc.id)} hitSlop={10}>
+                      </Pressable>
+                      <Pressable
+                        onPress={() => confirmDeleteDocument(doc)}
+                        hitSlop={12}
+                        style={({ pressed }) => ({
+                          padding: 8,
+                          borderRadius: radius.sm,
+                          opacity: pressed ? 0.5 : 1,
+                        })}
+                      >
                         <Ionicons name="trash-outline" size={18} color={c.danger} />
                       </Pressable>
                     </Row>
-                  </Pressable>
+                  </View>
                 ))}
               </ListCard>
             )}
@@ -753,7 +827,15 @@ export default function DataSourcesScreen() {
                             <Ionicons name="refresh" size={18} color={c.text} />
                           )}
                         </Pressable>
-                        <Pressable onPress={() => void removeWebsite(site.id)} hitSlop={10}>
+                        <Pressable
+                          onPress={() => confirmDeleteWebsite(site)}
+                          hitSlop={12}
+                          style={({ pressed }) => ({
+                            padding: 8,
+                            borderRadius: radius.sm,
+                            opacity: pressed ? 0.5 : 1,
+                          })}
+                        >
                           <Ionicons name="trash-outline" size={18} color={c.danger} />
                         </Pressable>
                       </Row>
@@ -937,7 +1019,15 @@ export default function DataSourcesScreen() {
                               <Ionicons name="refresh" size={18} color={c.text} />
                             )}
                           </Pressable>
-                          <Pressable onPress={() => void removeChannel(ch.id)} hitSlop={10}>
+                          <Pressable
+                            onPress={() => confirmDeleteChannel(ch)}
+                            hitSlop={12}
+                            style={({ pressed }) => ({
+                              padding: 8,
+                              borderRadius: radius.sm,
+                              opacity: pressed ? 0.5 : 1,
+                            })}
+                          >
                             <Ionicons name="trash-outline" size={18} color={c.danger} />
                           </Pressable>
                         </Row>
@@ -980,12 +1070,41 @@ export default function DataSourcesScreen() {
               </T>
             </Card>
 
-            <Button
-              title="Close"
-              kind="ghost"
-              onPress={() => setPreviewItem(null)}
-              style={{ marginTop: 8 }}
-            />
+            <Row style={{ gap: 8, marginTop: 8 }}>
+              {previewItem?.type === 'document' && previewItem.id && (
+                <Button
+                  title="Delete Document"
+                  icon="trash-outline"
+                  kind="danger"
+                  onPress={() => {
+                    const docId = previewItem.id!;
+                    const docName = previewItem.title;
+                    setPreviewItem(null);
+                    showDialog({
+                      title: 'Delete Document?',
+                      message: `Remove "${docName}" from your database? This cannot be undone.`,
+                      actions: [
+                        { label: 'Cancel', cancel: true },
+                        {
+                          label: 'Delete',
+                          destructive: true,
+                          onPress: () => {
+                            void removeDocument(docId);
+                          },
+                        },
+                      ],
+                    });
+                  }}
+                  style={{ flex: 1, borderWidth: 1, borderColor: `${c.danger}40`, backgroundColor: `${c.danger}10` }}
+                />
+              )}
+              <Button
+                title="Close"
+                kind="ghost"
+                onPress={() => setPreviewItem(null)}
+                style={{ flex: 1 }}
+              />
+            </Row>
           </ScrollView>
         </Screen>
       </Modal>

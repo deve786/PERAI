@@ -412,8 +412,11 @@ export async function deleteDocument(id: string): Promise<void> {
     }
   }
 
-  // Soft delete from database (chunks cascade delete)
-  await db.runAsync('UPDATE documents SET deleted = 1 WHERE id = ?', [id]);
+  // Delete all indexed search chunks for this document
+  await db.runAsync('DELETE FROM document_chunks WHERE document_id = ?', [id]);
+
+  // Mark document as deleted and dirty for cloud sync, reset chunk_count
+  await db.runAsync('UPDATE documents SET deleted = 1, dirty = 1, chunk_count = 0 WHERE id = ?', [id]);
 }
 
 export async function clearAllDocuments(): Promise<number> {
@@ -428,7 +431,7 @@ export async function clearAllDocuments(): Promise<number> {
       } catch {}
     }
   }
-  await db.runAsync('UPDATE documents SET deleted = 1');
+  await db.runAsync('UPDATE documents SET deleted = 1, dirty = 1, chunk_count = 0 WHERE deleted = 0');
   await db.runAsync('DELETE FROM document_chunks');
   return docs.length;
 }
@@ -436,14 +439,14 @@ export async function clearAllDocuments(): Promise<number> {
 export async function cleanupEmptyDocuments(): Promise<number> {
   const db = await getSourcesDb();
 
-  // 1. First recover any documents that have chunks
+  // 1. Recover active documents (deleted = 0) where chunk_count or processed was unset
   await db.runAsync(`
     UPDATE documents
-    SET deleted = 0,
-        processed = 1,
+    SET processed = 1,
         chunk_count = (SELECT COUNT(*) FROM document_chunks WHERE document_id = documents.id)
-    WHERE (SELECT COUNT(*) FROM document_chunks WHERE document_id = documents.id) > 0
-      AND (deleted = 1 OR chunk_count = 0 OR processed = 0)
+    WHERE deleted = 0
+      AND (SELECT COUNT(*) FROM document_chunks WHERE document_id = documents.id) > 0
+      AND (chunk_count = 0 OR processed = 0)
   `).catch(() => {});
 
   // 2. Only clean up failed abandoned items older than 2 hours that truly have 0 chunks
