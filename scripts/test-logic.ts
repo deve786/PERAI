@@ -65,6 +65,15 @@ import { toSentence } from '../src/format';
 import { refundReminderTimes } from '../src/expense/refundSchedule';
 import { monthsWithData, OVERALL, periodLabel, periodRange, previousMonth } from '../src/expense/period';
 import { stitchChunkContents, groupAndStitchDocumentChunks, verifyItemGrounding } from '../src/sources/chunkLogic';
+import {
+  extractLinksFromHtml,
+  extractTitle,
+  extractTextFromHtml,
+  normalizeWebsiteUrl,
+  buildAggregatedWebsiteContent,
+  extractRelevantWebsiteSnippets,
+  type ScrapedPage,
+} from '../src/sources/websiteLogic';
 import type { DocumentChunk } from '../src/sources/types';
 import { needsTranslation, normalizeMoney, normalizeQuery } from '../src/manglish';
 import {
@@ -1864,6 +1873,50 @@ section('hallucination detection & grounding verification');
   check('detects hallucinated entry on 24/10/26', verifyItemGrounding('24/10/26 · MV LAGOONS · KLT CHT BTR', scheduleTable).verified === false);
   check('detects non-existent date', verifyItemGrounding('31/10/26 · MV LAGOONS · BTR CHT KLT', scheduleTable).verified === false);
   check('verifies correct details for 24/10/26', verifyItemGrounding('24/10/26 · MV LAGOONS · AMN KDM KLP', scheduleTable).verified === true);
+}
+
+section('website multi-page crawling & content aggregation');
+{
+  const html = `
+    <!DOCTYPE html>
+    <html>
+      <head><title>Lakshadweep Port</title></head>
+      <body>
+        <h1>Official Port Department</h1>
+        <p>Main shipping office and ferry operations.</p>
+        <a href="/schedule">Ferry Schedule</a>
+        <a href="https://port.gov/fares.html?ref=nav#top">Passenger Fares</a>
+        <a href="downloads/notice.pdf">PDF Notice</a>
+        <a href="https://external-news.com/today">External</a>
+        <a href="javascript:alert(1)">JS</a>
+        <a href="mailto:info@port.gov">Email</a>
+      </body>
+    </html>
+  `;
+
+  const links = extractLinksFromHtml(html, 'https://port.gov/');
+  check('extracts relative links under same website', links.includes('https://port.gov/schedule'));
+  check('extracts absolute links on same domain and cleans tracking params', links.includes('https://port.gov/fares.html'));
+  check('excludes PDF and binary assets from link extraction', !links.some(l => l.endsWith('.pdf')));
+  check('excludes external domains', !links.some(l => l.includes('external-news.com')));
+  check('excludes javascript, mailto, and fragment links', !links.some(l => l.startsWith('javascript:') || l.startsWith('mailto:')));
+
+  check('normalizes URLs without protocol to https', normalizeWebsiteUrl('port.gov') === 'https://port.gov');
+  check('normalizes telegram channel URLs', normalizeWebsiteUrl('t.me/lakport') === 'https://t.me/s/lakport');
+
+  const pages: ScrapedPage[] = [
+    { url: 'https://port.gov', title: 'Port Home', content: 'Welcome to Port Dept.', depth: 0 },
+    { url: 'https://port.gov/schedule', title: 'Voyage Schedule', content: 'MV KAVARATTI departs Kochi on 25 Oct.', depth: 1 },
+    { url: 'https://port.gov/fares', title: 'Passenger Fares', content: 'Bunk ticket is 350 INR.', depth: 1 },
+  ];
+
+  const aggregated = buildAggregatedWebsiteContent('https://port.gov', pages);
+  check('aggregates all pages into title with count', aggregated.title === 'Port Home (3 pages)');
+  check('aggregated content contains overview block', aggregated.content.includes('=== WEBSITE OVERVIEW ==='));
+  check('aggregated content includes page 1 and page 2', aggregated.content.includes('PAGE 1: Port Home') && aggregated.content.includes('PAGE 2: Voyage Schedule'));
+
+  const snippet = extractRelevantWebsiteSnippets(aggregated.content, 'What is the fare for a ticket?', 5000);
+  check('extracts relevant subpage based on query keywords', snippet.includes('Bunk ticket is 350 INR.'));
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

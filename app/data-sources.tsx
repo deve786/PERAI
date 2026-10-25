@@ -48,6 +48,7 @@ export default function DataSourcesScreen() {
   const [uploadingDoc, setUploadingDoc] = useState(false);
   const [addingWebsite, setAddingWebsite] = useState(false);
   const [savingWebsite, setSavingWebsite] = useState(false);
+  const [scrapeProgress, setScrapeProgress] = useState('');
   const [websiteUrl, setWebsiteUrl] = useState('');
   const [addingTelegram, setAddingTelegram] = useState(false);
   const [savingTelegram, setSavingTelegram] = useState(false);
@@ -119,8 +120,15 @@ export default function DataSourcesScreen() {
     if (!url || savingWebsite) return;
 
     setSavingWebsite(true);
+    setScrapeProgress('Discovering pages...');
     try {
-      const site = await addWebsite(url);
+      const site = await addWebsite(url, (p) => {
+        setScrapeProgress(
+          p.totalFound > 1
+            ? `Scraping page ${p.current} of ${p.totalFound}...`
+            : 'Scraping webpage...'
+        );
+      });
       setWebsiteUrl('');
       setAddingWebsite(false);
       await loadData();
@@ -132,15 +140,16 @@ export default function DataSourcesScreen() {
       const wordCount = site.content.trim() ? site.content.trim().split(/\s+/).length : 0;
       const isTg = !!parseTelegramChannel(url);
       showDialog({
-        title: isTg ? 'Telegram Channel Saved in DB' : 'Website Saved in DB',
+        title: isTg ? 'Telegram Channel Saved in DB' : 'Website & All Pages Saved',
         message: isTg
           ? `${site.title || site.url}\n\n✓ Scraped & synced on ${formatDateTime(site.lastUpdated)}:\n• ${charCount.toLocaleString()} characters extracted\n• ~${wordCount.toLocaleString()} words indexed\n• Messages, photos, & documents saved\n\nSearchable in both Websites and Telegram sources!`
-          : `${site.title || site.url}\n\n✓ Synced on ${formatDateTime(site.lastUpdated)}:\n• ${charCount.toLocaleString()} characters extracted\n• ~${wordCount.toLocaleString()} words indexed\n\nContent is stored in the database and searchable in the Ask tab.`,
+          : `${site.title || site.url}\n\n✓ Scraped all pages & synced on ${formatDateTime(site.lastUpdated)}:\n• ${charCount.toLocaleString()} characters extracted\n• ~${wordCount.toLocaleString()} words indexed\n\nAll discovered pages under this website are stored in your database and searchable in the Ask tab.`,
       });
     } catch (err) {
       showDialog({ title: 'Failed to add website', message: err instanceof Error ? err.message : String(err) });
     } finally {
       setSavingWebsite(false);
+      setScrapeProgress('');
     }
   }
 
@@ -662,7 +671,7 @@ export default function DataSourcesScreen() {
                 {savingWebsite && (
                   <Row style={{ alignItems: 'center', gap: 8, paddingVertical: 4 }}>
                     <ActivityIndicator size="small" color={c.accent} />
-                    <T size={13} sub>Scraping webpage content...</T>
+                    <T size={13} sub numberOfLines={1}>{scrapeProgress || 'Scraping all pages under website...'}</T>
                   </Row>
                 )}
                 <Row style={{ gap: 8 }}>

@@ -8,6 +8,7 @@ import { searchDocumentChunks } from './documents';
 import { searchWebsiteContent } from './websites';
 import { searchTelegramMessages } from './telegram';
 import { selectRelevantMemories } from '@/ai/retrieval';
+import { extractRelevantWebsiteSnippets } from './websiteLogic';
 
 export interface MultiSourceContext {
   memories: Memory[];
@@ -64,7 +65,11 @@ export async function retrieveRelevantContent(
 /**
  * Build unified context string for AI prompt.
  */
-export function buildUnifiedContext(result: RetrievalResult, expenseContext?: unknown): string {
+export function buildUnifiedContext(
+  result: RetrievalResult,
+  expenseContext?: unknown,
+  question?: string
+): string {
   let context = '';
 
   // Memories section
@@ -103,7 +108,8 @@ export function buildUnifiedContext(result: RetrievalResult, expenseContext?: un
     context += '\n\n=== WEBSITE DATA ===\n';
     result.websites.forEach((w, i) => {
       context += `[W${i}] From ${w.url}${w.title ? ` - ${w.title}` : ''}:\n`;
-      context += `${w.content.substring(0, 800)}${w.content.length > 800 ? '...' : ''}\n\n`;
+      const snippet = extractRelevantWebsiteSnippets(w.content, question || '', 8000);
+      context += `${snippet}\n\n`;
     });
   }
 

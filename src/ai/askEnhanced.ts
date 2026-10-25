@@ -144,7 +144,7 @@ export async function askAIEnhanced(
 
   const searchQuery = conversationQuery(trimmed, history);
   const retrieval = await retrieveRelevantContent(searchQuery, nowISO, allMemories);
-  const context = buildUnifiedContext(retrieval, expenseContext);
+  const context = buildUnifiedContext(retrieval, expenseContext, trimmed);
 
   const recentHistory = history.slice(-HISTORY_TURNS);
   let historyPrompt = '';

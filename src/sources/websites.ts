@@ -1,8 +1,18 @@
 /**
- * Website data scraping and management.
+ * Website data scraping, multi-page crawling, and management.
  */
 import { getSourcesDb, uuid } from './client';
 import { savePublicTelegramChannel } from './telegram';
+import {
+  extractLinksFromHtml,
+  extractTitle,
+  extractTextFromHtml,
+  normalizeWebsiteUrl,
+  validateUrl,
+  buildAggregatedWebsiteContent,
+  type ScrapedPage,
+} from './websiteLogic';
+
 export interface WebsiteData {
   id: string;
   url: string;
@@ -14,52 +24,25 @@ export interface WebsiteData {
   autoRefresh: boolean;
 }
 
-// Configuration
-const FETCH_TIMEOUT = 30000; // 30 seconds
-const MAX_CONTENT_SIZE = 5 * 1024 * 1024; // 5MB
-const MIN_CONTENT_LENGTH = 100;
-const MAX_RETRIES = 2;
-const RETRY_DELAY = 1000; // 1 second
-
-/**
- * Enhanced HTML text extraction.
- * Preserves paragraphs, line breaks, bullet lists, tables, and image descriptions.
- */
-function extractTextFromHtml(html: string): string {
-  // Remove script, style, and svg tags
-  let text = html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
-  text = text.replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '');
-  text = text.replace(/<svg\b[^<]*(?:(?!<\/svg>)<[^<]*)*<\/svg>/gi, '');
-
-  // Extract images with alt text or descriptive attribute
-  text = text.replace(/<img[^>]*alt="([^"]+)"[^>]*>/gi, ' [Image: $1] ');
-
-  // Preserve line breaks and block element spacing
-  text = text.replace(/<br\s*\/?>/gi, '\n');
-  text = text.replace(/<\/(p|div|h[1-6]|li|tr|article|section|header|footer)>/gi, '\n');
-  text = text.replace(/<(td|th)[^>]*>/gi, ' | ');
-  text = text.replace(/<li[^>]*>/gi, '• ');
-
-  // Remove HTML tags
-  text = text.replace(/<[^>]+>/g, '');
-
-  // Decode common HTML entities
-  text = text.replace(/&nbsp;/g, ' ');
-  text = text.replace(/&amp;/g, '&');
-  text = text.replace(/&lt;/g, '<');
-  text = text.replace(/&gt;/g, '>');
-  text = text.replace(/&quot;/g, '"');
-  text = text.replace(/&#39;/g, "'");
-
-  // Clean lines: trim each line and preserve meaningful paragraph breaks
-  text = text
-    .split('\n')
-    .map(line => line.trim())
-    .filter((line, i, arr) => line.length > 0 || (i > 0 && arr[i - 1].length > 0))
-    .join('\n');
-
-  return text.trim();
+export interface CrawlProgress {
+  current: number;
+  totalFound: number;
+  currentUrl: string;
 }
+
+export interface CrawlOptions {
+  maxPages?: number;
+  maxDepth?: number;
+  timeout?: number;
+  onProgress?: (progress: CrawlProgress) => void;
+}
+
+// Configuration
+const FETCH_TIMEOUT = 20000; // 20 seconds per page
+const MAX_CONTENT_SIZE = 5 * 1024 * 1024; // 5MB
+const MIN_CONTENT_LENGTH = 50;
+const DEFAULT_MAX_PAGES = 30; // Scrapes all pages on the website up to 30 pages
+const DEFAULT_MAX_DEPTH = 3;
 
 export function parseTelegramChannel(url: string): string | null {
   const match = url.trim().match(/^(?:https?:\/\/)?t\.me\/(?:s\/)?([a-zA-Z0-9_]+)(?:\/|\?.*)?$/i);
@@ -72,36 +55,6 @@ export function parseTelegramChannel(url: string): string | null {
   return null;
 }
 
-function extractTitle(html: string): string | null {
-  const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
-  if (titleMatch) return titleMatch[1].trim();
-
-  const h1Match = html.match(/<h1[^>]*>([^<]+)<\/h1>/i);
-  if (h1Match) return h1Match[1].trim();
-
-  return null;
-}
-
-function normalizeWebsiteUrl(raw: string): string {
-  let url = raw.trim();
-  const tgMatch = url.match(/^(?:https?:\/\/)?t\.me\/([a-zA-Z0-9_]+)\/?$/i);
-  if (tgMatch && tgMatch[1] && tgMatch[1].toLowerCase() !== 's' && !tgMatch[1].startsWith('+') && tgMatch[1].toLowerCase() !== 'joinchat') {
-    return `https://t.me/s/${tgMatch[1]}`;
-  }
-  return url;
-}
-
-function validateUrl(url: string): void {
-  try {
-    const parsed = new URL(url);
-    if (!['http:', 'https:'].includes(parsed.protocol)) {
-      throw new Error('Only HTTP and HTTPS URLs are supported');
-    }
-  } catch {
-    throw new Error('Invalid URL format');
-  }
-}
-
 async function fetchWithTimeout(url: string, timeout: number): Promise<Response> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeout);
@@ -109,7 +62,8 @@ async function fetchWithTimeout(url: string, timeout: number): Promise<Response>
   try {
     const response = await fetch(url, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       },
       signal: controller.signal,
     });
@@ -124,70 +78,25 @@ async function fetchWithTimeout(url: string, timeout: number): Promise<Response>
   }
 }
 
-async function scrapeWithRetry(url: string, retries = MAX_RETRIES): Promise<WebsiteData> {
-  let lastError: Error | null = null;
+/**
+ * Deep multi-page crawler.
+ * Discovers and scrapes all pages belonging to the website up to maxPages and maxDepth.
+ */
+export async function crawlWebsite(
+  rawUrl: string,
+  options: CrawlOptions = {}
+): Promise<WebsiteData> {
+  const {
+    maxPages = DEFAULT_MAX_PAGES,
+    maxDepth = DEFAULT_MAX_DEPTH,
+    timeout = FETCH_TIMEOUT,
+    onProgress,
+  } = options;
 
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      if (attempt > 0) {
-        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY * attempt));
-      }
+  const normalized = normalizeWebsiteUrl(rawUrl);
+  validateUrl(normalized);
 
-      const response = await fetchWithTimeout(url, FETCH_TIMEOUT);
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      const html = await response.text();
-
-      if (html.length > MAX_CONTENT_SIZE) {
-        throw new Error(`Content too large (${(html.length / 1024 / 1024).toFixed(1)}MB). Maximum is ${MAX_CONTENT_SIZE / 1024 / 1024}MB`);
-      }
-
-      const title = extractTitle(html);
-      let content = extractTextFromHtml(html);
-
-      // If text extraction yielded very little content (e.g. JS-heavy or heavily structured site),
-      // fallback to extracting raw body text or placeholder info instead of hard failing.
-      if (content.length < MIN_CONTENT_LENGTH) {
-        if (html.length > 50) {
-          // Fallback: use whatever raw text or meta description / title we can grab
-          content = title ? `Website Title: ${title}\nURL: ${url}\n(Note: This website relies heavily on JavaScript or dynamic rendering. Basic content extracted: ${content})` : `Website URL: ${url}\n(Content could not be fully parsed as static HTML).`;
-        } else {
-          throw new Error('Not enough content extracted - website may require JavaScript or be mostly images');
-        }
-      }
-
-      const now = new Date().toISOString();
-
-      return {
-        id: uuid(),
-        url,
-        title,
-        content,
-        scrapedAt: now,
-        lastUpdated: now,
-        refreshInterval: 86400, // 24 hours
-        autoRefresh: true,
-      };
-    } catch (err) {
-      lastError = err instanceof Error ? err : new Error(String(err));
-
-      // Don't retry on certain errors
-      if (lastError.message.includes('Invalid URL') ||
-          lastError.message.includes('Only HTTP') ||
-          lastError.message.includes('Content too large')) {
-        throw lastError;
-      }
-    }
-  }
-
-  throw new Error(`Failed to scrape ${url} after ${retries + 1} attempts: ${lastError?.message || 'Unknown error'}`);
-}
-
-export async function scrapeWebsite(url: string): Promise<WebsiteData> {
-  const tgChannel = parseTelegramChannel(url);
+  const tgChannel = parseTelegramChannel(normalized);
   if (tgChannel) {
     const tgRes = await savePublicTelegramChannel(tgChannel);
     const now = new Date().toISOString();
@@ -203,23 +112,120 @@ export async function scrapeWebsite(url: string): Promise<WebsiteData> {
     };
   }
 
-  const normalized = normalizeWebsiteUrl(url);
-  validateUrl(normalized);
-  return scrapeWithRetry(normalized);
+  const queue: { url: string; depth: number }[] = [{ url: normalized, depth: 0 }];
+  const visited = new Set<string>([normalized]);
+  const pages: ScrapedPage[] = [];
+
+  while (queue.length > 0 && pages.length < maxPages) {
+    const next = queue.shift();
+    if (!next) break;
+
+    onProgress?.({
+      current: pages.length + 1,
+      totalFound: visited.size,
+      currentUrl: next.url,
+    });
+
+    try {
+      const response = await fetchWithTimeout(next.url, timeout);
+      if (!response.ok) {
+        continue;
+      }
+
+      const contentType = (response.headers.get('content-type') || '').toLowerCase();
+      if (contentType && !contentType.includes('text/html') && !contentType.includes('text/plain')) {
+        continue;
+      }
+
+      const html = await response.text();
+      if (!html || html.length > MAX_CONTENT_SIZE) {
+        continue;
+      }
+
+      const title = extractTitle(html);
+      let content = extractTextFromHtml(html);
+
+      if (content.length < MIN_CONTENT_LENGTH) {
+        if (html.length > 50) {
+          content = title
+            ? `Page Title: ${title}\nURL: ${next.url}\n(Content extracted: ${content})`
+            : `URL: ${next.url}\n(Content could not be fully parsed as static HTML).`;
+        }
+      }
+
+      if (content.length >= MIN_CONTENT_LENGTH || pages.length === 0) {
+        pages.push({
+          url: next.url,
+          title,
+          content,
+          depth: next.depth,
+        });
+      }
+
+      // Discover internal links if depth and page limits allow
+      if (next.depth < maxDepth && visited.size < maxPages * 3) {
+        const foundLinks = extractLinksFromHtml(html, next.url);
+        for (const link of foundLinks) {
+          if (!visited.has(link) && visited.size < maxPages * 3) {
+            visited.add(link);
+            queue.push({ url: link, depth: next.depth + 1 });
+          }
+        }
+      }
+    } catch (err) {
+      console.warn(`Failed to crawl ${next.url}:`, err);
+      if (pages.length === 0 && queue.length === 0) {
+        throw new Error(`Failed to scrape ${next.url}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    // Polite throttle between requests
+    if (queue.length > 0 && pages.length < maxPages) {
+      await new Promise(r => setTimeout(r, 60));
+    }
+  }
+
+  if (pages.length === 0) {
+    throw new Error(`Could not extract any content from ${normalized}`);
+  }
+
+  const { content: aggregatedContent, title: aggregatedTitle } = buildAggregatedWebsiteContent(normalized, pages);
+  const now = new Date().toISOString();
+
+  return {
+    id: uuid(),
+    url: normalized,
+    title: aggregatedTitle,
+    content: aggregatedContent,
+    scrapedAt: now,
+    lastUpdated: now,
+    refreshInterval: 86400, // 24 hours
+    autoRefresh: true,
+  };
 }
 
-export async function addWebsite(url: string): Promise<WebsiteData> {
-  const normalized = normalizeWebsiteUrl(url);
-  const data = await scrapeWebsite(normalized);
+export async function scrapeWebsite(
+  url: string,
+  onProgress?: (p: CrawlProgress) => void
+): Promise<WebsiteData> {
+  return crawlWebsite(url, { onProgress });
+}
+
+export async function addWebsite(
+  url: string,
+  onProgress?: (p: CrawlProgress) => void
+): Promise<WebsiteData> {
+  const data = await crawlWebsite(url, { onProgress });
   const db = await getSourcesDb();
 
   await db.runAsync(
-    `INSERT INTO website_data (id, url, title, content, scraped_at, last_updated, refresh_interval, auto_refresh)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO website_data (id, url, title, content, scraped_at, last_updated, refresh_interval, auto_refresh, dirty)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
      ON CONFLICT(url) DO UPDATE SET
        title = excluded.title,
        content = excluded.content,
-       last_updated = excluded.last_updated`,
+       last_updated = excluded.last_updated,
+       dirty = 1`,
     [data.id, data.url, data.title, data.content, data.scrapedAt, data.lastUpdated, data.refreshInterval, data.autoRefresh ? 1 : 0]
   );
 
@@ -256,7 +262,10 @@ export async function listWebsites(): Promise<WebsiteData[]> {
   }));
 }
 
-export async function refreshWebsite(id: string): Promise<WebsiteData> {
+export async function refreshWebsite(
+  id: string,
+  onProgress?: (p: CrawlProgress) => void
+): Promise<WebsiteData> {
   const db = await getSourcesDb();
 
   const existing = await db.getFirstAsync<{ url: string; refresh_interval: number; auto_refresh: number }>(
@@ -266,11 +275,11 @@ export async function refreshWebsite(id: string): Promise<WebsiteData> {
 
   if (!existing) throw new Error('Website not found');
 
-  const data = await scrapeWebsite(existing.url);
+  const data = await crawlWebsite(existing.url, { onProgress });
 
   await db.runAsync(
     `UPDATE website_data
-     SET title = ?, content = ?, last_updated = ?
+     SET title = ?, content = ?, last_updated = ?, dirty = 1
      WHERE id = ?`,
     [data.title, data.content, data.lastUpdated, id]
   );
@@ -285,12 +294,12 @@ export async function refreshWebsite(id: string): Promise<WebsiteData> {
 
 export async function deleteWebsite(id: string): Promise<void> {
   const db = await getSourcesDb();
-  await db.runAsync('UPDATE website_data SET deleted = 1 WHERE id = ?', [id]);
+  await db.runAsync('UPDATE website_data SET deleted = 1, dirty = 1 WHERE id = ?', [id]);
 }
 
 export async function clearAllWebsites(): Promise<number> {
   const db = await getSourcesDb();
-  const res = await db.runAsync('UPDATE website_data SET deleted = 1 WHERE deleted = 0');
+  const res = await db.runAsync('UPDATE website_data SET deleted = 1, dirty = 1 WHERE deleted = 0');
   return res.changes;
 }
 
