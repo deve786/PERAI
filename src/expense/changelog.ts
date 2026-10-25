@@ -9,6 +9,15 @@ export interface ChangelogEntry {
 /** Newest first. Add a new entry here with every release that changes user-visible behaviour. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.30.35',
+    build: 138,
+    type: 'ota',
+    date: '2026-10-25',
+    highlights: [
+      'Fix document deletion touch handling and remove indexed chunks',
+    ],
+  },
+  {
     version: '1.30.34',
     build: 137,
     type: 'ota',
