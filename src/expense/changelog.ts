@@ -9,6 +9,15 @@ export interface ChangelogEntry {
 /** Newest first. Add a new entry here with every release that changes user-visible behaviour. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.30.36',
+    build: 139,
+    type: 'ota',
+    date: '2026-10-25',
+    highlights: [
+      'Permanently clear and delete documents in cloud and local',
+    ],
+  },
+  {
     version: '1.30.35',
     build: 138,
     type: 'ota',
