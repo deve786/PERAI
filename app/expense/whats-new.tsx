@@ -7,9 +7,13 @@ import { fromStr, monthName } from '@/expense/dates';
 import { useTheme } from '@/expense/theme';
 import { Card, ListCard, Row, Screen, T, TopBar } from '@/expense/ui';
 
-function formatDate(s: string) {
-  const d = fromStr(s);
-  return `${d.getDate()} ${monthName(d.getMonth())} ${d.getFullYear()}`;
+function formatDateTime(dateStr: string, timeStr?: string) {
+  const d = fromStr(dateStr.split('T')[0]);
+  const formatted = `${d.getDate()} ${monthName(d.getMonth())} ${d.getFullYear()}`;
+  if (timeStr) {
+    return `${formatted} · ${timeStr}`;
+  }
+  return formatted;
 }
 
 type Kind = 'new' | 'fixed';
@@ -80,7 +84,10 @@ export default function WhatsNew() {
                 </View>
               </Row>
             </Row>
-            <T size={14} sub style={{ marginBottom: 12 }}>{formatDate(latest.date)}</T>
+            <Row style={{ alignItems: 'center', gap: 6, marginBottom: 12 }}>
+              <Ionicons name="time-outline" size={14} color={c.sub} />
+              <T size={13} sub>{formatDateTime(latest.date, latest.time)}</T>
+            </Row>
             <Items highlights={latest.highlights} />
           </Card>
         ) : null}
@@ -118,7 +125,10 @@ export default function WhatsNew() {
                               </T>
                             </View>
                           ) : null}
-                          <T size={13} sub>{formatDate(entry.date)}</T>
+                          <Row style={{ alignItems: 'center', gap: 4 }}>
+                            <Ionicons name="time-outline" size={12} color={c.sub} />
+                            <T size={12} sub>{formatDateTime(entry.date, entry.time)}</T>
+                          </Row>
                         </Row>
                         {!expanded && entry.highlights[0] ? (
                           <T size={14} sub numberOfLines={1} style={{ marginTop: 2 }}>

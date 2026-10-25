@@ -75,11 +75,13 @@ const label = `${release.version} (build ${release.build})`;
 args.push('--message', `${label}${note ? `: ${note}` : ''}`, '--non-interactive');
 if (kind === 'build') args.push('--no-wait');
 
-// Update changelog with the new version and build number
-const dateStr = new Date().toISOString().split('T')[0];
+// Update changelog with the new version, build number, date, and time
+const now = new Date();
+const dateStr = now.toISOString().split('T')[0];
+const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
 const entryNote = note || (kind === 'build' ? 'New APK build release' : 'OTA update with enhancements and bug fixes');
 const changelogMarker = 'export const CHANGELOG: ChangelogEntry[] = [\n';
-const newChangelogEntry = `  {\n    version: '${release.version}',\n    build: ${release.build},\n    type: '${kind === 'build' ? 'build' : 'ota'}',\n    date: '${dateStr}',\n    highlights: [\n      '${entryNote.replace(/'/g, "\\'")}',\n    ],\n  },\n`;
+const newChangelogEntry = `  {\n    version: '${release.version}',\n    build: ${release.build},\n    type: '${kind === 'build' ? 'build' : 'ota'}',\n    date: '${dateStr}',\n    time: '${timeStr}',\n    highlights: [\n      '${entryNote.replace(/'/g, "\\'")}',\n    ],\n  },\n`;
 
 if (originalChangelog.includes(changelogMarker)) {
   const updatedChangelog = originalChangelog.replace(changelogMarker, changelogMarker + newChangelogEntry);

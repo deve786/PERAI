@@ -3,6 +3,7 @@ export interface ChangelogEntry {
   build?: number;
   type?: 'build' | 'ota';
   date: string; // YYYY-MM-DD
+  time?: string; // e.g. "09:23 AM"
   highlights: string[];
 }
 
@@ -13,6 +14,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     build: 139,
     type: 'ota',
     date: '2026-10-25',
+    time: '09:23 AM',
     highlights: [
       'Permanently clear and delete documents in cloud and local',
     ],
@@ -22,6 +24,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     build: 138,
     type: 'ota',
     date: '2026-10-25',
+    time: '09:16 AM',
     highlights: [
       'Fix document deletion touch handling and remove indexed chunks',
     ],
@@ -31,6 +34,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     build: 137,
     type: 'ota',
     date: '2026-10-25',
+    time: '09:05 AM',
     highlights: [
       'Display build numbers and release types (OTA Update vs New Build) in What\'s new screen',
     ],
@@ -40,6 +44,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     build: 136,
     type: 'ota',
     date: '2026-10-25',
+    time: '08:50 AM',
     highlights: [
       'Telegram auto-update: automatically checks for updates in background every 5 minutes (customizable to 5m, 15m, 30m, 1h, or Off in Data Sources)',
       'Incremental Telegram sync: only checks and downloads brand-new messages since your last sync, taking ~0.2s when up to date and saving battery and mobile data',
