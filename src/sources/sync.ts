@@ -93,53 +93,66 @@ async function pushSources(userId: string): Promise<number> {
     uploaded_at: string;
     chunk_count: number;
     deleted: number;
-  }>('SELECT id, filename, file_type, file_size, file_uri, uploaded_at, chunk_count, deleted FROM documents WHERE dirty = 1 LIMIT 50');
+  }>('SELECT id, filename, file_type, file_size, file_uri, uploaded_at, chunk_count, deleted FROM documents WHERE dirty = 1 LIMIT 100');
 
   if (dirtyDocs.length > 0) {
-    const docPayload = dirtyDocs.map((d) => ({
-      id: d.id,
-      user_id: userId,
-      filename: d.filename,
-      file_type: d.file_type,
-      file_size: d.file_size,
-      file_uri: d.file_uri,
-      uploaded_at: d.uploaded_at,
-      chunk_count: d.chunk_count,
-      deleted: d.deleted === 1,
-    }));
+    const deletedDocs = dirtyDocs.filter((d) => d.deleted === 1);
+    const activeDocs = dirtyDocs.filter((d) => d.deleted === 0);
 
-    const { error: docError } = await supabase.from('documents').upsert(docPayload, { onConflict: 'id' });
-    if (!docError) {
-      // Also push chunks for these documents
-      for (const doc of dirtyDocs) {
-        const chunks = await db.getAllAsync<{
-          id: string;
-          document_id: string;
-          chunk_index: number;
-          content: string;
-          page_number: number | null;
-          created_at: string;
-        }>('SELECT id, document_id, chunk_index, content, page_number, created_at FROM document_chunks WHERE document_id = ?', [doc.id]);
-
-        if (chunks.length > 0) {
-          const chunkPayload = chunks.map((c) => ({
-            id: c.id,
-            user_id: userId,
-            document_id: c.document_id,
-            chunk_index: c.chunk_index,
-            content: c.content,
-            page_number: c.page_number,
-            created_at: c.created_at,
-          }));
-          await supabase.from('document_chunks').upsert(chunkPayload, { onConflict: 'id' });
-        }
+    if (deletedDocs.length > 0) {
+      const deletedIds = deletedDocs.map((d) => d.id);
+      await supabase.from('document_chunks').delete().in('document_id', deletedIds);
+      await supabase.from('documents').delete().in('id', deletedIds);
+      for (const d of deletedDocs) {
+        await db.runAsync('DELETE FROM document_chunks WHERE document_id = ?', [d.id]);
+        await db.runAsync('DELETE FROM documents WHERE id = ?', [d.id]);
       }
+    }
 
-      const ids = dirtyDocs.map((d) => `'${d.id}'`).join(',');
-      await db.runAsync(`UPDATE documents SET dirty = 0 WHERE id IN (${ids})`);
-      count += dirtyDocs.length;
-    } else {
-      console.warn('Supabase documents upsert failed:', docError.message);
+    if (activeDocs.length > 0) {
+      const docPayload = activeDocs.map((d) => ({
+        id: d.id,
+        user_id: userId,
+        filename: d.filename,
+        file_type: d.file_type,
+        file_size: d.file_size,
+        file_uri: d.file_uri,
+        uploaded_at: d.uploaded_at,
+        chunk_count: d.chunk_count,
+        deleted: false,
+      }));
+
+      const { error: docError } = await supabase.from('documents').upsert(docPayload, { onConflict: 'id' });
+      if (!docError) {
+        for (const doc of activeDocs) {
+          const chunks = await db.getAllAsync<{
+            id: string;
+            document_id: string;
+            chunk_index: number;
+            content: string;
+            page_number: number | null;
+            created_at: string;
+          }>('SELECT id, document_id, chunk_index, content, page_number, created_at FROM document_chunks WHERE document_id = ?', [doc.id]);
+
+          if (chunks.length > 0) {
+            const chunkPayload = chunks.map((c) => ({
+              id: c.id,
+              user_id: userId,
+              document_id: c.document_id,
+              chunk_index: c.chunk_index,
+              content: c.content,
+              page_number: c.page_number,
+              created_at: c.created_at,
+            }));
+            await supabase.from('document_chunks').upsert(chunkPayload, { onConflict: 'id' });
+          }
+        }
+        const activeIds = activeDocs.map((d) => `'${d.id}'`).join(',');
+        await db.runAsync(`UPDATE documents SET dirty = 0 WHERE id IN (${activeIds})`);
+        count += activeDocs.length;
+      } else {
+        console.warn('Supabase documents upsert failed:', docError.message);
+      }
     }
   }
 
@@ -206,40 +219,61 @@ async function pullSources(userId: string): Promise<number> {
     .eq('user_id', userId)
     .limit(100);
 
-  if (!docErr && cloudDocs && cloudDocs.length > 0) {
-    for (const d of cloudDocs) {
+  if (!docErr && cloudDocs) {
+    const activeCloudDocs = cloudDocs.filter((d) => !d.deleted);
+    const deletedCloudDocs = cloudDocs.filter((d) => d.deleted);
+
+    // If cloud has deleted documents, purge them from cloud and local
+    if (deletedCloudDocs.length > 0) {
+      const delIds = deletedCloudDocs.map((d) => d.id);
+      await supabase.from('document_chunks').delete().in('document_id', delIds);
+      await supabase.from('documents').delete().in('id', delIds);
+      for (const d of deletedCloudDocs) {
+        await db.runAsync('DELETE FROM document_chunks WHERE document_id = ?', [d.id]);
+        await db.runAsync('DELETE FROM documents WHERE id = ?', [d.id]);
+      }
+    }
+
+    for (const d of activeCloudDocs) {
       await db.runAsync(
         `INSERT INTO documents (id, filename, file_type, file_size, file_uri, uploaded_at, chunk_count, deleted, dirty, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?)
          ON CONFLICT(id) DO UPDATE SET
            filename = excluded.filename,
            file_type = excluded.file_type,
            file_size = excluded.file_size,
            chunk_count = excluded.chunk_count,
-           deleted = excluded.deleted,
+           deleted = 0,
            dirty = 0,
            updated_at = excluded.updated_at`,
-        [d.id, d.filename, d.file_type, d.file_size, d.file_uri || '', d.uploaded_at, d.chunk_count, d.deleted ? 1 : 0, d.updated_at || d.uploaded_at]
+        [d.id, d.filename, d.file_type, d.file_size, d.file_uri || '', d.uploaded_at, d.chunk_count, d.updated_at || d.uploaded_at]
       );
       count++;
     }
 
-    // Pull chunks
-    const { data: cloudChunks } = await supabase
-      .from('document_chunks')
-      .select('*')
-      .eq('user_id', userId)
-      .limit(1000);
+    // Pull chunks ONLY for active documents
+    if (activeCloudDocs.length > 0) {
+      const activeDocIds = activeCloudDocs.map((d) => d.id);
+      const { data: cloudChunks } = await supabase
+        .from('document_chunks')
+        .select('*')
+        .eq('user_id', userId)
+        .in('document_id', activeDocIds)
+        .limit(1000);
 
-    if (cloudChunks && cloudChunks.length > 0) {
-      for (const c of cloudChunks) {
-        await db.runAsync(
-          `INSERT OR IGNORE INTO document_chunks (id, document_id, chunk_index, content, page_number, created_at)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-          [c.id, c.document_id, c.chunk_index, c.content, c.page_number, c.created_at]
-        );
+      if (cloudChunks && cloudChunks.length > 0) {
+        for (const c of cloudChunks) {
+          await db.runAsync(
+            `INSERT OR IGNORE INTO document_chunks (id, document_id, chunk_index, content, page_number, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [c.id, c.document_id, c.chunk_index, c.content, c.page_number, c.created_at]
+          );
+        }
       }
     }
+
+    // Purge any orphan local chunks whose document is not an active document
+    await db.runAsync('DELETE FROM document_chunks WHERE document_id NOT IN (SELECT id FROM documents WHERE deleted = 0)');
   }
 
   // 3. Pull Telegram Channels

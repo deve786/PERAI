@@ -206,7 +206,7 @@ export default function DataSourcesScreen() {
     try {
       await deleteDocument(id);
       await loadData();
-      void syncSourcesNow();
+      await syncSourcesNow();
     } catch (err) {
       showDialog({ title: 'Delete failed', message: err instanceof Error ? err.message : String(err) });
     }
@@ -382,10 +382,10 @@ export default function DataSourcesScreen() {
               try {
                 const count = await clearAllDocuments();
                 await loadData();
-                void syncSourcesNow();
+                await syncSourcesNow();
                 showDialog({
                   title: 'Documents Cleared',
-                  message: `Successfully removed ${count} document${count === 1 ? '' : 's'} and all associated chunks from the database.`,
+                  message: `Successfully removed ${count} document${count === 1 ? '' : 's'} and all associated search chunks from local storage and cloud.`,
                 });
               } catch (err) {
                 showDialog({ title: 'Error', message: err instanceof Error ? err.message : String(err) });

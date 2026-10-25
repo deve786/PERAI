@@ -7,6 +7,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { getSourcesDb, uuid } from './client';
 import { extractText } from './extractors';
 import { containsMarkdownTable, extractAllTables, findShipColumn, extractShipVoyage, findPortInShipVoyage, findNextVoyageFromPort, type ParsedTable, type TableColumn } from './tableParser';
+import { currentUserId, getSupabase, isConfigured } from '@/sync/client';
 
 export interface Document {
   id: string;
@@ -412,18 +413,33 @@ export async function deleteDocument(id: string): Promise<void> {
     }
   }
 
-  // Delete all indexed search chunks for this document
+  // 1. Delete all indexed search chunks for this document locally
   await db.runAsync('DELETE FROM document_chunks WHERE document_id = ?', [id]);
 
-  // Mark document as deleted and dirty for cloud sync, reset chunk_count
-  await db.runAsync('UPDATE documents SET deleted = 1, dirty = 1, chunk_count = 0 WHERE id = ?', [id]);
+  // 2. Delete document record completely from local SQLite
+  await db.runAsync('DELETE FROM documents WHERE id = ?', [id]);
+
+  // 3. Delete document and chunks completely from Supabase cloud
+  try {
+    if (isConfigured()) {
+      const supabase = getSupabase();
+      await Promise.all([
+        supabase.from('document_chunks').delete().eq('document_id', id),
+        supabase.from('documents').delete().eq('id', id),
+      ]);
+    }
+  } catch (err) {
+    console.warn('Cloud deleteDocument error:', err);
+  }
 }
 
 export async function clearAllDocuments(): Promise<number> {
   const db = await getSourcesDb();
   const docs = await db.getAllAsync<{ id: string; file_uri: string }>(
-    'SELECT id, file_uri FROM documents WHERE deleted = 0'
+    'SELECT id, file_uri FROM documents'
   );
+
+  // 1. Delete all physical files from disk
   for (const doc of docs) {
     if (doc.file_uri) {
       try {
@@ -431,15 +447,37 @@ export async function clearAllDocuments(): Promise<number> {
       } catch {}
     }
   }
-  await db.runAsync('UPDATE documents SET deleted = 1, dirty = 1, chunk_count = 0 WHERE deleted = 0');
+
+  // 2. Wipe out local SQLite search chunks and documents
   await db.runAsync('DELETE FROM document_chunks');
-  return docs.length;
+  const count = (await db.runAsync('DELETE FROM documents')).changes;
+
+  // 3. Wipe out all documents and chunks for current user in Supabase cloud
+  try {
+    if (isConfigured()) {
+      const userId = await currentUserId();
+      if (userId) {
+        const supabase = getSupabase();
+        await Promise.all([
+          supabase.from('document_chunks').delete().eq('user_id', userId),
+          supabase.from('documents').delete().eq('user_id', userId),
+        ]);
+      }
+    }
+  } catch (err) {
+    console.warn('Cloud clearAllDocuments error:', err);
+  }
+
+  return docs.length || count;
 }
 
 export async function cleanupEmptyDocuments(): Promise<number> {
   const db = await getSourcesDb();
 
-  // 1. Recover active documents (deleted = 0) where chunk_count or processed was unset
+  // 1. Purge any orphan local chunks whose document no longer exists
+  await db.runAsync(`DELETE FROM document_chunks WHERE document_id NOT IN (SELECT id FROM documents WHERE deleted = 0)`).catch(() => {});
+
+  // 2. Recover active documents (deleted = 0) where chunk_count or processed was unset
   await db.runAsync(`
     UPDATE documents
     SET processed = 1,
