@@ -72,6 +72,7 @@ import {
   normalizeWebsiteUrl,
   buildAggregatedWebsiteContent,
   extractRelevantWebsiteSnippets,
+  extractScrapedPages,
   type ScrapedPage,
 } from '../src/sources/websiteLogic';
 import {
@@ -1923,6 +1924,15 @@ section('website multi-page crawling & content aggregation');
 
   const snippet = extractRelevantWebsiteSnippets(aggregated.content, 'What is the fare for a ticket?', 5000);
   check('extracts relevant subpage based on query keywords', snippet.includes('Bunk ticket is 350 INR.'));
+
+  const parsedPages = extractScrapedPages(aggregated.content, 'https://port.gov');
+  check('extracts all 3 parsed pages from aggregated content', parsedPages.length === 3);
+  check('first parsed page matches homepage URL and title', parsedPages[0].url === 'https://port.gov' && parsedPages[0].title === 'Port Home');
+  check('second parsed page has correct URL, title and content', parsedPages[1].url === 'https://port.gov/schedule' && parsedPages[1].title === 'Voyage Schedule' && parsedPages[1].content.includes('MV KAVARATTI departs'));
+  check('parsed pages calculate char and word counts', parsedPages[0].charCount > 0 && parsedPages[0].wordCount > 0);
+
+  const fallbackParsed = extractScrapedPages('Just some legacy scraped text here.', 'https://single.com');
+  check('extracts single fallback page for legacy/unmarked content', fallbackParsed.length === 1 && fallbackParsed[0].url === 'https://single.com' && fallbackParsed[0].content === 'Just some legacy scraped text here.');
 }
 
 section('telegram incremental sync & auto-sync intervals');

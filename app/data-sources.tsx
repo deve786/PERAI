@@ -10,6 +10,7 @@ import { Button, Card, Field, ListCard, ListRow, Row, Screen, T, TopBar } from '
 import { showDialog } from '@/dialogStore';
 import { listDocuments, deleteDocument, pickAndProcessDocument, getTotalDocumentChunks, getDocumentChunks, clearAllDocuments, cleanupEmptyDocuments, type Document } from '@/sources/documents';
 import { listWebsites, addWebsite, deleteWebsite, refreshWebsite, parseTelegramChannel, clearAllWebsites, type WebsiteData } from '@/sources/websites';
+import { extractScrapedPages, type ScrapedPageDetail } from '@/sources/websiteLogic';
 import { listTelegramChannels, addTelegramChannel, deleteTelegramChannel, syncTelegramChannel, getTelegramMessageCount, getChannelMessageCounts, getChannelMessageCount, getChannelMessages, clearAllTelegramData, type TelegramChannel } from '@/sources/telegram';
 import { syncSourcesNow } from '@/sources/sync';
 import { getSetting, setSetting } from '@/db/queries';
@@ -147,20 +148,36 @@ export default function DataSourcesScreen() {
       });
       setWebsiteUrl('');
       setAddingWebsite(false);
+      setTab('websites');
       await loadData();
-      void syncSourcesNow();
+      await syncSourcesNow();
       const now = new Date().toISOString();
       await setSetting('sources_last_synced_at', now);
       setLastSyncedAt(now);
+
+      const pageList = site.pages && site.pages.length > 0
+        ? site.pages
+        : extractScrapedPages(site.content, site.url);
+
       const charCount = site.content.length;
       const wordCount = site.content.trim() ? site.content.trim().split(/\s+/).length : 0;
       const isTg = !!parseTelegramChannel(url);
-      showDialog({
-        title: isTg ? 'Telegram Channel Saved in DB' : 'Website & All Pages Saved',
-        message: isTg
-          ? `${site.title || site.url}\n\n✓ Scraped & synced on ${formatDateTime(site.lastUpdated)}:\n• ${charCount.toLocaleString()} characters extracted\n• ~${wordCount.toLocaleString()} words indexed\n• Messages, photos, & documents saved\n\nSearchable in both Websites and Telegram sources!`
-          : `${site.title || site.url}\n\n✓ Scraped all pages & synced on ${formatDateTime(site.lastUpdated)}:\n• ${charCount.toLocaleString()} characters extracted\n• ~${wordCount.toLocaleString()} words indexed\n\nAll discovered pages under this website are stored in your database and searchable in the Ask tab.`,
-      });
+
+      if (isTg) {
+        showDialog({
+          title: 'Telegram Channel Saved in DB',
+          message: `${site.title || site.url}\n\n✓ Scraped & synced on ${formatDateTime(site.lastUpdated)}:\n• ${charCount.toLocaleString()} characters extracted\n• ~${wordCount.toLocaleString()} words indexed\n• Messages, photos, & documents saved\n\nSearchable in Ask tab.`,
+        });
+      } else {
+        const pageLines = pageList.map((p, idx) =>
+          `• Page ${idx + 1}: ${p.url}\n  ${p.title ? `"${p.title}"\n  ` : ''}${p.charCount.toLocaleString()} chars (~${p.wordCount.toLocaleString()} words)`
+        ).join('\n\n');
+
+        showDialog({
+          title: `Website Added: ${pageList.length} Page${pageList.length === 1 ? '' : 's'} Scraped`,
+          message: `${site.title || site.url}\n\n✓ Scraped all pages on ${formatDateTime(site.lastUpdated)}:\nTotal: ${charCount.toLocaleString()} characters (~${wordCount.toLocaleString()} words)\n\nPages Scraped:\n${pageLines}\n\nAll page data is stored in your database and ready for search.`,
+        });
+      }
     } catch (err) {
       showDialog({ title: 'Failed to add website', message: err instanceof Error ? err.message : String(err) });
     } finally {
@@ -470,6 +487,7 @@ export default function DataSourcesScreen() {
     subtitle: string;
     content: string;
     meta: string;
+    websitePages?: ScrapedPageDetail[];
   } | null>(null);
 
   async function viewDocument(doc: Document) {
@@ -492,6 +510,9 @@ export default function DataSourcesScreen() {
   }
 
   function viewWebsite(site: WebsiteData) {
+    const pages = site.pages && site.pages.length > 0
+      ? site.pages
+      : extractScrapedPages(site.content, site.url);
     const words = site.content.trim() ? Math.round(site.content.trim().split(/\s+/).length) : 0;
     setPreviewItem({
       id: site.id,
@@ -499,7 +520,8 @@ export default function DataSourcesScreen() {
       title: site.title || site.url,
       subtitle: site.url,
       content: site.content,
-      meta: `${site.content.length.toLocaleString()} characters · ~${words.toLocaleString()} words · Synced ${formatDateTime(site.lastUpdated)}`,
+      meta: `${pages.length} page${pages.length === 1 ? '' : 's'} scraped · ${site.content.length.toLocaleString()} characters · ~${words.toLocaleString()} words · Synced ${formatDateTime(site.lastUpdated)}`,
+      websitePages: pages,
     });
   }
 
@@ -811,7 +833,7 @@ export default function DataSourcesScreen() {
                           <Row style={{ alignItems: 'center', gap: 4, marginTop: 2 }}>
                             <Ionicons name="checkmark-circle" size={13} color={c.good} />
                             <T size={12} style={{ color: c.good, fontWeight: '600' }}>
-                              {site.content.length.toLocaleString()} chars (~{words.toLocaleString()} words) in DB
+                              {site.pages && site.pages.length > 1 ? `${site.pages.length} pages · ` : ''}{site.content.length.toLocaleString()} chars (~{words.toLocaleString()} words) in DB
                             </T>
                           </Row>
                           <T size={11} sub style={{ marginTop: 1 }}>Synced {formatDateTime(site.lastUpdated)} · Tap to view</T>
@@ -1061,14 +1083,87 @@ export default function DataSourcesScreen() {
               </T>
             </Card>
 
-            <Card style={{ padding: 16 }}>
-              <T size={11} sub weight="700" style={{ marginBottom: 10, letterSpacing: 0.5, textTransform: 'uppercase' }}>
-                Content Saved in Database
-              </T>
-              <T size={14} style={{ lineHeight: 22 }}>
-                {previewItem?.content}
-              </T>
-            </Card>
+            {previewItem?.type === 'website' && previewItem.websitePages && previewItem.websitePages.length > 0 ? (
+              <View style={{ gap: 12 }}>
+                {/* Pages summary list */}
+                <Card style={{ padding: 14, gap: 10 }}>
+                  <Row style={{ alignItems: 'center', justifyContent: 'space-between' }}>
+                    <Row style={{ alignItems: 'center', gap: 6 }}>
+                      <Ionicons name="globe-outline" size={16} color={c.accent} />
+                      <T size={14} weight="700">Scraped Pages ({previewItem.websitePages.length})</T>
+                    </Row>
+                    <T size={12} sub>{previewItem.content.length.toLocaleString()} total chars</T>
+                  </Row>
+                  <T size={12} sub>
+                    Pages discovered and scraped under this website:
+                  </T>
+                  <View style={{ gap: 6, marginTop: 2 }}>
+                    {previewItem.websitePages.map((p, idx) => (
+                      <View
+                        key={idx}
+                        style={{
+                          paddingVertical: 8,
+                          paddingHorizontal: 10,
+                          borderRadius: radius.sm,
+                          backgroundColor: c.well,
+                          gap: 2,
+                        }}
+                      >
+                        <Row style={{ alignItems: 'center', justifyContent: 'space-between' }}>
+                          <T size={13} weight="600" numberOfLines={1} style={{ flex: 1, paddingRight: 6 }}>
+                            Page {p.pageNumber}: {p.title || p.url}
+                          </T>
+                          <T size={12} weight="700" style={{ color: c.good }}>
+                            {p.charCount.toLocaleString()} chars
+                          </T>
+                        </Row>
+                        <Row style={{ alignItems: 'center', justifyContent: 'space-between' }}>
+                          <T size={11} style={{ color: c.accent, flex: 1, paddingRight: 6 }} numberOfLines={1}>
+                            {p.url}
+                          </T>
+                          <T size={10} sub>~{p.wordCount.toLocaleString()} words</T>
+                        </Row>
+                      </View>
+                    ))}
+                  </View>
+                </Card>
+
+                {/* Per-page detailed content cards */}
+                {previewItem.websitePages.map((p, idx) => (
+                  <Card key={idx} style={{ padding: 16, gap: 8 }}>
+                    <Row style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+                      <View style={{ paddingHorizontal: 8, paddingVertical: 2, borderRadius: radius.sm, backgroundColor: `${c.accent}20` }}>
+                        <T size={11} weight="700" style={{ color: c.accent }}>Page {p.pageNumber} of {previewItem.websitePages!.length}</T>
+                      </View>
+                      <T size={12} weight="600" style={{ color: c.good }}>
+                        {p.charCount.toLocaleString()} chars · ~{p.wordCount.toLocaleString()} words
+                      </T>
+                    </Row>
+                    <T size={15} weight="700">{p.title || 'Untitled Page'}</T>
+                    <Row style={{ alignItems: 'center', gap: 4 }}>
+                      <Ionicons name="link-outline" size={13} color={c.accent} />
+                      <T size={12} style={{ color: c.accent }} numberOfLines={1}>{p.url}</T>
+                    </Row>
+                    <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: c.line, marginVertical: 4 }} />
+                    <T size={11} sub weight="700" style={{ letterSpacing: 0.5, textTransform: 'uppercase' }}>
+                      Scraped Content ({p.charCount.toLocaleString()} chars)
+                    </T>
+                    <T size={14} style={{ lineHeight: 22 }}>
+                      {p.content}
+                    </T>
+                  </Card>
+                ))}
+              </View>
+            ) : (
+              <Card style={{ padding: 16 }}>
+                <T size={11} sub weight="700" style={{ marginBottom: 10, letterSpacing: 0.5, textTransform: 'uppercase' }}>
+                  Content Saved in Database
+                </T>
+                <T size={14} style={{ lineHeight: 22 }}>
+                  {previewItem?.content}
+                </T>
+              </Card>
+            )}
 
             <Row style={{ gap: 8, marginTop: 8 }}>
               {previewItem?.type === 'document' && previewItem.id && (
@@ -1090,6 +1185,33 @@ export default function DataSourcesScreen() {
                           destructive: true,
                           onPress: () => {
                             void removeDocument(docId);
+                          },
+                        },
+                      ],
+                    });
+                  }}
+                  style={{ flex: 1, borderWidth: 1, borderColor: `${c.danger}40`, backgroundColor: `${c.danger}10` }}
+                />
+              )}
+              {previewItem?.type === 'website' && previewItem.id && (
+                <Button
+                  title="Delete Website"
+                  icon="trash-outline"
+                  kind="danger"
+                  onPress={() => {
+                    const siteId = previewItem.id!;
+                    const siteTitle = previewItem.title;
+                    setPreviewItem(null);
+                    showDialog({
+                      title: 'Delete Website?',
+                      message: `Remove "${siteTitle}" and all its scraped pages from your database? This cannot be undone.`,
+                      actions: [
+                        { label: 'Cancel', cancel: true },
+                        {
+                          label: 'Delete',
+                          destructive: true,
+                          onPress: () => {
+                            void removeWebsite(siteId);
                           },
                         },
                       ],

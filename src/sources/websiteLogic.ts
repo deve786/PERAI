@@ -185,6 +185,15 @@ export function validateUrl(url: string): void {
   }
 }
 
+export interface ScrapedPageDetail {
+  pageNumber: number;
+  url: string;
+  title: string;
+  charCount: number;
+  wordCount: number;
+  content: string;
+}
+
 /**
  * Aggregates multiple scraped pages from a website into a coherent, structured text document.
  */
@@ -205,8 +214,10 @@ export function buildAggregatedWebsiteContent(
   const siteTitle = pages.length > 1 ? `${mainTitle} (${pages.length} pages)` : mainTitle;
 
   if (pages.length === 1) {
+    const chars = pages[0].content.length;
+    const words = pages[0].content.trim() ? pages[0].content.trim().split(/\s+/).length : 0;
     return {
-      content: pages[0].content,
+      content: `================================================================================\nPAGE 1: ${mainTitle}\nURL: ${pages[0].url}\nDATA: ${chars.toLocaleString()} characters · ~${words.toLocaleString()} words\n================================================================================\n\n${pages[0].content}`,
       title: siteTitle,
     };
   }
@@ -216,14 +227,19 @@ export function buildAggregatedWebsiteContent(
   text += `Total Pages Indexed: ${pages.length}\n`;
   text += `Pages Included:\n`;
   pages.forEach((p, idx) => {
-    text += `• Page ${idx + 1}: ${p.title || p.url} (${p.url})\n`;
+    const chars = p.content.length;
+    const words = p.content.trim() ? p.content.trim().split(/\s+/).length : 0;
+    text += `• Page ${idx + 1}: ${p.title || p.url} (${p.url}) — ${chars.toLocaleString()} chars (~${words.toLocaleString()} words)\n`;
   });
   text += `\n`;
 
   pages.forEach((p, idx) => {
+    const chars = p.content.length;
+    const words = p.content.trim() ? p.content.trim().split(/\s+/).length : 0;
     text += `================================================================================\n`;
     text += `PAGE ${idx + 1}: ${p.title || 'Untitled Page'}\n`;
     text += `URL: ${p.url}\n`;
+    text += `DATA: ${chars.toLocaleString()} characters · ~${words.toLocaleString()} words\n`;
     text += `================================================================================\n\n`;
     text += `${p.content}\n\n`;
   });
@@ -232,6 +248,67 @@ export function buildAggregatedWebsiteContent(
     content: text.trim(),
     title: siteTitle,
   };
+}
+
+/**
+ * Parses individual scraped page details (URL, title, data size, and page content)
+ * from aggregated website content.
+ */
+export function extractScrapedPages(content: string, fallbackUrl = ''): ScrapedPageDetail[] {
+  const pages: ScrapedPageDetail[] = [];
+  
+  // Match header block:
+  // ================================================================================
+  // PAGE 1: Port Home
+  // URL: https://port.gov
+  // (optional DATA: ...)
+  // ================================================================================
+  const pageRegex = /={50,}\s*\nPAGE\s*(\d+):\s*([^\n]+)\s*\nURL:\s*([^\n]+)(?:\s*\nDATA:\s*[^\n]+)?\s*\n={50,}/gi;
+  
+  const matches: { index: number; length: number; pageNum: number; title: string; url: string }[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = pageRegex.exec(content)) !== null) {
+    matches.push({
+      index: m.index,
+      length: m[0].length,
+      pageNum: parseInt(m[1], 10),
+      title: m[2].trim(),
+      url: m[3].trim(),
+    });
+  }
+
+  if (matches.length === 0) {
+    const trimmed = content.trim();
+    if (!trimmed) return [];
+    const words = trimmed.split(/\s+/).length;
+    return [{
+      pageNumber: 1,
+      title: fallbackUrl ? fallbackUrl.replace(/^https?:\/\//i, '') : 'Page 1',
+      url: fallbackUrl || '',
+      charCount: trimmed.length,
+      wordCount: words,
+      content: trimmed,
+    }];
+  }
+
+  for (let i = 0; i < matches.length; i++) {
+    const cur = matches[i];
+    const contentStart = cur.index + cur.length;
+    const contentEnd = (i + 1 < matches.length) ? matches[i + 1].index : content.length;
+    const pageText = content.slice(contentStart, contentEnd).trim();
+    const wordCount = pageText ? pageText.split(/\s+/).length : 0;
+
+    pages.push({
+      pageNumber: cur.pageNum,
+      title: cur.title,
+      url: cur.url,
+      charCount: pageText.length,
+      wordCount,
+      content: pageText,
+    });
+  }
+
+  return pages;
 }
 
 /**

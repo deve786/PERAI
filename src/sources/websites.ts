@@ -10,8 +10,11 @@ import {
   normalizeWebsiteUrl,
   validateUrl,
   buildAggregatedWebsiteContent,
+  extractScrapedPages,
   type ScrapedPage,
+  type ScrapedPageDetail,
 } from './websiteLogic';
+import { currentUserId, getSupabase, isConfigured } from '@/sync/client';
 
 export interface WebsiteData {
   id: string;
@@ -22,6 +25,7 @@ export interface WebsiteData {
   lastUpdated: string;
   refreshInterval: number;
   autoRefresh: boolean;
+  pages?: ScrapedPageDetail[];
 }
 
 export interface CrawlProgress {
@@ -219,17 +223,21 @@ export async function addWebsite(
   const db = await getSourcesDb();
 
   await db.runAsync(
-    `INSERT INTO website_data (id, url, title, content, scraped_at, last_updated, refresh_interval, auto_refresh, dirty)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+    `INSERT INTO website_data (id, url, title, content, scraped_at, last_updated, refresh_interval, auto_refresh, dirty, deleted)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0)
      ON CONFLICT(url) DO UPDATE SET
        title = excluded.title,
        content = excluded.content,
        last_updated = excluded.last_updated,
+       deleted = 0,
        dirty = 1`,
     [data.id, data.url, data.title, data.content, data.scrapedAt, data.lastUpdated, data.refreshInterval, data.autoRefresh ? 1 : 0]
   );
 
-  return data;
+  return {
+    ...data,
+    pages: extractScrapedPages(data.content, data.url),
+  };
 }
 
 export async function listWebsites(): Promise<WebsiteData[]> {
@@ -259,6 +267,7 @@ export async function listWebsites(): Promise<WebsiteData[]> {
     lastUpdated: row.last_updated,
     refreshInterval: row.refresh_interval,
     autoRefresh: row.auto_refresh === 1,
+    pages: extractScrapedPages(row.content, row.url),
   }));
 }
 
@@ -279,7 +288,7 @@ export async function refreshWebsite(
 
   await db.runAsync(
     `UPDATE website_data
-     SET title = ?, content = ?, last_updated = ?, dirty = 1
+     SET title = ?, content = ?, last_updated = ?, deleted = 0, dirty = 1
      WHERE id = ?`,
     [data.title, data.content, data.lastUpdated, id]
   );
@@ -289,17 +298,44 @@ export async function refreshWebsite(
     id,
     refreshInterval: existing.refresh_interval,
     autoRefresh: existing.auto_refresh === 1,
+    pages: extractScrapedPages(data.content, existing.url),
   };
 }
 
 export async function deleteWebsite(id: string): Promise<void> {
   const db = await getSourcesDb();
-  await db.runAsync('UPDATE website_data SET deleted = 1, dirty = 1 WHERE id = ?', [id]);
+  // 1. Delete locally from SQLite
+  await db.runAsync('DELETE FROM website_data WHERE id = ?', [id]);
+
+  // 2. Delete from Supabase cloud
+  try {
+    if (isConfigured()) {
+      const supabase = getSupabase();
+      await supabase.from('website_data').delete().eq('id', id);
+    }
+  } catch (err) {
+    console.warn('Cloud deleteWebsite error:', err);
+  }
 }
 
 export async function clearAllWebsites(): Promise<number> {
   const db = await getSourcesDb();
-  const res = await db.runAsync('UPDATE website_data SET deleted = 1, dirty = 1 WHERE deleted = 0');
+  // 1. Delete all locally from SQLite
+  const res = await db.runAsync('DELETE FROM website_data');
+
+  // 2. Delete all for user in Supabase cloud
+  try {
+    if (isConfigured()) {
+      const userId = await currentUserId();
+      if (userId) {
+        const supabase = getSupabase();
+        await supabase.from('website_data').delete().eq('user_id', userId);
+      }
+    }
+  } catch (err) {
+    console.warn('Cloud clearAllWebsites error:', err);
+  }
+
   return res.changes;
 }
 
