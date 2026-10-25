@@ -142,8 +142,6 @@
       "checkAutomatically": "ON_LOAD",
       "fallbackToCacheTimeout": 0
     },
-    "runtimeVersion": {
-      "policy": "fingerprint"
-    }
+    "runtimeVersion": "f2fe69f1e03aa27a54a6eb291ff5a3d32c8c58d6"
   }
 }

@@ -10,6 +10,26 @@ export interface ChangelogEntry {
 /** Newest first. Add a new entry here with every release that changes user-visible behaviour. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.30.51',
+    build: 154,
+    type: 'ota',
+    date: '2026-10-25',
+    time: '09:45 PM',
+    highlights: [
+      'Support Telegram Media Bridge on base runtime',
+    ],
+  },
+  {
+    version: '1.30.50',
+    build: 153,
+    type: 'ota',
+    date: '2026-10-25',
+    time: '09:38 PM',
+    highlights: [
+      'Add Telegram Media Bridge PDF automatic table extraction',
+    ],
+  },
+  {
     version: '1.30.49',
     build: 152,
     type: 'ota',
