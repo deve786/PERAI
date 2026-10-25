@@ -67,6 +67,59 @@ Do not add opinions, introductory notes, or commentary.`,
   }
 }
 
+/**
+ * Downloads and extracts attached documents (PDFs, manifests, sheets) via Telegram Bot API.
+ * Feeds binary bytes to Gemini for cargo manifest and timetable extraction.
+ */
+export async function downloadAndExtractTelegramFile(
+  botToken: string,
+  fileId: string,
+  fileName?: string,
+  mimeType?: string
+): Promise<string | null> {
+  if (!hasApiKey()) return null;
+  try {
+    const fileInfoRes = await fetchWithTimeout(
+      `https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`,
+      API_TIMEOUT
+    );
+    if (!fileInfoRes.ok) return null;
+    const fileInfo = await fileInfoRes.json();
+    if (!fileInfo.ok || !fileInfo.result?.file_path) return null;
+
+    const downloadUrl = `https://api.telegram.org/file/bot${botToken}/${fileInfo.result.file_path}`;
+    const fileRes = await fetchWithTimeout(downloadUrl, 30000);
+    if (!fileRes.ok) return null;
+    const buf = await fileRes.arrayBuffer();
+    if (!buf || buf.byteLength < 50) return null;
+
+    const base64 = arrayBufferToBase64(buf);
+    const client = getClient();
+    const isPdf = (mimeType && mimeType.includes('pdf')) || (fileName && fileName.toLowerCase().endsWith('.pdf'));
+
+    const response = await client.models.generateContent({
+      model: EXTRACT_MODEL,
+      contents: [
+        {
+          text: `Extract all text, cargo manifests, shipping tables, quantities, container numbers, island destination ports, passenger details, and remarks from this document completely.
+Format any tables as clean markdown tables. Do not add commentary.`,
+        },
+        {
+          inlineData: {
+            mimeType: isPdf ? 'application/pdf' : (mimeType || 'application/pdf'),
+            data: base64,
+          },
+        },
+      ],
+    });
+
+    return response.text?.trim() || null;
+  } catch (err) {
+    console.warn('[telegram-doc] Could not extract document:', err);
+    return null;
+  }
+}
+
 export interface TelegramChannel {
   id: string;
   channelUsername: string;
@@ -96,25 +149,28 @@ const API_TIMEOUT = 15000; // 15 seconds
 const MAX_RETRIES = 2;
 const RETRY_DELAY = 2000; // 2 seconds
 
+interface TelegramPost {
+  message_id: number;
+  chat: {
+    id: number;
+    title?: string;
+    username?: string;
+  };
+  date: number;
+  text?: string;
+  caption?: string;
+  author_signature?: string;
+  photo?: Array<{ file_id: string; file_unique_id: string; width: number; height: number; file_size?: number }>;
+  video?: unknown;
+  document?: { file_id: string; file_unique_id: string; file_name?: string; mime_type?: string; file_size?: number };
+}
+
 interface TelegramApiResponse {
   ok: boolean;
   result?: Array<{
     update_id: number;
-    channel_post?: {
-      message_id: number;
-      chat: {
-        id: number;
-        title?: string;
-        username?: string;
-      };
-      date: number;
-      text?: string;
-      caption?: string;
-      author_signature?: string;
-      photo?: unknown[];
-      video?: unknown;
-      document?: unknown;
-    };
+    channel_post?: TelegramPost;
+    message?: TelegramPost;
   }>;
   description?: string;
 }
@@ -192,25 +248,79 @@ export async function fetchTelegramMessages(
       if (!data.result) return messages;
 
       for (const update of data.result) {
-        if (update.channel_post) {
-          const msg = update.channel_post;
+        const msg = update.channel_post || update.message;
+        if (!msg) continue;
 
-          // Skip if we've already processed this message
-          if (lastMessageId && msg.message_id <= lastMessageId) continue;
+        // Skip if we've already processed this message
+        if (lastMessageId && msg.message_id <= lastMessageId) continue;
 
-          messages.push({
-            id: uuid(),
-            channelId: String(msg.chat.id),
-            channelName: msg.chat.title || msg.chat.username || channelUsername,
-            messageId: msg.message_id,
-            messageText: msg.text || msg.caption || '',
-            messageDate: new Date(msg.date * 1000).toISOString(),
-            senderName: msg.author_signature || 'Channel',
-            mediaType: msg.photo ? 'photo' : msg.video ? 'video' : msg.document ? 'document' : 'none',
-            mediaPath: null,
-            syncedAt: new Date().toISOString(),
-          });
+        let fullText = msg.text || msg.caption || '';
+        let mediaType: 'photo' | 'video' | 'document' | 'none' = 'none';
+        let mediaPath: string | null = null;
+
+        // If message has an attached document (e.g. Cargo manifest PDF, shipping schedule)
+        if (msg.document && msg.document.file_id) {
+          mediaType = 'document';
+          mediaPath = msg.document.file_name || 'document';
+          try {
+            const docText = await downloadAndExtractTelegramFile(
+              botToken,
+              msg.document.file_id,
+              msg.document.file_name,
+              msg.document.mime_type
+            );
+            if (docText) {
+              const label = msg.document.file_name
+                ? `[Attached Cargo/Document Content: ${msg.document.file_name}]`
+                : '[Attached Cargo/Document Content]';
+              fullText = fullText ? `${fullText}\n\n${label}:\n${docText}` : `${label}:\n${docText}`;
+            }
+          } catch (docErr) {
+            console.warn('[telegram] Error extracting attached document:', docErr);
+          }
+        } else if (msg.photo && Array.isArray(msg.photo) && msg.photo.length > 0) {
+          // If message has photo(s), pick the highest resolution
+          mediaType = 'photo';
+          const highestPhoto = msg.photo[msg.photo.length - 1];
+          if (highestPhoto && highestPhoto.file_id) {
+            try {
+              const fileInfoRes = await fetchWithTimeout(
+                `https://api.telegram.org/bot${botToken}/getFile?file_id=${highestPhoto.file_id}`,
+                API_TIMEOUT
+              );
+              if (fileInfoRes.ok) {
+                const fileInfo = await fileInfoRes.json();
+                if (fileInfo.ok && fileInfo.result?.file_path) {
+                  const photoUrl = `https://api.telegram.org/file/bot${botToken}/${fileInfo.result.file_path}`;
+                  mediaPath = photoUrl;
+                  const photoOcr = await ocrTelegramPhoto(photoUrl);
+                  if (photoOcr) {
+                    fullText = fullText
+                      ? `${fullText}\n\n[Extracted Poster/Photo Text]:\n${photoOcr}`
+                      : `[Extracted Poster/Photo Text]:\n${photoOcr}`;
+                  }
+                }
+              }
+            } catch (pErr) {
+              console.warn('[telegram] Photo OCR error:', pErr);
+            }
+          }
+        } else if (msg.video) {
+          mediaType = 'video';
         }
+
+        messages.push({
+          id: uuid(),
+          channelId: String(msg.chat.id),
+          channelName: msg.chat.title || msg.chat.username || channelUsername,
+          messageId: msg.message_id,
+          messageText: fullText,
+          messageDate: new Date(msg.date * 1000).toISOString(),
+          senderName: msg.author_signature || 'Channel',
+          mediaType,
+          mediaPath,
+          syncedAt: new Date().toISOString(),
+        });
       }
 
       return messages;

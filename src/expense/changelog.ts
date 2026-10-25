@@ -10,6 +10,16 @@ export interface ChangelogEntry {
 /** Newest first. Add a new entry here with every release that changes user-visible behaviour. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.30.42',
+    build: 145,
+    type: 'ota',
+    date: '2026-10-25',
+    time: '06:27 PM',
+    highlights: [
+      'Support automated Telegram document & photo downloading with Gemini cargo extraction',
+    ],
+  },
+  {
     version: '1.30.41',
     build: 144,
     type: 'ota',
