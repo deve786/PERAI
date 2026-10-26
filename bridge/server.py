@@ -110,6 +110,64 @@ async def download_file(
         print(f"[Bridge] Error fetching post {post} from @{clean_channel}:", e)
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/messages")
+async def get_channel_messages(
+    channel: str = Query(..., description="Channel username (e.g. lakport)"),
+    limit: int = Query(50, description="Max messages to fetch"),
+    min_id: int = Query(0, description="Only fetch messages newer than min_id")
+):
+    global client
+    if not client or not client.is_connected():
+        raise HTTPException(status_code=503, detail="Telegram client not connected.")
+
+    clean_channel = channel.replace("@", "").strip()
+    try:
+        kwargs = {"limit": limit}
+        if min_id > 0:
+            kwargs["min_id"] = min_id
+
+        messages = await client.get_messages(clean_channel, **kwargs)
+        results = []
+        for msg in messages:
+            if not msg:
+                continue
+            text = msg.text or msg.message or ""
+            media_type = "none"
+            media_path = None
+            doc_info = None
+
+            if msg.photo:
+                media_type = "photo"
+            elif msg.document:
+                media_type = "document"
+                filename = "document.pdf"
+                for attr in msg.document.attributes:
+                    if isinstance(attr, DocumentAttributeFilename):
+                        filename = attr.file_name
+                        break
+                doc_info = filename
+                media_path = filename
+            elif msg.video:
+                media_type = "video"
+
+            results.append({
+                "message_id": msg.id,
+                "date": msg.date.isoformat() if msg.date else None,
+                "text": text,
+                "media_type": media_type,
+                "media_path": media_path,
+                "doc_info": doc_info,
+            })
+
+        return {
+            "channel": clean_channel,
+            "total": len(results),
+            "messages": results
+        }
+    except Exception as e:
+        print(f"[Bridge] Error fetching messages for @{clean_channel}:", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))

@@ -568,6 +568,7 @@ export interface PublicTelegramResult {
   channelUsername: string;
   messages: TelegramMessage[];
   formattedSummary: string;
+  fetchError?: Error;
 }
 
 export interface FetchPublicTelegramOptions {
@@ -673,126 +674,170 @@ export async function fetchPublicTelegramChannel(
 
   let channelTitle = clean;
   let page = 0;
+  let fetchError: Error | undefined = undefined;
 
-  while (nextUrl && page < maxPages && !reachedCutoff) {
-    page++;
+  // 1. Try fetching via Telegram Media Bridge if configured
+  const bridgeUrl = (opts.bridgeUrl || (await getTelegramBridgeUrl())).trim().replace(/\/$/, '');
+  let bridgeSucceeded = false;
+
+  if (bridgeUrl) {
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000);
-      const res: Response = await fetch(nextUrl, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-        signal: controller.signal,
-      });
-      clearTimeout(timeoutId);
+      const minId = lastMessageId || 0;
+      const bridgeRes = await fetchWithTimeout(
+        `${bridgeUrl}/messages?channel=${encodeURIComponent(clean)}&limit=50&min_id=${minId}`,
+        15000
+      );
+      if (bridgeRes.ok) {
+        const bridgeData = await bridgeRes.json();
+        if (bridgeData && Array.isArray(bridgeData.messages) && bridgeData.messages.length > 0) {
+          bridgeSucceeded = true;
+          channelTitle = bridgeData.channel || clean;
+          for (const m of bridgeData.messages) {
+            rawMessages.push({
+              postPath: `${clean}/${m.message_id}`,
+              messageId: m.message_id,
+              date: m.date || new Date().toISOString(),
+              text: m.text || '',
+              mediaType: m.media_type || 'none',
+              mediaPath: m.media_path || null,
+              photos: [],
+              docInfo: m.doc_info || null,
+              docLink: `https://t.me/${clean}/${m.message_id}`,
+            });
+          }
+        }
+      }
+    } catch (bridgeErr) {
+      console.warn('[telegram-bridge] Could not fetch messages from bridge:', bridgeErr);
+    }
+  }
 
-      if (!res.ok) break;
-      const html: string = await res.text();
+  // 2. If bridge was not used or yielded 0 messages, fall back to public preview scraping
+  if (!bridgeSucceeded) {
+    while (nextUrl && page < maxPages && !reachedCutoff) {
+      page++;
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 15000);
+        const res: Response = await fetch(nextUrl, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
 
-      const titleMatch = html.match(/<meta property="og:title" content="([^"]*)"/i) || html.match(/<title>([^<]*)<\/title>/i);
-      if (titleMatch && titleMatch[1]) channelTitle = titleMatch[1].trim();
+        if (!res.ok) {
+          if (page === 1) fetchError = new Error(`Telegram preview returned HTTP ${res.status}`);
+          break;
+        }
+        const html: string = await res.text();
 
-      let foundKnownOnThisPage = false;
-      const blocks = html.split('<div class="tgme_widget_message_wrap');
-      for (let i = 1; i < blocks.length; i++) {
-        const b = blocks[i];
-        const postMatch = b.match(/data-post="([^"]*)"/);
-        const postPath = postMatch ? postMatch[1] : '';
-        const msgNum = parseInt(postPath.split('/').pop() || '0', 10);
-        const dateMatch = b.match(/<time datetime="([^"]*)"/);
-        const msgDateStr = dateMatch ? dateMatch[1] : '';
-        const msgDate = msgDateStr || new Date().toISOString();
-        const msgDateMs = msgDateStr ? new Date(msgDateStr).getTime() : 0;
+        const titleMatch = html.match(/<meta property="og:title" content="([^"]*)"/i) || html.match(/<title>([^<]*)<\/title>/i);
+        if (titleMatch && titleMatch[1]) channelTitle = titleMatch[1].trim();
 
-        if (cutoffTime > 0 && msgDateMs > 0 && msgDateMs < cutoffTime) {
+        let foundKnownOnThisPage = false;
+        const blocks = html.split('<div class="tgme_widget_message_wrap');
+        for (let i = 1; i < blocks.length; i++) {
+          const b = blocks[i];
+          const postMatch = b.match(/data-post="([^"]*)"/);
+          const postPath = postMatch ? postMatch[1] : '';
+          const msgNum = parseInt(postPath.split('/').pop() || '0', 10);
+          const dateMatch = b.match(/<time datetime="([^"]*)"/);
+          const msgDateStr = dateMatch ? dateMatch[1] : '';
+          const msgDate = msgDateStr || new Date().toISOString();
+          const msgDateMs = msgDateStr ? new Date(msgDateStr).getTime() : 0;
+
+          if (cutoffTime > 0 && msgDateMs > 0 && msgDateMs < cutoffTime) {
+            reachedCutoff = true;
+            continue;
+          }
+
+          // Incremental check: if this message is already known (messageId <= lastMessageId),
+          // we skip it and note that we have reached the known historical messages.
+          if (lastMessageId && msgNum > 0 && msgNum <= lastMessageId) {
+            foundKnownOnThisPage = true;
+            continue;
+          }
+
+          const textMatch = b.match(/<div class="tgme_widget_message_text[^>]*>([\s\S]*?)<\/div>/);
+          let text = '';
+          if (textMatch) {
+            text = textMatch[1]
+              .replace(/<br\s*\/?>/gi, '\n')
+              .replace(/<[^>]+>/g, '')
+              .replace(/&amp;/g, '&')
+              .replace(/&lt;/g, '<')
+              .replace(/&gt;/g, '>')
+              .replace(/&quot;/g, '"')
+              .replace(/&#39;/g, "'")
+              .trim();
+          }
+
+          const photos = [...b.matchAll(/background-image:url\('([^']*)'\)/g)]
+            .map(m => m[1])
+            .filter(u => !u.includes('/emoji/'));
+
+          // Match Telegram document attachments (PDFs, abstracts, manifests)
+          const docTitleMatch = b.match(/<div class="[^"]*tgme_widget_message_document_title[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+          const docExtraMatch = b.match(/<div class="[^"]*tgme_widget_message_document_extra[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+          const docWrapMatch = b.match(/<a class="[^"]*tgme_widget_message_document_wrap[^"]*"[^>]*href="([^"]*)"/i);
+          let docInfo: string | null = null;
+          let docLink: string | null = null;
+          if (docTitleMatch) {
+            const rawDocTitle = docTitleMatch[1].replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').trim();
+            const rawDocExtra = docExtraMatch ? docExtraMatch[1].replace(/<[^>]+>/g, '').trim() : '';
+            docInfo = rawDocTitle + (rawDocExtra ? ` (${rawDocExtra})` : '');
+            docLink = docWrapMatch ? docWrapMatch[1] : (postPath ? `https://t.me/${postPath}` : null);
+          }
+
+          const videoMatch = b.match(/<video[^>]*src="([^"]*)"/i);
+          const videoThumb = b.match(/class="[^"]*tgme_widget_message_video_thumb[^"]*"[^>]*style="background-image:url\('([^']*)'\)"/i);
+          const videoUrl = videoMatch ? videoMatch[1] : (videoThumb ? videoThumb[1] : null);
+
+          let mediaType: 'photo' | 'video' | 'document' | 'none' = 'none';
+          let mediaPath: string | null = null;
+          if (photos.length > 0) {
+            mediaType = 'photo';
+            mediaPath = photos.join('; ');
+          } else if (docInfo) {
+            mediaType = 'document';
+            mediaPath = docInfo;
+          } else if (videoUrl) {
+            mediaType = 'video';
+            mediaPath = videoUrl;
+          }
+
+          if (text || mediaPath) {
+            rawMessages.push({
+              postPath,
+              messageId: msgNum,
+              date: msgDate,
+              text,
+              mediaType,
+              mediaPath,
+              photos,
+              docInfo,
+              docLink,
+            });
+          }
+        }
+
+        // If we hit already-synced messages on this page, do not paginate backwards
+        if (lastMessageId && foundKnownOnThisPage) {
           reachedCutoff = true;
-          continue;
         }
 
-        // Incremental check: if this message is already known (messageId <= lastMessageId),
-        // we skip it and note that we have reached the known historical messages.
-        if (lastMessageId && msgNum > 0 && msgNum <= lastMessageId) {
-          foundKnownOnThisPage = true;
-          continue;
+        if (reachedCutoff) break;
+
+        const prevMatch = html.match(/href="([^"]*\?before=[^"]*)"/i);
+        if (prevMatch && prevMatch[1]) {
+          nextUrl = 'https://t.me' + prevMatch[1];
+        } else {
+          nextUrl = null;
         }
-
-        const textMatch = b.match(/<div class="tgme_widget_message_text[^>]*>([\s\S]*?)<\/div>/);
-        let text = '';
-        if (textMatch) {
-          text = textMatch[1]
-            .replace(/<br\s*\/?>/gi, '\n')
-            .replace(/<[^>]+>/g, '')
-            .replace(/&amp;/g, '&')
-            .replace(/&lt;/g, '<')
-            .replace(/&gt;/g, '>')
-            .replace(/&quot;/g, '"')
-            .replace(/&#39;/g, "'")
-            .trim();
-        }
-
-        const photos = [...b.matchAll(/background-image:url\('([^']*)'\)/g)]
-          .map(m => m[1])
-          .filter(u => !u.includes('/emoji/'));
-
-        // Match Telegram document attachments (PDFs, abstracts, manifests)
-        const docTitleMatch = b.match(/<div class="[^"]*tgme_widget_message_document_title[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
-        const docExtraMatch = b.match(/<div class="[^"]*tgme_widget_message_document_extra[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
-        const docWrapMatch = b.match(/<a class="[^"]*tgme_widget_message_document_wrap[^"]*"[^>]*href="([^"]*)"/i);
-        let docInfo: string | null = null;
-        let docLink: string | null = null;
-        if (docTitleMatch) {
-          const rawDocTitle = docTitleMatch[1].replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').trim();
-          const rawDocExtra = docExtraMatch ? docExtraMatch[1].replace(/<[^>]+>/g, '').trim() : '';
-          docInfo = rawDocTitle + (rawDocExtra ? ` (${rawDocExtra})` : '');
-          docLink = docWrapMatch ? docWrapMatch[1] : (postPath ? `https://t.me/${postPath}` : null);
-        }
-
-        const videoMatch = b.match(/<video[^>]*src="([^"]*)"/i);
-        const videoThumb = b.match(/class="[^"]*tgme_widget_message_video_thumb[^"]*"[^>]*style="background-image:url\('([^']*)'\)"/i);
-        const videoUrl = videoMatch ? videoMatch[1] : (videoThumb ? videoThumb[1] : null);
-
-        let mediaType: 'photo' | 'video' | 'document' | 'none' = 'none';
-        let mediaPath: string | null = null;
-        if (photos.length > 0) {
-          mediaType = 'photo';
-          mediaPath = photos.join('; ');
-        } else if (docInfo) {
-          mediaType = 'document';
-          mediaPath = docInfo;
-        } else if (videoUrl) {
-          mediaType = 'video';
-          mediaPath = videoUrl;
-        }
-
-        if (text || mediaPath) {
-          rawMessages.push({
-            postPath,
-            messageId: msgNum,
-            date: msgDate,
-            text,
-            mediaType,
-            mediaPath,
-            photos,
-            docInfo,
-            docLink,
-          });
-        }
+      } catch (err) {
+        if (page === 1) fetchError = err instanceof Error ? err : new Error(String(err));
+        break;
       }
-
-      // If we hit already-synced messages on this page, do not paginate backwards
-      if (lastMessageId && foundKnownOnThisPage) {
-        reachedCutoff = true;
-      }
-
-      if (reachedCutoff) break;
-
-      const prevMatch = html.match(/href="([^"]*\?before=[^"]*)"/i);
-      if (prevMatch && prevMatch[1]) {
-        nextUrl = 'https://t.me' + prevMatch[1];
-      } else {
-        nextUrl = null;
-      }
-    } catch {
-      break;
     }
   }
 
@@ -916,6 +961,7 @@ export async function fetchPublicTelegramChannel(
     channelUsername: `@${clean}`,
     messages,
     formattedSummary: lines.join('\n'),
+    fetchError,
   };
 }
 
@@ -957,8 +1003,17 @@ export async function savePublicTelegramChannel(
   // This ensures that if last_message_id was bumped previously without saving messages, we recover automatically
   const maxStored = await db.getFirstAsync<{ max_id: number | null }>(
     `SELECT MAX(message_id) as max_id FROM telegram_messages
-     WHERE deleted = 0 AND (channel_id = ? OR channel_id = ? OR channel_id = ?)`,
-    [channelId, `@${clean}`, clean]
+     WHERE deleted = 0 AND (
+       channel_id = ?
+       OR channel_id = ?
+       OR channel_id = ?
+       OR (channel_name IS NOT NULL AND (
+         channel_name = ?
+         OR LOWER(channel_name) = ?
+         OR LOWER(channel_name) LIKE ?
+       ))
+     )`,
+    [channelId, `@${clean}`, clean, existing?.channel_name || '', (existing?.channel_name || '').toLowerCase(), `%${clean.toLowerCase()}%`]
   );
 
   let effectiveLastId: number | undefined = undefined;
@@ -973,6 +1028,11 @@ export async function savePublicTelegramChannel(
 
   const result = await fetchPublicTelegramChannel(username, { lastMessageId: effectiveLastId });
   const now = new Date().toISOString();
+
+  // If a network error occurred and no messages could be fetched, report it clearly
+  if (result.fetchError && result.messages.length === 0) {
+    throw new Error(`Could not reach Telegram: ${result.fetchError.message}`);
+  }
 
   // If already up to date (no new messages found)
   if (result.messages.length === 0 && effectiveLastId) {
@@ -1006,6 +1066,7 @@ export async function savePublicTelegramChannel(
   const newMaxId = Math.max(...result.messages.map(m => m.messageId));
   const finalLastMessageId = effectiveLastId ? Math.max(effectiveLastId, newMaxId) : newMaxId;
 
+  const cleanUsername = clean.toLowerCase();
   await db.runAsync(
     `INSERT INTO telegram_channels (id, channel_username, channel_name, last_message_id, last_synced_at, auto_sync, created_at)
      VALUES (?, ?, ?, ?, ?, 1, ?)
@@ -1013,8 +1074,16 @@ export async function savePublicTelegramChannel(
        channel_name = excluded.channel_name,
        last_message_id = excluded.last_message_id,
        last_synced_at = excluded.last_synced_at`,
-    [channelId, result.channelUsername, result.channelName, finalLastMessageId, now, now]
+    [channelId, `@${cleanUsername}`, result.channelName, finalLastMessageId, now, now]
   );
+
+  // Clean up any un-prefixed duplicate channel record if present
+  try {
+    await db.runAsync(
+      `DELETE FROM telegram_channels WHERE id != ? AND LOWER(channel_username) = ?`,
+      [channelId, cleanUsername]
+    );
+  } catch {}
 
   // Heal any orphaned rows in telegram_messages that may have been saved under stray UUIDs or clean handle
   await db.runAsync(
