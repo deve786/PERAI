@@ -10,6 +10,16 @@ export interface ChangelogEntry {
 /** Newest first. Add a new entry here with every release that changes user-visible behaviour. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.30.58',
+    build: 161,
+    type: 'ota',
+    date: '2026-10-26',
+    time: '09:59 PM',
+    highlights: [
+      'Fix false MV Kavaratti ship detection and render timeline card for voyage schedules',
+    ],
+  },
+  {
     version: '1.30.57',
     build: 160,
     type: 'ota',

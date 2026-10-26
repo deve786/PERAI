@@ -546,12 +546,13 @@ export default function AskScreen() {
                         steps={steps}
                         onSetReminder={(step) => {
                           const now = new Date();
+                          const targetDate = step.date || now.toISOString().slice(0, 10);
                           void insertMemory(
                             {
                               title: `Boarding: ${step.title} (${step.time})`,
                               type: 'reminder',
                               category: 'Travel',
-                              eventDate: now.toISOString().slice(0, 10),
+                              eventDate: targetDate,
                               dateExpression: null,
                               amount: null,
                               currency: null,
@@ -563,11 +564,11 @@ export default function AskScreen() {
                               repeat: null,
                               groupName: null,
                             },
-                            `Travel boarding reminder: ${step.title} at ${step.time}`
+                            `Travel boarding reminder: ${step.title} at ${step.time} on ${targetDate}`
                           );
                           showDialog({
                             title: 'Boarding Reminder Added ✓',
-                            message: `Saved reminder for ${step.title} at ${step.time} to your tasks and calendar.`,
+                            message: `Saved reminder for ${step.title} (${step.time}) on ${targetDate} to your tasks and calendar.`,
                           });
                         }}
                         onLogExpense={() => {

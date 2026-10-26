@@ -7,6 +7,7 @@ export interface TimelineStep {
   title: string;
   time: string;
   sub?: string;
+  date?: string;
   color?: string;
 }
 
@@ -15,6 +16,30 @@ interface TimetableTimelineCardProps {
   vesselName?: string;
   onSetReminder?: (step: TimelineStep) => void;
   onLogExpense?: () => void;
+}
+
+function findUpcomingStep(steps: TimelineStep[]): TimelineStep {
+  const now = new Date();
+  for (const s of steps) {
+    if (s.date) {
+      const stepTimeStr = s.time.includes('AM') || s.time.includes('PM') ? s.time : '09:00 AM';
+      const tm = stepTimeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+      let hh = 9;
+      let mm = 0;
+      if (tm) {
+        hh = parseInt(tm[1], 10);
+        mm = parseInt(tm[2], 10);
+        if (tm[3]?.toUpperCase() === 'PM' && hh < 12) hh += 12;
+        if (tm[3]?.toUpperCase() === 'AM' && hh === 12) hh = 0;
+      }
+      const stepDate = new Date(`${s.date}T${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:00`);
+      if (stepDate.getTime() > now.getTime()) {
+        return s; // The next upcoming future milestone!
+      }
+    }
+  }
+  // If all are in the past or date is unspecified, return the last step or first step
+  return steps[steps.length - 1] || steps[0];
 }
 
 export function TimetableTimelineCard({
@@ -29,7 +54,9 @@ export function TimetableTimelineCard({
 
   function handleReminder() {
     setReminderAdded(true);
-    if (onSetReminder) onSetReminder(steps[0]);
+    // Pick the next upcoming future milestone
+    const upcoming = findUpcomingStep(steps);
+    if (onSetReminder) onSetReminder(upcoming);
   }
 
   return (
@@ -73,7 +100,7 @@ export function TimetableTimelineCard({
             size={14}
             color={reminderAdded ? '#10b981' : '#f59e0b'}
           />
-          <Text style={[styles.chipText, reminderAdded && { color: '#10b981' }]}>
+          <Text style={[styles.chipText, reminderAdded && { color: '#10b981' }]} numberOfLines={1}>
             {reminderAdded ? 'Reminder Set ✓' : 'Set Reminder'}
           </Text>
         </Pressable>
@@ -84,7 +111,7 @@ export function TimetableTimelineCard({
             style={({ pressed }) => [styles.chipButton, pressed && styles.chipPressed]}
           >
             <Ionicons name="wallet-outline" size={14} color="#f59e0b" />
-            <Text style={styles.chipText}>Log Expense</Text>
+            <Text style={styles.chipText} numberOfLines={1}>Log Expense</Text>
           </Pressable>
         ) : null}
       </View>
@@ -108,6 +135,28 @@ export function formatTimelineTime(raw: string): string {
   return trimmed;
 }
 
+function cleanPlaceName(raw: string): string {
+  if (!raw) return '';
+  return raw
+    .replace(/\b(?:at|on|for|from|to|de|in)\b/gi, '')
+    .replace(/[-_.:,]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function parseISODate(raw: string): string | undefined {
+  if (!raw) return undefined;
+  const dmy = raw.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})$/);
+  if (dmy) {
+    const day = dmy[1].padStart(2, '0');
+    const month = dmy[2].padStart(2, '0');
+    let year = dmy[3];
+    if (year.length === 2) year = `20${year}`;
+    return `${year}-${month}-${day}`;
+  }
+  return undefined;
+}
+
 /**
  * Extracts timetable timeline milestones from AI answers or telegram schedule texts.
  */
@@ -117,7 +166,7 @@ export function extractTimelineFromText(text: string, items?: string[]): Timelin
   const steps: TimelineStep[] = [];
 
   // Strategy 1: Parse structured items (e.g. from RAG citations / voyage legs)
-  if (items && items.length >= 2) {
+  if (items && items.length >= 1) {
     for (let i = 0; i < items.length; i++) {
       const it = items[i];
       const parts = it.split('•').map((s) => s.trim());
@@ -126,34 +175,42 @@ export function extractTimelineFromText(text: string, items?: string[]): Timelin
 
       if (datePart && parts.length >= 2) {
         const dateStr = datePart[1];
+        const isoDate = parseISODate(dateStr);
         const timeVal = timePart ? formatTimelineTime(timePart[1] || timePart[2]) : '';
         const timeStr = timeVal || dateStr;
         const vessel = parts.length >= 3 ? parts[1] : '';
         const detail = parts.length >= 3 ? parts.slice(2).join(' • ') : parts[1];
 
-        // Format clean title
-        let cleanDetail = detail.replace(/\((.*?)\)/, '$1').replace(/\s+/g, ' ').trim();
+        let cleanDetail = cleanPlaceName(detail.replace(/\((.*?)\)/, '$1'));
         let title = cleanDetail;
-        if (/mainland\s*departure/i.test(cleanDetail)) title = 'Mainland Departure';
-        else if (/island\s*stops/i.test(cleanDetail)) title = 'Island Stops';
-        else if (/return/i.test(cleanDetail)) title = 'Return Voyage';
-        else if (/route[:\s]*([A-Za-z0-9\s-]+)/i.test(cleanDetail)) {
-          const rm = cleanDetail.match(/route[:\s]*([A-Za-z0-9\s-]+)/i);
-          title = rm ? `Route: ${rm[1].trim()}` : cleanDetail;
+        if (/mainland\s*departure/i.test(detail)) title = 'Mainland Departure';
+        else if (/island\s*stops/i.test(detail)) title = 'Island Stops';
+        else if (/return/i.test(detail)) title = 'Return Voyage';
+        else if (/eta\s*([A-Za-z\s]+)/i.test(detail)) {
+          const em = detail.match(/eta\s*([A-Za-z\s]+?)(?:\s*\d{4}|\s*$)/i);
+          title = `Arrival ETA: ${cleanPlaceName(em ? em[1] : 'Destination')}`;
+        } else if (/route[:\s]*([A-Za-z0-9\s-]+)/i.test(detail)) {
+          const rm = detail.match(/route[:\s]*([A-Za-z0-9\s-]+)/i);
+          title = `Route: ${rm ? rm[1].trim() : cleanDetail}`;
         }
 
         let sub = `${vessel ? `${vessel} • ` : ''}${cleanDetail} (${dateStr})`;
         if (sub.length > 55) sub = `${vessel ? `${vessel} • ` : ''}${dateStr}`;
 
-        const isFirst = i === 0;
-        const isLast = i === items.length - 1;
-        const color = isFirst ? '#10b981' : isLast ? '#f59e0b' : '#3b82f6';
-
         steps.push({
           title,
           time: timeStr,
           sub,
-          color,
+          date: isoDate,
+          color: i === 0 ? '#10b981' : '#3b82f6',
+        });
+      } else if (/running\s*schedule/i.test(it)) {
+        const circuit = it.match(/([A-Z]{3}(?:\s*[/–-]\s*[A-Z]{3})+)/);
+        steps.push({
+          title: 'Running Circuit',
+          time: 'En route',
+          sub: circuit ? circuit[1].replace(/\s*\/\s*/g, ' → ') : 'Island circuit',
+          color: '#f59e0b',
         });
       }
     }
@@ -161,17 +218,17 @@ export function extractTimelineFromText(text: string, items?: string[]): Timelin
   }
 
   // Strategy 2: Natural text voyage legs
-  // e.g. "depart Kochi on 27.10.2026, call at Kavaratti and Agatti on 28.10.2026, and return to Kochi on 29.10.2026"
   const natLegs = [
-    ...text.matchAll(/\b(depart(?:ing|ed|s)?|call\s*at|arrive|return\s*to)\s+([A-Za-z\s&,]+?)\s+(?:on\s+)?(\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?|\d{4}\s*(?:hrs)?|\d{1,2}:\d{2}\s*(?:am|pm)?)/gi)
+    ...text.matchAll(/\b(depart(?:ing|ed|s)?|call\s*at|arrive|return\s*to)\s+(?:at\s+|from\s+|to\s+)?([A-Za-z\s&,]+?)\s+(?:on\s+|at\s+)?(\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?|\d{4}\s*(?:hrs)?|\d{1,2}:\d{2}\s*(?:am|pm)?)/gi)
   ];
   if (natLegs.length >= 2) {
     steps.length = 0;
     for (let i = 0; i < natLegs.length; i++) {
       const match = natLegs[i];
       const action = match[1].toLowerCase();
-      const place = match[2].trim();
+      const place = cleanPlaceName(match[2]);
       const timeOrDate = formatTimelineTime(match[3]) || match[3];
+      const isoDate = parseISODate(match[3]);
 
       let title = place;
       if (action.includes('depart')) title = `Departure: ${place}`;
@@ -183,6 +240,7 @@ export function extractTimelineFromText(text: string, items?: string[]): Timelin
         title,
         time: timeOrDate,
         sub: `Scheduled voyage stop`,
+        date: isoDate,
         color: i === 0 ? '#10b981' : i === natLegs.length - 1 ? '#f59e0b' : '#3b82f6',
       });
     }
@@ -212,40 +270,47 @@ export function extractTimelineFromText(text: string, items?: string[]): Timelin
 
   // Strategy 4: Transit / Departure / Arrival milestones
   const depMatch = text.match(
-    /\b(?:depart(?:ed|ing|ure)?|etd)\s+(?:from\s+)?([A-Za-z\s]+?)\s+(?:on\s+[\d/.-]+\s+)?(?:at\s+)?(\d{4}|\d{1,2}(?::\d{2})?\s*(?:am|pm|hrs|hours)?)\b/i
+    /\b(?:depart(?:ed|ing|ure)?|etd)\s+(?:from\s+)?([A-Za-z\s]+?)\s+(?:on\s+([\d/.-]+)\s+)?(?:at\s+)?(\d{4}|\d{1,2}(?::\d{2})?\s*(?:am|pm|hrs|hours)?)\b/i
   );
   const arrMatch = text.match(
-    /\b(?:eta|arriv(?:ed|ing|al)?)\s+(?:at|to|in\s+)?([A-Za-z\s]+?)\s+(?:on\s+[\d/.-]+\s+)?(?:at\s+)?(\d{4}|\d{1,2}(?::\d{2})?\s*(?:am|pm|hrs|hours)?)\b/i
+    /\b(?:eta|arriv(?:ed|ing|al)?)\s+(?:at|to|in\s+)?([A-Za-z\s]+?)\s+(?:on\s+([\d/.-]+)\s+)?(?:at\s+)?(\d{4}|\d{1,2}(?::\d{2})?\s*(?:am|pm|hrs|hours)?)\b/i
   );
 
   if (depMatch && arrMatch) {
-    const depPlace = depMatch[1].replace(/\b(?:at|on|for)\b/gi, '').trim();
-    const arrPlace = arrMatch[1].replace(/\b(?:at|on|for)\b/gi, '').trim();
+    steps.length = 0;
+    const depPlace = cleanPlaceName(depMatch[1]);
+    const arrPlace = cleanPlaceName(arrMatch[1]);
+    const depDate = depMatch[2] ? parseISODate(depMatch[2]) : undefined;
+    const arrDate = arrMatch[2] ? parseISODate(arrMatch[2]) : undefined;
+
     steps.push({
-      title: `Departure (${depPlace})`,
-      time: formatTimelineTime(depMatch[2]),
+      title: `Departure: ${depPlace}`,
+      time: formatTimelineTime(depMatch[3]),
       sub: `Departing from ${depPlace}`,
+      date: depDate,
       color: '#10b981',
     });
     steps.push({
-      title: `Arrival ETA (${arrPlace})`,
-      time: formatTimelineTime(arrMatch[2]),
+      title: `Arrival ETA: ${arrPlace}`,
+      time: formatTimelineTime(arrMatch[3]),
       sub: `Arrival at ${arrPlace}`,
+      date: arrDate,
       color: '#f59e0b',
     });
     return steps;
   }
 
-  // If only departure was matched with a known route in text (e.g. "KVT-AGT-KVT-AND"), synthesize arrival milestone
-  if (steps.length === 1 && depMatch) {
-    const routeCode = text.match(/\b([A-Z]{3,}(?:\s*[-–→]\s*[A-Z]{3,})+)\b/);
-    if (routeCode) {
+  // Strategy 5: Single transit milestone + route circuit fallback
+  if (steps.length === 1) {
+    const circuit = text.match(/([A-Z]{3}(?:\s*[/–-]\s*[A-Z]{3})+)/);
+    if (circuit) {
       steps.push({
-        title: `Voyage Route`,
+        title: 'Voyage Circuit',
         time: 'En route',
-        sub: `Route: ${routeCode[1]}`,
-        color: '#3b82f6',
+        sub: circuit[1].replace(/\s*\/\s*/g, ' → '),
+        color: '#f59e0b',
       });
+      return steps;
     }
   }
 
@@ -341,14 +406,16 @@ const styles = StyleSheet.create({
     borderTopColor: 'rgba(255, 255, 255, 0.08)',
   },
   chipButton: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: 6,
     backgroundColor: 'rgba(245, 158, 11, 0.12)',
     borderWidth: 1,
     borderColor: 'rgba(245, 158, 11, 0.28)',
-    paddingVertical: 7,
-    paddingHorizontal: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 8,
     borderRadius: 8,
   },
   chipPressed: {
