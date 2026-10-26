@@ -926,20 +926,49 @@ export async function savePublicTelegramChannel(
   const clean = username.replace(/^@/, '').replace(/^(?:https?:\/\/)?t\.me\/(?:s\/)?/, '').replace(/\/$/, '').trim();
   const db = await getSourcesDb();
 
-  // If lastMessageId not explicitly passed, inspect existing channel in DB
-  let effectiveLastId = lastMessageId;
-  let existingChannelId: string | null = null;
-  if (!effectiveLastId) {
-    const existing = await db.getFirstAsync<{ id: string; last_message_id: number | null }>(
-      'SELECT id, last_message_id FROM telegram_channels WHERE channel_username = ? OR channel_username = ?',
-      [`@${clean}`, clean]
-    );
-    if (existing) {
-      existingChannelId = existing.id;
-      if (existing.last_message_id) {
-        effectiveLastId = existing.last_message_id;
-      }
-    }
+  // Always find existing channel by handle to preserve its exact channel ID
+  const existing = await db.getFirstAsync<{ id: string; last_message_id: number | null; channel_name: string | null }>(
+    'SELECT id, last_message_id, channel_name FROM telegram_channels WHERE LOWER(channel_username) = ? OR LOWER(channel_username) = ?',
+    [`@${clean.toLowerCase()}`, clean.toLowerCase()]
+  );
+  const channelId = existing?.id || uuid();
+
+  // Heal any orphaned rows first so maxStored includes all previously saved messages for this channel
+  if (channelId) {
+    try {
+      await db.runAsync(
+        `UPDATE telegram_messages
+         SET channel_id = ?
+         WHERE channel_id != ? AND (
+           LOWER(channel_id) = ?
+           OR LOWER(channel_id) = ?
+           OR (channel_name IS NOT NULL AND (
+             channel_name = ?
+             OR LOWER(channel_name) = ?
+             OR LOWER(channel_name) LIKE ?
+           ))
+         )`,
+        [channelId, channelId, clean.toLowerCase(), `@${clean.toLowerCase()}`, existing?.channel_name || '', (existing?.channel_name || '').toLowerCase(), `%${clean.toLowerCase()}%`]
+      );
+    } catch {}
+  }
+
+  // Find the actual highest message_id stored in telegram_messages for this channel
+  // This ensures that if last_message_id was bumped previously without saving messages, we recover automatically
+  const maxStored = await db.getFirstAsync<{ max_id: number | null }>(
+    `SELECT MAX(message_id) as max_id FROM telegram_messages
+     WHERE deleted = 0 AND (channel_id = ? OR channel_id = ? OR channel_id = ?)`,
+    [channelId, `@${clean}`, clean]
+  );
+
+  let effectiveLastId: number | undefined = undefined;
+  if (maxStored?.max_id && maxStored.max_id > 0) {
+    // If we already have messages in DB, use the actual highest stored message ID
+    // If lastMessageId was passed and is smaller, use that so no messages are missed
+    effectiveLastId = (lastMessageId && lastMessageId < maxStored.max_id) ? lastMessageId : maxStored.max_id;
+  } else {
+    // If no messages stored yet, fetch fresh messages without skipping
+    effectiveLastId = undefined;
   }
 
   const result = await fetchPublicTelegramChannel(username, { lastMessageId: effectiveLastId });
@@ -950,15 +979,15 @@ export async function savePublicTelegramChannel(
     await db.runAsync(
       `UPDATE telegram_channels
        SET last_synced_at = ?
-       WHERE channel_username = ? OR channel_username = ?`,
-      [now, `@${clean}`, clean]
+       WHERE id = ? OR channel_username = ? OR channel_username = ?`,
+      [now, channelId, `@${clean}`, clean]
     );
 
     return {
       channel: {
-        id: existingChannelId || uuid(),
+        id: channelId,
         channelUsername: `@${clean}`,
-        channelName: result.channelName,
+        channelName: existing?.channel_name || result.channelName,
         lastMessageId: effectiveLastId,
         lastSyncedAt: now,
         autoSync: true,
@@ -974,7 +1003,6 @@ export async function savePublicTelegramChannel(
     throw new Error(`Could not find any messages for channel @${clean}. Check if the channel is public.`);
   }
 
-  const channelId = existingChannelId || uuid();
   const newMaxId = Math.max(...result.messages.map(m => m.messageId));
   const finalLastMessageId = effectiveLastId ? Math.max(effectiveLastId, newMaxId) : newMaxId;
 
@@ -986,6 +1014,18 @@ export async function savePublicTelegramChannel(
        last_message_id = excluded.last_message_id,
        last_synced_at = excluded.last_synced_at`,
     [channelId, result.channelUsername, result.channelName, finalLastMessageId, now, now]
+  );
+
+  // Heal any orphaned rows in telegram_messages that may have been saved under stray UUIDs or clean handle
+  await db.runAsync(
+    `UPDATE telegram_messages
+     SET channel_id = ?
+     WHERE channel_id != ? AND (
+       LOWER(channel_id) = ?
+       OR LOWER(channel_id) = ?
+       OR (channel_name IS NOT NULL AND channel_name = ?)
+     )`,
+    [channelId, channelId, clean.toLowerCase(), `@${clean.toLowerCase()}`, result.channelName]
   );
 
   await db.withTransactionAsync(async () => {
@@ -1047,7 +1087,11 @@ export async function addTelegramChannel(
 
   const db = await getSourcesDb();
   const now = new Date().toISOString();
-  const id = uuid();
+  const existing = await db.getFirstAsync<{ id: string }>(
+    'SELECT id FROM telegram_channels WHERE LOWER(channel_username) = ? OR LOWER(channel_username) = ?',
+    [`@${cleanUsername.toLowerCase()}`, cleanUsername.toLowerCase()]
+  );
+  const id = existing?.id || uuid();
 
   try {
     const messages = await fetchTelegramMessages(botToken, channelUsername);
@@ -1386,6 +1430,26 @@ export async function getChannelMediaStats(
   const matchedUsername = channelRecord?.channel_username?.replace(/^@/, '').toLowerCase() || clean;
   const matchedTitle = channelRecord?.channel_name || '';
 
+  // Heal any orphaned rows in telegram_messages so counts reflect all messages
+  if (matchedId) {
+    try {
+      await db.runAsync(
+        `UPDATE telegram_messages
+         SET channel_id = ?
+         WHERE channel_id != ? AND (
+           LOWER(channel_id) = ?
+           OR LOWER(channel_id) = ?
+           OR (channel_name IS NOT NULL AND (
+             channel_name = ?
+             OR LOWER(channel_name) = ?
+             OR LOWER(channel_name) LIKE ?
+           ))
+         )`,
+        [matchedId, matchedId, clean, `@${clean}`, matchedTitle, matchedTitle.toLowerCase(), `%${matchedUsername}%`]
+      );
+    } catch {}
+  }
+
   const row = await db.getFirstAsync<{
     total: number;
     photo_count: number;
@@ -1468,6 +1532,22 @@ export async function getChannelMessages(channelUsername: string, channelId?: st
   const matchedUsername = channelRecord?.channel_username?.replace(/^@/, '').toLowerCase() || clean;
   const matchedTitle = channelRecord?.channel_name || '';
 
+  // Heal any orphaned rows in telegram_messages so they are normalized to matchedId
+  if (matchedId) {
+    try {
+      await db.runAsync(
+        `UPDATE telegram_messages
+         SET channel_id = ?
+         WHERE channel_id != ? AND (
+           LOWER(channel_id) = ?
+           OR LOWER(channel_id) = ?
+           OR (channel_name IS NOT NULL AND channel_name = ?)
+         )`,
+        [matchedId, matchedId, clean, `@${clean}`, matchedTitle]
+      );
+    } catch {}
+  }
+
   const rows = await db.getAllAsync<{
     id: string;
     channel_id: string;
@@ -1493,7 +1573,7 @@ export async function getChannelMessages(channelUsername: string, channelId?: st
          OR LOWER(channel_name) LIKE ?
        ))
      )
-     ORDER BY message_date DESC
+     ORDER BY message_id DESC, message_date DESC
      LIMIT ?`,
     [matchedId, clean, `@${clean}`, matchedUsername, matchedTitle, matchedTitle.toLowerCase(), `%${matchedUsername}%`, limit]
   );
