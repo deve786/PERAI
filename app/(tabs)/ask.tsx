@@ -35,8 +35,10 @@ import { describeError, hasApiKey, setSelectedModelInMemory } from '@/ai/client'
 import { showDialog } from '@/dialogStore';
 import { MemoryRow } from '@/components/MemoryRow';
 import { PlanCard } from '@/components/PlanCard';
+import { forgetQuestion, getAllMemories, getRecentQuestions, saveQuestion, insertMemory } from '@/db/queries';
+import { MorningIslandBriefing } from '@/components/MorningIslandBriefing';
+import { TimetableTimelineCard, extractTimelineFromText } from '@/components/TimetableTimelineCard';
 import { VoiceWaveform } from '@/components/VoiceWaveform';
-import { forgetQuestion, getAllMemories, getRecentQuestions, saveQuestion } from '@/db/queries';
 import { buildChatContext } from '@/expense/chatContext';
 import { getSetting, listExpenses } from '@/expense/db';
 import { addDays, todayStr } from '@/expense/dates';
@@ -463,6 +465,15 @@ export default function AskScreen() {
             );
           })()}
 
+          {/* Island Travel Copilot: Morning Island Briefing (Design 1) */}
+          {thread.length === 0 && !listening ? (
+            <MorningIslandBriefing
+              onSelectVessel={(vessel) => {
+                void ask(`What is the latest schedule, departures, and timings for ${vessel}?`);
+              }}
+            />
+          ) : null}
+
           {scope && thread.length === 0 && !listening ? (
             <Text style={[type.fine, styles.scope]}>{scope}</Text>
           ) : null}
@@ -524,6 +535,47 @@ export default function AskScreen() {
                       })}
                     </View>
                   ) : null}
+
+                  {/* Island Travel Copilot: Timetable Timeline Step Card (Design 1) */}
+                  {(() => {
+                    const fullText = `${result.headline || ''} ${result.answer || ''} ${result.items.join(' ')}`;
+                    const steps = extractTimelineFromText(fullText);
+                    if (!steps) return null;
+                    return (
+                      <TimetableTimelineCard
+                        steps={steps}
+                        onSetReminder={(step) => {
+                          const now = new Date();
+                          void insertMemory(
+                            {
+                              title: `Boarding: ${step.title} (${step.time})`,
+                              type: 'reminder',
+                              category: 'Travel',
+                              eventDate: now.toISOString().slice(0, 10),
+                              dateExpression: null,
+                              amount: null,
+                              currency: null,
+                              people: null,
+                              location: null,
+                              tags: 'travel, boat, lakport',
+                              priority: 'high',
+                              status: 'active',
+                              repeat: null,
+                              groupName: null,
+                            },
+                            `Travel boarding reminder: ${step.title} at ${step.time}`
+                          );
+                          showDialog({
+                            title: 'Boarding Reminder Added ✓',
+                            message: `Saved reminder for ${step.title} at ${step.time} to your tasks and calendar.`,
+                          });
+                        }}
+                        onLogExpense={() => {
+                          router.push('/entry/add');
+                        }}
+                      />
+                    );
+                  })()}
 
                   {result.found ? (
                     <>

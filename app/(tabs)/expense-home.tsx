@@ -2,7 +2,7 @@ import React, { useCallback, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { categorySpendBetween, listCategories, listExpenses, listIncome, listRecurring, refreshRecurring, type Category, type ExpenseRow, type IncomeRow, type Recurring } from '@/expense/db';
+import { categorySpendBetween, listCategories, listExpenses, listIncome, listRecurring, listRefundsPending, refreshRecurring, type Category, type ExpenseRow, type IncomeRow, type Recurring } from '@/expense/db';
 import { categoryBudgetStatus } from '@/expense/budgets';
 import { takeBudgetAlert } from '@/expense/budgetAlerts';
 import { getBorrowLendSummary, type BorrowLendSummary } from '@/expense/borrowLendDb';
@@ -17,6 +17,8 @@ import { dayHeading, ExpenseItem, groupByDate } from '@/expense/ExpenseItem';
 import { IncomeItem } from '@/expense/IncomeItem';
 import { ExpenseSyncButton } from '@/components/ExpenseSyncButton';
 import { UpcomingBills } from '@/components/UpcomingBills';
+import { FinancialCopilotCard } from '@/components/FinancialCopilotCard';
+import { RefundAlertCard, type RefundAlertItem } from '@/components/RefundAlertCard';
 
 /** The pure tone names from budgets.ts, in this zone's colours. */
 function budgetToneColor(tone: 'good' | 'warn' | 'over', c: Colors) {
@@ -64,6 +66,7 @@ export default function Home() {
   const [cats, setCats] = useState<Category[]>([]);
   const [spentPerCat, setSpentPerCat] = useState<Map<string, number>>(new Map());
   const [budgetAlert, setBudgetAlert] = useState<string | null>(null);
+  const [refundAlerts, setRefundAlerts] = useState<RefundAlertItem[]>([]);
 
   // Derived from the date string rather than a Date object: primitives keep the
   // memoised range referentially stable, which the focus effect depends on.
@@ -89,7 +92,7 @@ export default function Home() {
 
   const load = useCallback(async () => {
     await refreshRecurring();
-    const [monthExpenses, monthIncome, allExpenses, allIncome, prevExpenses, recList, blSummary, nwSummary, catList, perCategory] = await Promise.all([
+    const [monthExpenses, monthIncome, allExpenses, allIncome, prevExpenses, recList, blSummary, nwSummary, catList, perCategory, pendingRefunds] = await Promise.all([
       from ? listExpenses(from, to) : listExpenses(),
       from ? listIncome(from, to) : listIncome(),
       listExpenses(),
@@ -100,6 +103,7 @@ export default function Home() {
       getNetWorthSummary().catch(() => null),
       listCategories(),
       from ? categorySpendBetween(from, to) : Promise.resolve(new Map<string, number>()),
+      listRefundsPending().catch(() => []),
     ]);
     setRows(monthExpenses);
     setIncomeRows(monthIncome);
@@ -111,6 +115,16 @@ export default function Home() {
     setSpentPerCat(perCategory);
     setEntryCount(allExpenses.length + allIncome.length);
     setMonthOptions(monthsWithData([...allExpenses, ...allIncome].map((r) => r.date), todayStr().slice(0, 7)));
+
+    const alerts: RefundAlertItem[] = (pendingRefunds || []).map((p) => ({
+      id: p.id,
+      amount: p.amount,
+      note: p.note,
+      since: p.since,
+      daysOverdue: Math.max(1, Math.round((Date.now() - new Date(p.since).getTime()) / (1000 * 60 * 60 * 24))),
+    }));
+    setRefundAlerts(alerts);
+
     // Left behind by the expense screen when a budget was just crossed.
     setBudgetAlert(await takeBudgetAlert());
     // The latest entries within whatever the page is showing.
@@ -178,6 +192,21 @@ export default function Home() {
             <T size={14} weight="600" style={{ flex: 1 }}>{budgetAlert}</T>
             <Ionicons name="close" size={18} color={c.sub} />
           </Pressable>
+        )}
+
+        {/* Proactive Refund Watchdog (Design 2) */}
+        {refundAlerts.length > 0 && (
+          <RefundAlertCard
+            refunds={refundAlerts}
+            symbol={symbol}
+            onFollowUp={(item) => router.push(`/expense/${item.id}` as any)}
+            onDismiss={(id) => setRefundAlerts((prev) => prev.filter((r) => r.id !== id))}
+          />
+        )}
+
+        {/* AI Financial Copilot: Monthly Spending Health (Design 2) */}
+        {isCurrentMonth && (
+          <FinancialCopilotCard totalSpent={total} budget={budget} symbol={symbol} />
         )}
 
         <View style={[styles.card, { backgroundColor: c.card, borderColor: c.line }]}>
