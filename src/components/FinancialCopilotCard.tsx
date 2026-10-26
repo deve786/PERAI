@@ -11,57 +11,52 @@ interface FinancialCopilotCardProps {
 }
 
 export function FinancialCopilotCard({ totalSpent, budget, symbol = '₹' }: FinancialCopilotCardProps) {
-  const effectiveBudget = budget > 0 ? budget : 50000;
+  const effectiveBudget = budget > 0 ? budget : 25000;
   const pct = Math.min(1, Math.max(0, totalSpent / effectiveBudget));
-  const pctDisplay = (pct * 100).toFixed(1);
+  const spentPct = Math.round(pct * 100);
+  const remainingPct = 100 - spentPct;
   const remaining = Math.max(0, effectiveBudget - totalSpent);
   const isOver = totalSpent > effectiveBudget;
 
   return (
     <View style={styles.cardContainer}>
-      <View style={styles.topRow}>
-        <View style={styles.textColumn}>
-          <Text style={styles.title}>Monthly Spending Health</Text>
-          <Text style={styles.amountSummary}>
-            {fmtMoney(totalSpent, symbol)} of {fmtMoney(effectiveBudget, symbol)} budget used
-          </Text>
-        </View>
+      <Text style={styles.title}>Monthly Spending Health</Text>
 
-        <View style={styles.piggyIconContainer}>
-          <Ionicons name="wallet" size={24} color="#10b981" />
-        </View>
-      </View>
-
-      {/* Modern Progress Bar */}
+      {/* Pill Progress Bar with embedded percentages */}
       <View style={styles.progressTrack}>
         <View
           style={[
             styles.progressBar,
             {
-              width: `${Math.min(100, Math.round(pct * 100))}%`,
+              width: `${Math.max(16, Math.min(100, spentPct))}%`,
               backgroundColor: isOver ? '#ef4444' : pct > 0.85 ? '#f59e0b' : '#10b981',
             },
           ]}
-        />
+        >
+          <Text style={styles.barPercentageText}>{spentPct}%</Text>
+        </View>
+        <Text style={styles.trackRemainingText}>{remainingPct}%</Text>
       </View>
 
-      <View style={styles.footerRow}>
-        <Text style={styles.footerText}>
-          {isOver
-            ? `Over budget by ${fmtMoney(totalSpent - effectiveBudget, symbol)}`
-            : `Remaining: ${fmtMoney(remaining, symbol)} (${pctDisplay}% Spent)`}
-        </Text>
-      </View>
+      <Text style={styles.amountSummary}>
+        {fmtMoney(totalSpent, symbol)} spent of {fmtMoney(effectiveBudget, symbol)} budget
+      </Text>
+
+      <Text style={[styles.remainingText, isOver && { color: '#f87171' }]}>
+        {isOver
+          ? `Over budget by ${fmtMoney(totalSpent - effectiveBudget, symbol)}`
+          : `Remaining: ${fmtMoney(remaining, symbol)}`}
+      </Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   cardContainer: {
-    backgroundColor: '#161d19',
-    borderRadius: RADIUS.card,
+    backgroundColor: '#121815',
+    borderRadius: 18,
     borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.28)',
+    borderColor: 'rgba(16, 185, 129, 0.25)',
     padding: 16,
     marginBottom: 14,
     shadowColor: '#000',
@@ -70,56 +65,60 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 4,
   },
-  topRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 12,
-  },
-  textColumn: {
-    flex: 1,
-    gap: 3,
-  },
   title: {
     fontFamily: FONTS.sansSemi,
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '700',
     color: '#ffffff',
     letterSpacing: -0.2,
+    marginBottom: 12,
+  },
+  progressTrack: {
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 4,
+    overflow: 'hidden',
+    position: 'relative',
+    marginBottom: 12,
+  },
+  progressBar: {
+    height: 22,
+    borderRadius: 11,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    shadowColor: '#10b981',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.5,
+    shadowRadius: 6,
+  },
+  barPercentageText: {
+    fontFamily: FONTS.sansSemi,
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#042f1a',
+  },
+  trackRemainingText: {
+    fontFamily: FONTS.sansSemi,
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#94a3b8',
+    paddingRight: 10,
   },
   amountSummary: {
     fontFamily: FONTS.sansSemi,
     fontSize: 14,
-    color: '#94a3b8',
+    fontWeight: '600',
+    color: '#e2e8f0',
+    marginBottom: 4,
   },
-  piggyIconContainer: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(16, 185, 129, 0.14)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: 10,
-  },
-  progressTrack: {
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    overflow: 'hidden',
-    marginBottom: 8,
-  },
-  progressBar: {
-    height: '100%',
-    borderRadius: 4,
-  },
-  footerRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  footerText: {
+  remainingText: {
     fontFamily: FONTS.sans,
-    fontSize: 12,
+    fontSize: 13,
     color: '#94a3b8',
   },
 });

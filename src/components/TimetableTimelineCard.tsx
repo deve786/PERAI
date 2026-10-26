@@ -16,6 +16,66 @@ interface TimetableTimelineCardProps {
   vesselName?: string;
   onSetReminder?: (step: TimelineStep) => void;
   onLogExpense?: () => void;
+  onCreateTripPack?: (steps: TimelineStep[], vesselName?: string) => void;
+}
+
+const KNOWN_PORT_MAP: Record<string, { code: string; name: string }> = {
+  kch: { code: 'KCH', name: 'Kochi' },
+  kochi: { code: 'KCH', name: 'Kochi' },
+  cochin: { code: 'KCH', name: 'Kochi' },
+  bpr: { code: 'BPR', name: 'Beypore' },
+  beypore: { code: 'BPR', name: 'Beypore' },
+  kvt: { code: 'KVT', name: 'Kavaratti' },
+  kavaratti: { code: 'KVT', name: 'Kavaratti' },
+  agt: { code: 'AGT', name: 'Agatti' },
+  agatti: { code: 'AGT', name: 'Agatti' },
+  amn: { code: 'AMN', name: 'Amini' },
+  amini: { code: 'AMN', name: 'Amini' },
+  and: { code: 'AND', name: 'Androth' },
+  androth: { code: 'AND', name: 'Androth' },
+  kdt: { code: 'KDT', name: 'Kadmat' },
+  kadmath: { code: 'KDT', name: 'Kadmat' },
+  kadmat: { code: 'KDT', name: 'Kadmat' },
+  klp: { code: 'KLP', name: 'Kalpeni' },
+  kalpeni: { code: 'KLP', name: 'Kalpeni' },
+  mcy: { code: 'MCY', name: 'Minicoy' },
+  minicoy: { code: 'MCY', name: 'Minicoy' },
+  clt: { code: 'CLT', name: 'Chetlat' },
+  chetlat: { code: 'CLT', name: 'Chetlat' },
+  klt: { code: 'KLT', name: 'Kiltan' },
+  kiltan: { code: 'KLT', name: 'Kiltan' },
+  btr: { code: 'BTR', name: 'Bitra' },
+  bitra: { code: 'BTR', name: 'Bitra' },
+};
+
+function extractCircuitPorts(steps: TimelineStep[]): Array<{ code: string; name: string }> {
+  const ports: Array<{ code: string; name: string }> = [];
+  const seen = new Set<string>();
+
+  for (const s of steps) {
+    const combined = `${s.title} ${s.sub || ''}`.toLowerCase();
+    for (const key of Object.keys(KNOWN_PORT_MAP)) {
+      const reg = new RegExp(`\\b${key}\\b`, 'i');
+      if (reg.test(combined)) {
+        const item = KNOWN_PORT_MAP[key];
+        if (!seen.has(item.code)) {
+          seen.add(item.code);
+          ports.push(item);
+        }
+      }
+    }
+  }
+
+  // If we only have 1 or 0 ports, supply a fallback regional circuit
+  if (ports.length < 2) {
+    return [
+      { code: 'KCH', name: 'Kochi' },
+      { code: 'KVT', name: 'Kavaratti' },
+      { code: 'AGT', name: 'Agatti' },
+    ];
+  }
+
+  return ports.slice(0, 4);
 }
 
 function findUpcomingStep(steps: TimelineStep[]): TimelineStep {
@@ -38,7 +98,6 @@ function findUpcomingStep(steps: TimelineStep[]): TimelineStep {
       }
     }
   }
-  // If all are in the past or date is unspecified, return the last step or first step
   return steps[steps.length - 1] || steps[0];
 }
 
@@ -47,6 +106,7 @@ export function TimetableTimelineCard({
   vesselName,
   onSetReminder,
   onLogExpense,
+  onCreateTripPack,
 }: TimetableTimelineCardProps) {
   const [reminderAdded, setReminderAdded] = useState(false);
 
@@ -54,10 +114,12 @@ export function TimetableTimelineCard({
 
   function handleReminder() {
     setReminderAdded(true);
-    // Pick the next upcoming future milestone
     const upcoming = findUpcomingStep(steps);
     if (onSetReminder) onSetReminder(upcoming);
   }
+
+  const circuitPorts = extractCircuitPorts(steps);
+  const activePortIdx = Math.min(1, circuitPorts.length - 1);
 
   return (
     <View style={styles.card}>
@@ -65,6 +127,35 @@ export function TimetableTimelineCard({
         <Ionicons name="time-outline" size={15} color="#10b981" />
         <Text style={styles.headerTitle}>Timetable Timeline</Text>
         {vesselName ? <Text style={styles.vesselTag}>• {vesselName}</Text> : null}
+      </View>
+
+      {/* Idea 5: Island Hop Route Circuit Map */}
+      <View style={styles.circuitContainer}>
+        <Text style={styles.circuitLabel}>Island Hop Route Circuit</Text>
+        <View style={styles.circuitRow}>
+          {circuitPorts.map((port, pIdx) => {
+            const isCurrent = pIdx === activePortIdx;
+            const isLastPort = pIdx === circuitPorts.length - 1;
+            return (
+              <React.Fragment key={`${port.code}-${pIdx}`}>
+                <View style={styles.circuitPortNode}>
+                  <View style={[styles.circuitDotOuter, isCurrent && styles.circuitDotActive]}>
+                    <View style={[styles.circuitDotInner, isCurrent && { backgroundColor: '#10b981' }]} />
+                  </View>
+                  <Text style={[styles.circuitPortCode, isCurrent && { color: '#10b981' }]}>{port.code}</Text>
+                  <Text style={styles.circuitPortName}>{port.name}</Text>
+                  {isCurrent && <Text style={styles.currentlyHereBadge}>Currently Here</Text>}
+                </View>
+                {!isLastPort && (
+                  <View style={styles.circuitArrowContainer}>
+                    <View style={[styles.circuitTrackLine, pIdx < activePortIdx && { backgroundColor: '#10b981' }]} />
+                    <Ionicons name="chevron-forward" size={12} color={pIdx < activePortIdx ? '#10b981' : '#64748b'} />
+                  </View>
+                )}
+              </React.Fragment>
+            );
+          })}
+        </View>
       </View>
 
       <View style={styles.stepsContainer}>
@@ -97,7 +188,7 @@ export function TimetableTimelineCard({
         >
           <Ionicons
             name={reminderAdded ? 'checkmark-circle' : 'notifications-outline'}
-            size={14}
+            size={13}
             color={reminderAdded ? '#10b981' : '#f59e0b'}
           />
           <Text style={[styles.chipText, reminderAdded && { color: '#10b981' }]} numberOfLines={1}>
@@ -110,8 +201,18 @@ export function TimetableTimelineCard({
             onPress={onLogExpense}
             style={({ pressed }) => [styles.chipButton, pressed && styles.chipPressed]}
           >
-            <Ionicons name="wallet-outline" size={14} color="#f59e0b" />
+            <Ionicons name="wallet-outline" size={13} color="#f59e0b" />
             <Text style={styles.chipText} numberOfLines={1}>Log Expense</Text>
+          </Pressable>
+        ) : null}
+
+        {onCreateTripPack ? (
+          <Pressable
+            onPress={() => onCreateTripPack(steps, vesselName)}
+            style={({ pressed }) => [styles.chipButton, styles.tripPackButton, pressed && styles.chipPressed]}
+          >
+            <Ionicons name="briefcase-outline" size={13} color="#10b981" />
+            <Text style={[styles.chipText, { color: '#10b981' }]} numberOfLines={1}>Trip Pack</Text>
           </Pressable>
         ) : null}
       </View>
@@ -331,7 +432,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    marginBottom: 12,
+    marginBottom: 10,
   },
   headerTitle: {
     fontFamily: FONTS.sansSemi,
@@ -343,6 +444,80 @@ const styles = StyleSheet.create({
     fontFamily: FONTS.sans,
     fontSize: 12,
     color: '#94a3b8',
+  },
+  circuitContainer: {
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.05)',
+  },
+  circuitLabel: {
+    fontFamily: FONTS.sansSemi,
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#94a3b8',
+    marginBottom: 8,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  circuitRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  circuitPortNode: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  circuitDotOuter: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    borderWidth: 2,
+    borderColor: '#475569',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  circuitDotActive: {
+    borderColor: '#10b981',
+    backgroundColor: 'rgba(16, 185, 129, 0.2)',
+  },
+  circuitDotInner: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#64748b',
+  },
+  circuitPortCode: {
+    fontFamily: FONTS.sansSemi,
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#cbd5e1',
+  },
+  circuitPortName: {
+    fontFamily: FONTS.sans,
+    fontSize: 9,
+    color: '#94a3b8',
+  },
+  currentlyHereBadge: {
+    fontFamily: FONTS.sansSemi,
+    fontSize: 8,
+    color: '#10b981',
+    marginTop: 2,
+  },
+  circuitArrowContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    width: 24,
+    justifyContent: 'center',
+  },
+  circuitTrackLine: {
+    height: 1.5,
+    flex: 1,
+    backgroundColor: '#475569',
   },
   stepsContainer: {
     paddingLeft: 4,
@@ -399,7 +574,7 @@ const styles = StyleSheet.create({
   },
   actionsRow: {
     flexDirection: 'row',
-    gap: 8,
+    gap: 6,
     marginTop: 12,
     paddingTop: 10,
     borderTopWidth: 1,
@@ -410,20 +585,24 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
+    gap: 4,
     backgroundColor: 'rgba(245, 158, 11, 0.12)',
     borderWidth: 1,
     borderColor: 'rgba(245, 158, 11, 0.28)',
-    paddingVertical: 8,
-    paddingHorizontal: 8,
+    paddingVertical: 7,
+    paddingHorizontal: 6,
     borderRadius: 8,
+  },
+  tripPackButton: {
+    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+    borderColor: 'rgba(16, 185, 129, 0.28)',
   },
   chipPressed: {
     opacity: 0.7,
   },
   chipText: {
     fontFamily: FONTS.sansSemi,
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
     color: '#f59e0b',
   },

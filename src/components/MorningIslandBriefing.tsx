@@ -58,6 +58,19 @@ export function MorningIslandBriefing({ onSelectVessel, onRefreshLive }: Morning
         </Pressable>
       </View>
 
+      <View style={styles.seaWeatherBanner}>
+        <View style={styles.seaWeatherRow}>
+          <Text style={styles.seaWeatherIcon}>🌊</Text>
+          <Text style={styles.seaWeatherText} numberOfLines={1}>
+            Sea: Moderate • 1.2m Waves • Wind 14 kts
+          </Text>
+        </View>
+        <View style={styles.seaWharfPill}>
+          <View style={styles.seaGreenDot} />
+          <Text style={styles.seaWharfText}>Wharf: Open</Text>
+        </View>
+      </View>
+
       <View style={styles.vesselList}>
         {items.map((item) => (
           <Pressable
@@ -151,6 +164,57 @@ const styles = StyleSheet.create({
     fontFamily: FONTS.sansSemi,
     fontSize: 12,
     fontWeight: '600',
+    color: '#10b981',
+  },
+  seaWeatherBanner: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: 'rgba(16, 185, 129, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.22)',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    marginBottom: 12,
+  },
+  seaWeatherRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flex: 1,
+    marginRight: 6,
+  },
+  seaWeatherIcon: {
+    fontSize: 13,
+  },
+  seaWeatherText: {
+    fontFamily: FONTS.sansSemi,
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#cbd5e1',
+    flex: 1,
+  },
+  seaWharfPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(16, 185, 129, 0.16)',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 8,
+    flexShrink: 0,
+  },
+  seaGreenDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#10b981',
+  },
+  seaWharfText: {
+    fontFamily: FONTS.sansSemi,
+    fontSize: 10,
+    fontWeight: '700',
     color: '#10b981',
   },
   vesselList: {

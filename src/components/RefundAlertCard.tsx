@@ -23,25 +23,22 @@ export function RefundAlertCard({ refunds, symbol = '₹', onFollowUp, onDismiss
   if (!refunds || refunds.length === 0) return null;
 
   const item = refunds[0];
-  const days = item.daysOverdue ?? 5;
-  const titleText = item.note || 'IRCTC Cancellation';
+  const days = item.daysOverdue ?? 2;
+  const titleText = item.note || 'IRCTC Tatkal';
 
   return (
     <View style={styles.card}>
-      <View style={styles.contentRow}>
-        <View style={styles.leftColumn}>
-          <View style={styles.titleRow}>
-            <Ionicons name="warning" size={17} color="#f59e0b" />
-            <Text style={styles.title}>
-              Refund Alert: {fmtMoney(item.amount, symbol)} {titleText}{' '}
-              <Text style={styles.overdueTag}>{days} days overdue</Text>
-            </Text>
-          </View>
-          <Text style={styles.subText}>
-            Train/Ship Ticket Cancellation • Tap follow-up to resolve
-          </Text>
+      <View style={styles.topHeader}>
+        <Text style={styles.cardHeaderTitle}>Refund Alert Watchdog</Text>
+        <View style={styles.warningIconBadge}>
+          <Ionicons name="warning" size={18} color="#f59e0b" />
         </View>
       </View>
+
+      <Text style={styles.alertSubtitle}>Refund Alert: {titleText}</Text>
+      <Text style={styles.alertDetails}>
+        ({fmtMoney(item.amount, symbol)} • Overdue by {days} days)
+      </Text>
 
       <View style={styles.actionsRow}>
         {onDismiss ? (
@@ -64,17 +61,51 @@ export function RefundAlertCard({ refunds, symbol = '₹', onFollowUp, onDismiss
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: '#1f1912',
-    borderRadius: RADIUS.card,
-    borderWidth: 1,
-    borderColor: 'rgba(245, 158, 11, 0.38)',
-    padding: 14,
+    backgroundColor: '#1c1710',
+    borderRadius: 18,
+    borderWidth: 1.5,
+    borderColor: 'rgba(245, 158, 11, 0.45)',
+    padding: 16,
     marginBottom: 14,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 3,
+    shadowColor: '#f59e0b',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 4,
+  },
+  topHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  cardHeaderTitle: {
+    fontFamily: FONTS.sansSemi,
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#ffffff',
+    letterSpacing: -0.2,
+  },
+  warningIconBadge: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  alertSubtitle: {
+    fontFamily: FONTS.sansSemi,
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#fef3c7',
+    marginBottom: 2,
+  },
+  alertDetails: {
+    fontFamily: FONTS.sans,
+    fontSize: 13,
+    color: '#d97706',
+    marginBottom: 12,
   },
   contentRow: {
     flexDirection: 'row',

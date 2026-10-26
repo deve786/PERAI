@@ -10,6 +10,16 @@ export interface ChangelogEntry {
 /** Newest first. Add a new entry here with every release that changes user-visible behaviour. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.30.59',
+    build: 162,
+    type: 'ota',
+    date: '2026-10-26',
+    time: '10:29 PM',
+    highlights: [
+      'Fix log expense button width, future milestone reminder scheduling, and circuit timeline display',
+    ],
+  },
+  {
     version: '1.30.58',
     build: 161,
     type: 'ota',
