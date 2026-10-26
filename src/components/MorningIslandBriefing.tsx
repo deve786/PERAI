@@ -40,9 +40,9 @@ export function MorningIslandBriefing({ onSelectVessel, onRefreshLive }: Morning
           <View style={styles.iconBox}>
             <Ionicons name="list" size={16} color="#10b981" />
           </View>
-          <View>
-            <Text style={styles.headerTitle}>Morning Island Briefing</Text>
-            <Text style={styles.headerSub}>Real-time ferry & ship departures</Text>
+          <View style={styles.headerTextContainer}>
+            <Text style={styles.headerTitle} numberOfLines={1}>Morning Island Briefing</Text>
+            <Text style={styles.headerSub} numberOfLines={1}>Real-time ferry & ship departures</Text>
           </View>
         </View>
 
@@ -103,12 +103,17 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 14,
+    gap: 8,
   },
   headerLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 8,
     flex: 1,
+  },
+  headerTextContainer: {
+    flex: 1,
+    marginRight: 4,
   },
   iconBox: {
     width: 28,
@@ -117,17 +122,18 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(16, 185, 129, 0.16)',
     alignItems: 'center',
     justifyContent: 'center',
+    flexShrink: 0,
   },
   headerTitle: {
     fontFamily: FONTS.sansSemi,
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '700',
     color: '#ffffff',
     letterSpacing: -0.2,
   },
   headerSub: {
     fontFamily: FONTS.sans,
-    fontSize: 12,
+    fontSize: 11,
     color: '#94a3b8',
     marginTop: 1,
   },
@@ -136,9 +142,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 4,
     backgroundColor: 'rgba(16, 185, 129, 0.12)',
-    paddingHorizontal: 9,
-    paddingVertical: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
     borderRadius: 12,
+    flexShrink: 0,
   },
   syncText: {
     fontFamily: FONTS.sansSemi,

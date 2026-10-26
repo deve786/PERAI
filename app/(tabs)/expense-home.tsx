@@ -199,7 +199,7 @@ export default function Home() {
           <RefundAlertCard
             refunds={refundAlerts}
             symbol={symbol}
-            onFollowUp={(item) => router.push(`/expense/${item.id}` as any)}
+            onFollowUp={(item) => router.push({ pathname: '/expense/expense', params: { id: String(item.id) } })}
             onDismiss={(id) => setRefundAlerts((prev) => prev.filter((r) => r.id !== id))}
           />
         )}

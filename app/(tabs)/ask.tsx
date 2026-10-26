@@ -571,7 +571,7 @@ export default function AskScreen() {
                           });
                         }}
                         onLogExpense={() => {
-                          router.push('/entry/add');
+                          router.push('/expense/expense');
                         }}
                       />
                     );
