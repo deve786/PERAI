@@ -10,6 +10,26 @@ export interface ChangelogEntry {
 /** Newest first. Add a new entry here with every release that changes user-visible behaviour. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.30.53',
+    build: 156,
+    type: 'ota',
+    date: '2026-10-26',
+    time: '10:04 AM',
+    highlights: [
+      'Add bridge fallback, fix channel sync, and recover missing messages',
+    ],
+  },
+  {
+    version: '1.30.52',
+    build: 155,
+    type: 'ota',
+    date: '2026-10-26',
+    time: '09:33 AM',
+    highlights: [
+      'Fix Telegram sync channel ID mismatch and recover all new posts',
+    ],
+  },
+  {
     version: '1.30.51',
     build: 154,
     type: 'ota',
