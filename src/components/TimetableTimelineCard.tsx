@@ -96,6 +96,7 @@ export function TimetableTimelineCard({
 export function formatTimelineTime(raw: string): string {
   if (!raw) return '';
   const trimmed = raw.trim();
+  if (/^202[0-9]$/.test(trimmed)) return ''; // ignore standalone years
   const m = trimmed.match(/^(\d{2})(\d{2})(?:\s*hrs)?$/i);
   if (m) {
     const hh = parseInt(m[1], 10);
@@ -110,12 +111,85 @@ export function formatTimelineTime(raw: string): string {
 /**
  * Extracts timetable timeline milestones from AI answers or telegram schedule texts.
  */
-export function extractTimelineFromText(text: string): TimelineStep[] | null {
-  if (!text) return null;
+export function extractTimelineFromText(text: string, items?: string[]): TimelineStep[] | null {
+  if (!text && (!items || items.length === 0)) return null;
 
   const steps: TimelineStep[] = [];
 
-  // 1. Counter check
+  // Strategy 1: Parse structured items (e.g. from RAG citations / voyage legs)
+  if (items && items.length >= 2) {
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      const parts = it.split('•').map((s) => s.trim());
+      const datePart = it.match(/\b(\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?)\b/);
+      const timePart = it.match(/\b(\d{4})\s*(?:hrs|hours)\b|\b(\d{1,2}:\d{2}\s*(?:am|pm)?)\b/i);
+
+      if (datePart && parts.length >= 2) {
+        const dateStr = datePart[1];
+        const timeVal = timePart ? formatTimelineTime(timePart[1] || timePart[2]) : '';
+        const timeStr = timeVal || dateStr;
+        const vessel = parts.length >= 3 ? parts[1] : '';
+        const detail = parts.length >= 3 ? parts.slice(2).join(' • ') : parts[1];
+
+        // Format clean title
+        let cleanDetail = detail.replace(/\((.*?)\)/, '$1').replace(/\s+/g, ' ').trim();
+        let title = cleanDetail;
+        if (/mainland\s*departure/i.test(cleanDetail)) title = 'Mainland Departure';
+        else if (/island\s*stops/i.test(cleanDetail)) title = 'Island Stops';
+        else if (/return/i.test(cleanDetail)) title = 'Return Voyage';
+        else if (/route[:\s]*([A-Za-z0-9\s-]+)/i.test(cleanDetail)) {
+          const rm = cleanDetail.match(/route[:\s]*([A-Za-z0-9\s-]+)/i);
+          title = rm ? `Route: ${rm[1].trim()}` : cleanDetail;
+        }
+
+        let sub = `${vessel ? `${vessel} • ` : ''}${cleanDetail} (${dateStr})`;
+        if (sub.length > 55) sub = `${vessel ? `${vessel} • ` : ''}${dateStr}`;
+
+        const isFirst = i === 0;
+        const isLast = i === items.length - 1;
+        const color = isFirst ? '#10b981' : isLast ? '#f59e0b' : '#3b82f6';
+
+        steps.push({
+          title,
+          time: timeStr,
+          sub,
+          color,
+        });
+      }
+    }
+    if (steps.length >= 2) return steps;
+  }
+
+  // Strategy 2: Natural text voyage legs
+  // e.g. "depart Kochi on 27.10.2026, call at Kavaratti and Agatti on 28.10.2026, and return to Kochi on 29.10.2026"
+  const natLegs = [
+    ...text.matchAll(/\b(depart(?:ing|ed|s)?|call\s*at|arrive|return\s*to)\s+([A-Za-z\s&,]+?)\s+(?:on\s+)?(\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?|\d{4}\s*(?:hrs)?|\d{1,2}:\d{2}\s*(?:am|pm)?)/gi)
+  ];
+  if (natLegs.length >= 2) {
+    steps.length = 0;
+    for (let i = 0; i < natLegs.length; i++) {
+      const match = natLegs[i];
+      const action = match[1].toLowerCase();
+      const place = match[2].trim();
+      const timeOrDate = formatTimelineTime(match[3]) || match[3];
+
+      let title = place;
+      if (action.includes('depart')) title = `Departure: ${place}`;
+      else if (action.includes('call')) title = `Island Stops: ${place}`;
+      else if (action.includes('return')) title = `Return: ${place}`;
+      else title = `Arrival: ${place}`;
+
+      steps.push({
+        title,
+        time: timeOrDate,
+        sub: `Scheduled voyage stop`,
+        color: i === 0 ? '#10b981' : i === natLegs.length - 1 ? '#f59e0b' : '#3b82f6',
+      });
+    }
+    if (steps.length >= 2) return steps;
+  }
+
+  // Strategy 3: Boarding & Counter checks
   const counterMatch = text.match(/\bcounter\s*(?:check|verification)?[:\s*]*([\d:.]+\s*(?:am|pm)?\s*(?:to|-)\s*[\d:.]+\s*(?:am|pm)?|\d{4}\s*(?:hrs)?)/i);
   if (counterMatch) {
     steps.push({
@@ -126,7 +200,6 @@ export function extractTimelineFromText(text: string): TimelineStep[] | null {
     });
   }
 
-  // 2. Boarding time
   const boardingMatch = text.match(/\bboarding\s*(?:time)?[:\s*]*([\d:.]+\s*(?:am|pm)?\s*(?:to|-)\s*[\d:.]+\s*(?:am|pm)?|\d{4}\s*(?:hrs)?)/i);
   if (boardingMatch) {
     steps.push({
@@ -137,64 +210,30 @@ export function extractTimelineFromText(text: string): TimelineStep[] | null {
     });
   }
 
-  // 3. Departure match with word boundaries to prevent Chetlat -> Chetl + at bug
-  // e.g. "departed Chetlat on 26/10/2026 at 1500 hours" or "departing Kavaratti at 0630 hrs" or "ETD from Kavaratti 0630 Hrs"
+  // Strategy 4: Transit / Departure / Arrival milestones
   const depMatch = text.match(
     /\b(?:depart(?:ed|ing|ure)?|etd)\s+(?:from\s+)?([A-Za-z\s]+?)\s+(?:on\s+[\d/.-]+\s+)?(?:at\s+)?(\d{4}|\d{1,2}(?::\d{2})?\s*(?:am|pm|hrs|hours)?)\b/i
   );
-
-  if (depMatch) {
-    const port = depMatch[1].replace(/\b(?:at|on|for)\b/gi, '').trim();
-    const time = formatTimelineTime(depMatch[2]);
-    // Check if date exists
-    const dateMatch = text.match(/\b(\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?)\b/);
-    const dateStr = dateMatch ? ` (${dateMatch[1]})` : '';
-    steps.push({
-      title: `Departure (${port || 'Wharf'})`,
-      time,
-      sub: `Vessel departing from ${port || 'port'}${dateStr}`,
-      color: '#f59e0b',
-    });
-  }
-
-  // 4. Arrival / ETA match
-  // e.g. "ETA at Kochi on 27/10/2026 at 0715 hours" or "ETA Kochi 11:30 AM"
   const arrMatch = text.match(
     /\b(?:eta|arriv(?:ed|ing|al)?)\s+(?:at|to|in\s+)?([A-Za-z\s]+?)\s+(?:on\s+[\d/.-]+\s+)?(?:at\s+)?(\d{4}|\d{1,2}(?::\d{2})?\s*(?:am|pm|hrs|hours)?)\b/i
   );
 
-  if (arrMatch) {
-    const port = arrMatch[1].replace(/\b(?:at|on|for)\b/gi, '').trim();
-    const time = formatTimelineTime(arrMatch[2]);
+  if (depMatch && arrMatch) {
+    const depPlace = depMatch[1].replace(/\b(?:at|on|for)\b/gi, '').trim();
+    const arrPlace = arrMatch[1].replace(/\b(?:at|on|for)\b/gi, '').trim();
     steps.push({
-      title: `Arrival ETA (${port || 'Destination'})`,
-      time,
-      sub: `Estimated arrival at ${port || 'wharf'}`,
-      color: '#3b82f6',
+      title: `Departure (${depPlace})`,
+      time: formatTimelineTime(depMatch[2]),
+      sub: `Departing from ${depPlace}`,
+      color: '#10b981',
     });
-  }
-
-  // 5. Multi-leg schedule extraction (e.g. "1 27/10/26 • HSC CHERIYAPANI • Route: KVT-AGT-KVT-AND (ETD from Kavaratti 0630 Hrs)")
-  if (steps.length < 2) {
-    const legMatches = [
-      ...text.matchAll(/(\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?)\s*•?\s*([A-Za-z\s]+?)\s*•?\s*Route:\s*([A-Za-z0-9\s-]+?)(?:\s*\((?:ETD|dep)?[^)]*?(\d{4}|\d{1,2}:\d{2})\s*(?:hrs)?\))?(?:\n|$)/gi),
-    ];
-
-    if (legMatches.length >= 2) {
-      steps.length = 0; // replace with multi-leg sequence
-      for (let i = 0; i < legMatches.length; i++) {
-        const leg = legMatches[i];
-        const dateStr = leg[1];
-        const routeStr = leg[3].trim();
-        const timeStr = leg[4] ? formatTimelineTime(leg[4]) : dateStr;
-        steps.push({
-          title: `Leg ${i + 1}: ${routeStr}`,
-          time: timeStr,
-          sub: `${leg[2].trim()} • ${dateStr}`,
-          color: i === 0 ? '#10b981' : i === legMatches.length - 1 ? '#3b82f6' : '#f59e0b',
-        });
-      }
-    }
+    steps.push({
+      title: `Arrival ETA (${arrPlace})`,
+      time: formatTimelineTime(arrMatch[2]),
+      sub: `Arrival at ${arrPlace}`,
+      color: '#f59e0b',
+    });
+    return steps;
   }
 
   // If only departure was matched with a known route in text (e.g. "KVT-AGT-KVT-AND"), synthesize arrival milestone

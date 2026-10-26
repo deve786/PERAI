@@ -539,7 +539,7 @@ export default function AskScreen() {
                   {/* Island Travel Copilot: Timetable Timeline Step Card (Design 1) */}
                   {(() => {
                     const fullText = `${result.headline || ''} ${result.answer || ''} ${result.items.join(' ')}`;
-                    const steps = extractTimelineFromText(fullText);
+                    const steps = extractTimelineFromText(fullText, result.items);
                     if (!steps) return null;
                     return (
                       <TimetableTimelineCard

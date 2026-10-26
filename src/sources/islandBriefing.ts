@@ -12,18 +12,21 @@ export interface IslandTransitItem {
 }
 
 const KNOWN_VESSELS = [
-  { name: 'HSC Cheriyapani', match: /cheriyapani/i },
-  { name: 'MV Arabian Sea', match: /arabian\s*sea/i },
-  { name: 'HSC Black Marlin', match: /black\s*marlin/i },
-  { name: 'HSC Skip Jack', match: /skip\s*jack/i },
-  { name: 'HSC Valiyapani', match: /valiyapani|v\/pani/i },
-  { name: 'MV Lagoons', match: /lagoons/i },
-  { name: 'MV Corals', match: /corals/i },
-  { name: 'MV Kavaratti', match: /kavaratti/i },
-  { name: 'Helicopter VT-ELS', match: /vt[-\s]?els|helicopter/i },
-  { name: 'MV Sagar Samraj', match: /sagar\s*samraj/i },
-  { name: 'MV Sagar Yuvaraj', match: /sagar\s*yuvaraj/i },
-  { name: 'MV Elikalpeni', match: /elikalpeni/i },
+  { name: 'HSC Cheriyapani', match: /\bcheriyapani\b/i },
+  { name: 'MV Arabian Sea', match: /\barabian\s*sea\b/i },
+  { name: 'MV Lagoons', match: /\blagoons\b/i },
+  { name: 'MV Corals', match: /\bcorals\b/i },
+  { name: 'HSC Parali', match: /\bparali\b/i },
+  { name: 'MT Thilaakkam', match: /\bthilaakkam\b|\bthilakkam\b/i },
+  { name: 'HSC Black Marlin', match: /\bblack\s*marlin\b/i },
+  { name: 'HSC Skip Jack', match: /\bskip\s*jack\b/i },
+  { name: 'HSC Valiyapani', match: /\bvaliyapani\b|\bv\/pani\b/i },
+  { name: 'MV Elikalpeni', match: /\belikalpeni\b/i },
+  { name: 'MV Sagar Samraj', match: /\bsagar\s*samraj\b/i },
+  { name: 'MV Sagar Yuvaraj', match: /\bsagar\s*yuvaraj\b/i },
+  // MV Kavaratti must strictly have M.V. or Ship prefix so it never matches the island Kavaratti!
+  { name: 'MV Kavaratti', match: /\bm\.?v\.?\s*kavaratti\b|\bship\s*kavaratti\b/i },
+  { name: 'Helicopter VT-ELS', match: /\bvt[-\s]?els\b|\bhelicopter\b/i },
 ];
 
 /** Clean OCR and channel metadata banners out of Telegram notices */
@@ -32,7 +35,10 @@ export function cleanNoticeText(raw: string): string {
   return raw
     .replace(/^H\s*/i, '')
     .replace(/\[(?:Extracted Poster\/Image Text|Photo|Notice|PDF)[^\]]*\]:?/gi, '')
-    .replace(/English:\s*Alerts\s*&\s*Announcements\s*[A-Z]*/gi, '')
+    .replace(/\*+/g, '') // remove all ** markdown asterisks
+    .replace(/English:\s*/gi, '')
+    .replace(/PUBLIC\s*NOTICE/gi, '')
+    .replace(/KIND\s*ATTENTION\s*(?:OF\s*)?PASSENGERS/gi, '')
     .replace(/Alerts\s*&\s*Announcements/gi, '')
     .replace(/[-_.~*=]{3,}/g, ' ')
     .replace(/\s+/g, ' ')
@@ -101,7 +107,24 @@ export async function getIslandTransitBriefing(): Promise<IslandTransitItem[]> {
             route = `Departed ${depPlace} (${depTime}) → ${arrPlace} ETA ${arrTime}`;
           }
 
-          // 2. Check for route codes e.g. "KVT-AGT-KVT-AND" or "AND-Kochi" or "Kochi - Kavaratti"
+          // 2. Check for ETD / ETA single leg
+          // e.g. "ETD DE ANDROTH 2345HRS ETA KAVARATTI 27/10 0800HRS"
+          if (!route) {
+            const etdEta = clean.match(
+              /ETD\s+(?:DE|FROM)?\s*([A-Za-z]+)\s*(\d{4})\s*(?:HRS)?\s*ETA\s+([A-Za-z]+)\s*(?:[\d/.-]+\s*)?(\d{4})\s*(?:HRS)?/i
+            );
+            if (etdEta) {
+              const depPlace = etdEta[1].trim();
+              const depTime = formatTimeNotice(etdEta[2]);
+              const arrPlace = etdEta[3].trim();
+              const arrTime = formatTimeNotice(etdEta[4]);
+              status = 'Departed';
+              statusColor = '#10b981';
+              route = `ETD ${depPlace} ${depTime} → ETA ${arrPlace} ${arrTime}`;
+            }
+          }
+
+          // 3. Check for route codes e.g. "KVT-AGT-KVT-AND" or "AND-Kochi" or "Kochi - Kavaratti"
           if (!route) {
             const routeCode = clean.match(
               /\b([A-Z]{3,}(?:\s*[-–→]\s*[A-Z]{3,})+)\b/
@@ -127,7 +150,7 @@ export async function getIslandTransitBriefing(): Promise<IslandTransitItem[]> {
             }
           }
 
-          // 3. Check boarding window
+          // 4. Check boarding window
           if (!route) {
             const boardingMatch = clean.match(/boarding\s*time[:\s*]*([\d:.]+\s*(?:am|pm)?\s*(?:to|-)\s*[\d:.]+\s*(?:am|pm)?)/i);
             const counterMatch = clean.match(/counter\s*check[:\s*]*([\d:.]+\s*(?:am|pm)?\s*(?:to|-)\s*[\d:.]+\s*(?:am|pm)?)/i);
@@ -142,13 +165,17 @@ export async function getIslandTransitBriefing(): Promise<IslandTransitItem[]> {
             }
           }
 
-          // 4. Check arrived / departed
+          // 5. Check arrived / departed
           if (!route) {
             if (/arrived/i.test(clean)) {
               status = 'Arrived';
               statusColor = '#3b82f6';
-              const arrAt = clean.match(/arrived\s*(?:at\s+)?([A-Za-z\s]+?)\s*(?:at\s+)?(\d{4}|\d{1,2}:\d{2})?/i);
-              route = arrAt ? `Arrived ${arrAt[1].trim()}${arrAt[2] ? ` at ${formatTimeNotice(arrAt[2])}` : ''}` : clean;
+              const arrAt = clean.match(/\barrived\s+(?:at\s+|in\s+)?([A-Za-z]+(?:\s+[A-Za-z]+)*)(?:\s+(?:at|on|@)\s+(\d{4}|\d{1,2}:\d{2}))?/i);
+              if (arrAt && arrAt[1].trim().length >= 3) {
+                route = `Arrived ${arrAt[1].trim()}${arrAt[2] ? ` at ${formatTimeNotice(arrAt[2])}` : ''}`;
+              } else {
+                route = clean;
+              }
             } else if (/en\s*route|inbound/i.test(clean)) {
               status = 'En Route';
               statusColor = '#10b981';
@@ -162,8 +189,8 @@ export async function getIslandTransitBriefing(): Promise<IslandTransitItem[]> {
           route = route.replace(/\s+/g, ' ').trim();
           if (route.length > 80) route = route.slice(0, 77) + '…';
 
-          // Avoid displaying empty route
-          if (!route) {
+          // Avoid displaying empty route or single-character truncated strings
+          if (!route || route.length <= 10) {
             route = 'Schedule available in port bulletin';
           }
 

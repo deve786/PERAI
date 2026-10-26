@@ -10,6 +10,16 @@ export interface ChangelogEntry {
 /** Newest first. Add a new entry here with every release that changes user-visible behaviour. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.30.57',
+    build: 160,
+    type: 'ota',
+    date: '2026-10-26',
+    time: '09:21 PM',
+    highlights: [
+      'Fix header overlap, OCR text cleanup, timeline parsing, and expense navigation',
+    ],
+  },
+  {
     version: '1.30.56',
     build: 159,
     type: 'ota',
