@@ -679,6 +679,7 @@ export async function fetchPublicTelegramChannel(
   // 1. Try fetching via Telegram Media Bridge if configured
   const bridgeUrl = (opts.bridgeUrl || (await getTelegramBridgeUrl())).trim().replace(/\/$/, '');
   let bridgeSucceeded = false;
+  let bridgeErrorMsg: string | null = null;
 
   if (bridgeUrl) {
     try {
@@ -709,13 +710,16 @@ export async function fetchPublicTelegramChannel(
             });
           }
         }
+      } else {
+        bridgeErrorMsg = `Bridge returned HTTP ${bridgeRes.status}`;
       }
     } catch (bridgeErr) {
+      bridgeErrorMsg = bridgeErr instanceof Error ? bridgeErr.message : String(bridgeErr);
       console.warn('[telegram-bridge] Could not fetch messages from bridge:', bridgeErr);
     }
   }
 
-  // 2. If bridge was not used or yielded 0 messages, fall back to public preview scraping
+  // 2. If bridge was not used or failed, fall back to public preview scraping
   if (!bridgeSucceeded) {
     while (nextUrl && page < maxPages && !reachedCutoff) {
       page++;
@@ -841,6 +845,10 @@ export async function fetchPublicTelegramChannel(
         if (page === 1) fetchError = err instanceof Error ? err : new Error(String(err));
         break;
       }
+    }
+
+    if (!fetchError && rawMessages.length === 0 && bridgeErrorMsg) {
+      fetchError = new Error(`Could not reach Telegram (${bridgeErrorMsg})`);
     }
   }
 
@@ -1253,7 +1261,10 @@ export async function syncTelegramChannel(
 
   if (!channel) throw new Error('Channel not found');
 
-  if (!botToken || !botToken.trim() || !botToken.includes(':')) {
+  const cleanHandle = channel.channel_username.replace(/^@/, '').toLowerCase();
+  const isPublicChannel = !cleanHandle.endsWith('_bot');
+
+  if (isPublicChannel || !botToken || !botToken.trim() || !botToken.includes(':')) {
     const res = await savePublicTelegramChannel(channel.channel_username, channel.last_message_id ?? undefined);
     // Also backfill any remaining unextracted photos in this channel
     try {
@@ -1281,12 +1292,9 @@ export async function syncTelegramChannel(
     );
 
     if (messages.length === 0) {
-      // Up to date
-      await db.runAsync(
-        'UPDATE telegram_channels SET last_synced_at = ? WHERE id = ?',
-        [new Date().toISOString(), channelId]
-      );
-      return 0;
+      // Fall back to savePublicTelegramChannel
+      const res = await savePublicTelegramChannel(channel.channel_username, channel.last_message_id ?? undefined);
+      return res.messagesCount;
     }
 
     for (const msg of messages) {

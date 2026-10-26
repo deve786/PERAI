@@ -398,6 +398,7 @@ export default function DataSourcesScreen() {
   async function syncChannel(id: string) {
     if (syncingChannelId) return;
     setSyncingChannelId(id);
+    const startMs = Date.now();
     try {
       const count = await syncTelegramChannel(botToken, id);
       await loadData();
@@ -407,11 +408,12 @@ export default function DataSourcesScreen() {
       setLastSyncedAt(now);
       const ch = channels.find(c => c.id === id);
       const total = await getChannelMessageCount(ch?.channelUsername || '', id);
+      const elapsedSec = ((Date.now() - startMs) / 1000).toFixed(1);
       showDialog({
         title: count > 0 ? 'New Telegram Messages Saved' : 'Telegram Up To Date',
         message: count > 0
-          ? `✓ Incremental sync: retrieved ${count} new message${count === 1 ? '' : 's'} on ${formatDateTime(now)}.\n(Only new data fetched, saving time & bandwidth).\nTotal stored for this channel: ${total} messages.`
-          : `Already up to date as of ${formatDateTime(now)}.\nChecked in ~0.2s — no new messages found.\nTotal stored in database: ${total} messages.`,
+          ? `✓ Incremental sync: retrieved ${count} new message${count === 1 ? '' : 's'} in ${elapsedSec}s on ${formatDateTime(now)}.\n(Only new data fetched, saving time & bandwidth).\nTotal stored for this channel: ${total} messages.`
+          : `Already up to date as of ${formatDateTime(now)}.\nChecked in ${elapsedSec}s — no new messages found.\nTotal stored in database: ${total} messages.`,
       });
     } catch (err) {
       showDialog({ title: 'Sync failed', message: err instanceof Error ? err.message : String(err) });
@@ -649,19 +651,34 @@ export default function DataSourcesScreen() {
     setTestingBridge(true);
     try {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 8000);
+      const timer = setTimeout(() => controller.abort(), 12000);
       const res = await fetch(`${url}/health`, { signal: controller.signal });
-      clearTimeout(timer);
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
       const data = await res.json();
+
+      let channelTestInfo = '';
+      try {
+        const msgRes = await fetch(`${url}/messages?channel=lakport&limit=1`, { signal: controller.signal });
+        if (msgRes.ok) {
+          const msgData = await msgRes.json();
+          const latestId = msgData.messages?.[0]?.message_id;
+          channelTestInfo = latestId ? `\n• @lakport Test: Live (Latest post #${latestId})` : `\n• @lakport Test: Reached (0 posts)`;
+        } else {
+          channelTestInfo = `\n• @lakport Test: HTTP ${msgRes.status}`;
+        }
+      } catch (me) {
+        channelTestInfo = `\n• @lakport Test: ${me instanceof Error ? me.message : String(me)}`;
+      }
+      clearTimeout(timer);
+
       showDialog({
         title: 'Bridge Connected ✓',
-        message: `Successfully connected to Telegram Media Bridge!\n\n• Service: ${data.service || 'OK'}\n• Telegram Authorized: ${data.authenticated ? 'Yes ✓' : 'No (run python login.py)'}\n\nAttached PDFs will now be downloaded and parsed automatically with Gemini.`,
+        message: `Successfully connected to Telegram Media Bridge!\n\n• Service: ${data.service || 'OK'}\n• Telegram Authorized: ${data.authenticated ? 'Yes ✓' : 'No (run python login.py)'}${channelTestInfo}\n\nAll messages, photos, and PDFs will download directly through this bridge.`,
       });
     } catch (err) {
       showDialog({
         title: 'Bridge Connection Failed',
-        message: `Could not reach ${url}/health.\n\nError: ${err instanceof Error ? err.message : String(err)}\n\nPlease ensure your bridge server is running and accessible.`,
+        message: `Could not reach ${url}.\n\nError: ${err instanceof Error ? err.message : String(err)}\n\nPlease ensure your bridge server is running and accessible.`,
       });
     } finally {
       setTestingBridge(false);

@@ -10,6 +10,16 @@ export interface ChangelogEntry {
 /** Newest first. Add a new entry here with every release that changes user-visible behaviour. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.30.54',
+    build: 157,
+    type: 'ota',
+    date: '2026-10-26',
+    time: '10:24 AM',
+    highlights: [
+      'Telegram live bridge message sync and media extractor',
+    ],
+  },
+  {
     version: '1.30.53',
     build: 156,
     type: 'ota',
