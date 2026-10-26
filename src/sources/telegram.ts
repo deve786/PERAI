@@ -689,18 +689,21 @@ export async function fetchPublicTelegramChannel(
       );
       if (bridgeRes.ok) {
         const bridgeData = await bridgeRes.json();
-        if (bridgeData && Array.isArray(bridgeData.messages) && bridgeData.messages.length > 0) {
+        if (bridgeData && Array.isArray(bridgeData.messages)) {
           bridgeSucceeded = true;
           channelTitle = bridgeData.channel || clean;
           for (const m of bridgeData.messages) {
+            const mediaUrl = m.media_path
+              ? (m.media_path.startsWith('http') ? m.media_path : `${bridgeUrl}${m.media_path}`)
+              : ((m.media_type === 'photo' || m.media_type === 'document') ? `${bridgeUrl}/download?channel=${encodeURIComponent(clean)}&post=${m.message_id}` : null);
             rawMessages.push({
               postPath: `${clean}/${m.message_id}`,
               messageId: m.message_id,
               date: m.date || new Date().toISOString(),
               text: m.text || '',
               mediaType: m.media_type || 'none',
-              mediaPath: m.media_path || null,
-              photos: [],
+              mediaPath: mediaUrl,
+              photos: m.media_type === 'photo' && mediaUrl ? [mediaUrl] : [],
               docInfo: m.doc_info || null,
               docLink: `https://t.me/${clean}/${m.message_id}`,
             });

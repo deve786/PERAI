@@ -88,6 +88,9 @@ async def download_file(
                 if isinstance(attr, DocumentAttributeFilename):
                     filename = attr.file_name
                     break
+        elif hasattr(message, "photo") and message.photo:
+            filename = f"{clean_channel}_{post}.jpg"
+            mime_type = "image/jpeg"
 
         print(f"[Bridge] Downloading {filename} from @{clean_channel} post {post}...")
         file_bytes = await client.download_media(message, file=bytes)
@@ -138,6 +141,7 @@ async def get_channel_messages(
 
             if msg.photo:
                 media_type = "photo"
+                media_path = f"/download?channel={clean_channel}&post={msg.id}"
             elif msg.document:
                 media_type = "document"
                 filename = "document.pdf"
@@ -146,7 +150,7 @@ async def get_channel_messages(
                         filename = attr.file_name
                         break
                 doc_info = filename
-                media_path = filename
+                media_path = f"/download?channel={clean_channel}&post={msg.id}"
             elif msg.video:
                 media_type = "video"
 

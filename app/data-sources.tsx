@@ -15,7 +15,7 @@ import { listTelegramChannels, addTelegramChannel, deleteTelegramChannel, syncTe
 import { getSourcesDb } from '@/sources/client';
 import { syncSourcesNow } from '@/sources/sync';
 import { getSetting, setSetting } from '@/db/queries';
-import { getTelegramAutoSyncInterval, setTelegramAutoSyncInterval, getTelegramBridgeUrl, setTelegramBridgeUrl } from '@/settings';
+import { getTelegramAutoSyncInterval, setTelegramAutoSyncInterval, getTelegramBridgeUrl, setTelegramBridgeUrl, DEFAULT_TELEGRAM_BRIDGE_URL } from '@/settings';
 import { onTelegramAutoSynced } from '@/sources/telegramAutoSync';
 import { shortDate, timeLabel } from '@/format';
 import { radius } from '@/expense/theme';
@@ -147,7 +147,7 @@ export default function DataSourcesScreen() {
       setChannelCounts(chCounts);
       setChannelMediaStatsMap(mediaStats);
       setAutoSyncIntervalState(interval);
-      setBridgeUrl(savedBridgeUrl || '');
+      setBridgeUrl(savedBridgeUrl || DEFAULT_TELEGRAM_BRIDGE_URL);
 
       const latestItemSync = [
         ...docs.map(d => d.uploadedAt),

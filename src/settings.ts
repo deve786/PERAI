@@ -175,6 +175,7 @@ export async function setTelegramAutoSyncInterval(minutes: number): Promise<void
 }
 
 export const TELEGRAM_BRIDGE_URL_KEY = 'sources.telegram_bridge_url';
+export const DEFAULT_TELEGRAM_BRIDGE_URL = 'https://perai-zeq7.onrender.com';
 
 /**
  * URL for self-hosted or cloud Telegram Media Bridge service.
@@ -182,7 +183,8 @@ export const TELEGRAM_BRIDGE_URL_KEY = 'sources.telegram_bridge_url';
  */
 export async function getTelegramBridgeUrl(): Promise<string> {
   const val = await getSetting(TELEGRAM_BRIDGE_URL_KEY);
-  return val ? val.trim() : '';
+  if (val && val.trim()) return val.trim();
+  return DEFAULT_TELEGRAM_BRIDGE_URL;
 }
 
 export async function setTelegramBridgeUrl(url: string): Promise<void> {
