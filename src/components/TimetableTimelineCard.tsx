@@ -16,7 +16,6 @@ interface TimetableTimelineCardProps {
   vesselName?: string;
   onSetReminder?: (step: TimelineStep) => void;
   onLogExpense?: () => void;
-  onCreateTripPack?: (steps: TimelineStep[], vesselName?: string) => void;
 }
 
 const KNOWN_PORT_MAP: Record<string, { code: string; name: string }> = {
@@ -106,7 +105,6 @@ export function TimetableTimelineCard({
   vesselName,
   onSetReminder,
   onLogExpense,
-  onCreateTripPack,
 }: TimetableTimelineCardProps) {
   const [reminderAdded, setReminderAdded] = useState(false);
 
@@ -203,16 +201,6 @@ export function TimetableTimelineCard({
           >
             <Ionicons name="wallet-outline" size={13} color="#f59e0b" />
             <Text style={styles.chipText} numberOfLines={1}>Log Expense</Text>
-          </Pressable>
-        ) : null}
-
-        {onCreateTripPack ? (
-          <Pressable
-            onPress={() => onCreateTripPack(steps, vesselName)}
-            style={({ pressed }) => [styles.chipButton, styles.tripPackButton, pressed && styles.chipPressed]}
-          >
-            <Ionicons name="briefcase-outline" size={13} color="#10b981" />
-            <Text style={[styles.chipText, { color: '#10b981' }]} numberOfLines={1}>Trip Pack</Text>
           </Pressable>
         ) : null}
       </View>

@@ -38,7 +38,6 @@ import { PlanCard } from '@/components/PlanCard';
 import { forgetQuestion, getAllMemories, getRecentQuestions, saveQuestion, insertMemory } from '@/db/queries';
 import { MorningIslandBriefing } from '@/components/MorningIslandBriefing';
 import { TimetableTimelineCard, extractTimelineFromText, type TimelineStep } from '@/components/TimetableTimelineCard';
-import { TripPackModal } from '@/components/TripPackModal';
 import { VoiceWaveform } from '@/components/VoiceWaveform';
 import { buildChatContext } from '@/expense/chatContext';
 import { getSetting, listExpenses } from '@/expense/db';
@@ -118,7 +117,6 @@ export default function AskScreen() {
   const { memories } = useMemories();
   const [recentQuestions, setRecentQuestions] = useState<string[]>([]);
   const [activeModel, setActiveModel] = useState<AiModelChoice>('gemini-3.5-flash-lite');
-  const [tripPackTarget, setTripPackTarget] = useState<{ steps: TimelineStep[]; vessel?: string } | null>(null);
 
   useEffect(() => {
     void getSelectedAiModel().then((m) => {
@@ -576,9 +574,6 @@ export default function AskScreen() {
                         onLogExpense={() => {
                           router.push('/expense/expense');
                         }}
-                        onCreateTripPack={(tripSteps, vessel) => {
-                          setTripPackTarget({ steps: tripSteps, vessel });
-                        }}
                       />
                     );
                   })()}
@@ -893,13 +888,6 @@ export default function AskScreen() {
         </View>
       </KeyboardLift>
 
-      <TripPackModal
-        visible={Boolean(tripPackTarget)}
-        vesselName={tripPackTarget?.vessel}
-        step={tripPackTarget?.steps[0]}
-        onClose={() => setTripPackTarget(null)}
-        onOpenFolder={(folder) => router.push(`/group/${encodeURIComponent(folder)}` as any)}
-      />
     </Screen>
   );
 }
