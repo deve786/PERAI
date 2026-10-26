@@ -107,3 +107,14 @@ if (result.status !== 0) {
 }
 
 console.log(`\nShipped ${label}`);
+
+try {
+  spawnSync('git', ['add', APP, RELEASE, CHANGELOG], { stdio: 'inherit' });
+  const commitRes = spawnSync('git', ['commit', '-m', `chore(release): ${label}`], { stdio: 'inherit' });
+  if (commitRes.status === 0) {
+    spawnSync('git', ['push', 'origin', 'master'], { stdio: 'inherit' });
+    console.log(`\nPushed release ${label} to origin/master ✓`);
+  }
+} catch (e) {
+  console.warn('Auto-git commit/push error:', e);
+}
