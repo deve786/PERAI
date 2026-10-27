@@ -10,6 +10,16 @@ export interface ChangelogEntry {
 /** Newest first. Add a new entry here with every release that changes user-visible behaviour. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.30.62',
+    build: 165,
+    type: 'ota',
+    date: '2026-10-27',
+    time: '08:24 AM',
+    highlights: [
+      'Remove Auto-Import Ticket PDF and streamline refund alert, spend health, and smart insights into compact cards',
+    ],
+  },
+  {
     version: '1.30.61',
     build: 164,
     type: 'ota',
