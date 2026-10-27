@@ -3,6 +3,7 @@ import { getApiKey, hasApiKey, MissingApiKeyError } from './client';
 import { addAiLog } from './logger';
 import { todayStr } from '../dates';
 import { extractPaymentFromTextOffline } from '../paymentTextOffline';
+import { scanPaymentImageOffline } from './offlineOcr';
 
 export interface ScannedItem {
   name: string;
@@ -263,18 +264,35 @@ function parsePayment(rawOutput: string, logLabel: string): ScannedPayment {
 export async function scanPaymentWithAI(
   imageBase64: string,
   mimeType = 'image/jpeg',
-  categoryNames: string[] = []
+  categoryNames: string[] = [],
+  fileUri?: string
 ): Promise<ScannedPayment> {
-  const rawOutput = await callVisionModel(
-    PAYMENT_OCR_SYSTEM_PROMPT,
-    PAYMENT_OCR_USER_PROMPT + promptExtras(categoryNames),
-    imageBase64,
-    mimeType
-  );
-  if (!rawOutput) {
-    throw new Error('Gemini returned an empty response for this payment image.');
+  if (hasApiKey()) {
+    try {
+      const rawOutput = await callVisionModel(
+        PAYMENT_OCR_SYSTEM_PROMPT,
+        PAYMENT_OCR_USER_PROMPT + promptExtras(categoryNames),
+        imageBase64,
+        mimeType
+      );
+      if (rawOutput) {
+        const parsed = parsePayment(rawOutput, 'OCR');
+        if (parsed.amount > 0) return parsed;
+      }
+    } catch (err) {
+      console.warn('[scanPaymentWithAI] Online vision model unavailable, trying offline ML Kit:', err);
+    }
   }
-  return parsePayment(rawOutput, 'OCR');
+
+  // Offline On-Device Vision Model (Google ML Kit)
+  if (fileUri) {
+    const offlineParsed = await scanPaymentImageOffline(fileUri, categoryNames);
+    if (offlineParsed && offlineParsed.amount > 0) {
+      return offlineParsed;
+    }
+  }
+
+  throw new Error('Could not read payment image. Ensure the amount and recipient are clearly visible.');
 }
 
 const PAYMENT_TEXT_SYSTEM_PROMPT = `You read shared text describing a UPI payment, from an app like Google Pay, PhonePe or Paytm.

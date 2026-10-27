@@ -9,6 +9,7 @@
     "@google/genai": "^2.22.0",
     "@react-native-community/datetimepicker": "9.1.0",
     "@supabase/supabase-js": "^2.116.0",
+    "@zhanziyang/expo-text-extractor": "^1.0.2",
     "claude-token-optimizer": "^2.3.20",
     "expo": "~57.0.23",
     "expo-asset": "~57.0.17",

@@ -49,6 +49,7 @@
       ],
       "expo-status-bar",
       "expo-sqlite",
+      "@zhanziyang/expo-text-extractor",
       [
         "expo-audio",
         {

@@ -96,7 +96,7 @@ async function handleImage(file: ShareIntentFile): Promise<ScannedPayment> {
   return withTimeout(
     (async () => {
       const [base64, names] = await Promise.all([new File(file.path).base64(), categoryNames()]);
-      return scanPaymentWithAI(base64, file.mimeType, names);
+      return scanPaymentWithAI(base64, file.mimeType, names, file.path);
     })(),
     READ_TIMEOUT_MS,
     'Reading the payment image took too long. Check your connection and try sharing it again.'
