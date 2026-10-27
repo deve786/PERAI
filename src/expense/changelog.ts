@@ -10,6 +10,16 @@ export interface ChangelogEntry {
 /** Newest first. Add a new entry here with every release that changes user-visible behaviour. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.32.0',
+    build: 170,
+    type: 'build',
+    date: '2026-10-27',
+    time: '09:26 PM',
+    highlights: [
+      'Fix Kotlin lifecycle in expo-text-extractor and build APK',
+    ],
+  },
+  {
     version: '1.31.0',
     build: 169,
     type: 'build',
