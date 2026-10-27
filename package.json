@@ -43,6 +43,7 @@
     "@types/react": "~19.2.2",
     "eslint": "^9.0.0",
     "eslint-config-expo": "~57.0.2",
+    "patch-package": "^8.0.1",
     "tsx": "^4.23.13",
     "typescript": "~6.0.3"
   },
@@ -59,6 +60,7 @@
     "web:export": "expo export --platform web --output-dir dist-web",
     "build:android": "node scripts/release.mjs build",
     "update": "node scripts/release.mjs update",
+    "postinstall": "patch-package",
     "lint": "expo lint"
   },
   "private": true
