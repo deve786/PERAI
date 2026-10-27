@@ -11,8 +11,8 @@ import {
 import { ShareIntentProvider } from 'expo-share-intent';
 import { Stack, type ErrorBoundaryProps } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { UpdateBanner } from '@/components/UpdateBanner';
 import { initDatabase } from '@/db/client';
 import { getSetting } from '@/db/queries';
@@ -80,25 +80,61 @@ export default function RootLayout() {
   // Deferred to an effect rather than module scope: opening SQLite blocks the
   // JS thread, and doing that during module evaluation deadlocks the wasm
   // worker on web. By the time this runs the thread is idle.
-  useEffect(() => {
-    Promise.all([initDatabase(), initSourcesDb()])
-      .then(() => setDbReady(true))
-      .catch((err) =>
-        setDbError(err instanceof Error ? err.message : String(err))
-      );
+  const openDb = useCallback(() => {
+    setDbError(null);
+    let attempts = 0;
+    const tryInit = () => {
+      Promise.all([initDatabase(), initSourcesDb()])
+        .then(() => setDbReady(true))
+        .catch((err) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          // On web, if another tab or recent reload is still holding the OPFS lock, auto-retry up to 3 times
+          if (Platform.OS === 'web' && (msg.includes('createSyncAccessHandle') || msg.includes('NoModificationAllowedError')) && attempts < 3) {
+            attempts++;
+            setTimeout(tryInit, attempts * 600);
+            return;
+          }
+          setDbError(msg);
+        });
+    };
+    tryInit();
   }, []);
+
+  useEffect(() => {
+    openDb();
+  }, [openDb]);
 
   // The gate screens below run before the database (and so the saved theme
   // preference) can be trusted, and only for well under a second — they use
   // the static light tokens rather than waiting on ThemeProvider.
   let content;
   if (dbError) {
+    const isLockError = dbError.includes('createSyncAccessHandle') || dbError.includes('NoModificationAllowedError');
     content = (
       <View style={styles.gate}>
-        <Text style={[TYPE.label, { color: COLORS.alert }]}>NO RECORD</Text>
-        <Text style={[TYPE.body, styles.gateText]}>
-          The database could not be opened. {dbError}
+        <Text style={[TYPE.label, { color: COLORS.alert }]}>
+          {isLockError ? 'DATABASE LOCKED' : 'NO RECORD'}
         </Text>
+        <Text style={[TYPE.body, styles.gateText]}>
+          {isLockError
+            ? 'Another browser tab or window has the database open. Please close other open PERAI tabs and click Retry.'
+            : `The database could not be opened. ${dbError}`}
+        </Text>
+        <Pressable
+          onPress={openDb}
+          style={({ pressed }) => ({
+            marginTop: 18,
+            paddingVertical: 10,
+            paddingHorizontal: 22,
+            backgroundColor: COLORS.moss,
+            borderRadius: 12,
+            opacity: pressed ? 0.75 : 1,
+          })}
+        >
+          <Text style={{ color: COLORS.onAccent, fontFamily: 'IBMPlexSans_600SemiBold', fontSize: 15 }}>
+            Retry
+          </Text>
+        </Pressable>
       </View>
     );
   } else if (!dbReady || !fontsReady) {
