@@ -10,6 +10,16 @@ export interface ChangelogEntry {
 /** Newest first. Add a new entry here with every release that changes user-visible behaviour. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.31.0',
+    build: 169,
+    type: 'build',
+    date: '2026-10-27',
+    time: '08:19 PM',
+    highlights: [
+      'Add on-device Google ML Kit offline OCR for payment screenshots',
+    ],
+  },
+  {
     version: '1.30.65',
     build: 168,
     type: 'ota',
