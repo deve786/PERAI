@@ -10,6 +10,16 @@ export interface ChangelogEntry {
 /** Newest first. Add a new entry here with every release that changes user-visible behaviour. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.30.64',
+    build: 167,
+    type: 'ota',
+    date: '2026-10-27',
+    time: '07:53 PM',
+    highlights: [
+      'Support seamless offline models for record filing and UPI payments',
+    ],
+  },
+  {
     version: '1.30.63',
     build: 166,
     type: 'ota',
