@@ -1,4 +1,5 @@
 import * as SQLite from 'expo-sqlite';
+import { Platform } from 'react-native';
 import { ADDED_COLUMNS, BACKFILL_SQL, CREATE_TABLE_SQL, DATABASE_NAME } from './schema';
 import type { Category, Memory, MemoryType, Priority, Repeat, Status } from '../types';
 
@@ -25,6 +26,9 @@ export function initDatabase(): Promise<SQLite.SQLiteDatabase> {
       const db = await SQLite.openDatabaseAsync(DATABASE_NAME, {
         enableChangeListener: true,
       });
+      if (Platform.OS !== 'web') {
+        await db.execAsync('PRAGMA journal_mode = WAL;');
+      }
       await db.execAsync(CREATE_TABLE_SQL);
       await migrate(db);
       database = db;

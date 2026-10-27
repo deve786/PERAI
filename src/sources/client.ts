@@ -2,6 +2,7 @@
  * Database client for multi-source data.
  */
 import * as SQLite from 'expo-sqlite';
+import { Platform } from 'react-native';
 import { DATABASE_NAME, SOURCES_SCHEMA } from './schema';
 
 let db: SQLite.SQLiteDatabase | null = null;
@@ -9,7 +10,9 @@ let db: SQLite.SQLiteDatabase | null = null;
 export async function getSourcesDb(): Promise<SQLite.SQLiteDatabase> {
   if (db) return db;
   db = await SQLite.openDatabaseAsync(DATABASE_NAME);
-  await db.execAsync('PRAGMA journal_mode = WAL;');
+  if (Platform.OS !== 'web') {
+    await db.execAsync('PRAGMA journal_mode = WAL;');
+  }
   return db;
 }
 

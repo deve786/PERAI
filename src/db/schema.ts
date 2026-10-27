@@ -6,8 +6,6 @@
  * rather than join tables, which is plenty for a single-user MVP.
  */
 export const CREATE_TABLE_SQL = `
-PRAGMA journal_mode = WAL;
-
 CREATE TABLE IF NOT EXISTS memories (
   id TEXT PRIMARY KEY NOT NULL,
   raw_input TEXT NOT NULL,

@@ -80,24 +80,50 @@ export default function RootLayout() {
   // Deferred to an effect rather than module scope: opening SQLite blocks the
   // JS thread, and doing that during module evaluation deadlocks the wasm
   // worker on web. By the time this runs the thread is idle.
+  const resetWebStorage = useCallback(async () => {
+    try {
+      if (Platform.OS === 'web' && typeof navigator !== 'undefined' && 'storage' in navigator) {
+        const root = await navigator.storage.getDirectory();
+        // @ts-ignore
+        for await (const [name] of root) {
+          await root.removeEntry(name, { recursive: true });
+        }
+        window.location.reload();
+      }
+    } catch {
+      window.location.reload();
+    }
+  }, []);
+
+  // Deferred to an effect rather than module scope: opening SQLite blocks the
+  // JS thread, and doing that during module evaluation deadlocks the wasm
+  // worker on web. By the time this runs the thread is idle.
   const openDb = useCallback(() => {
     setDbError(null);
     let attempts = 0;
-    const tryInit = () => {
-      Promise.all([initDatabase(), initSourcesDb()])
-        .then(() => setDbReady(true))
-        .catch((err) => {
-          const msg = err instanceof Error ? err.message : String(err);
-          // On web, if another tab or recent reload is still holding the OPFS lock, auto-retry up to 3 times
-          if (Platform.OS === 'web' && (msg.includes('createSyncAccessHandle') || msg.includes('NoModificationAllowedError')) && attempts < 3) {
-            attempts++;
-            setTimeout(tryInit, attempts * 600);
-            return;
-          }
-          setDbError(msg);
-        });
+    const tryInit = async () => {
+      try {
+        // Open sequentially on web to avoid concurrent OPFS access handle races
+        await initDatabase();
+        await initSourcesDb();
+        setDbReady(true);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const isLockOrVfsError =
+          msg.includes('createSyncAccessHandle') ||
+          msg.includes('NoModificationAllowedError') ||
+          msg.includes('sqlite3_open_v2') ||
+          msg.includes('cannot create file');
+        // On web, if another tab or worker is still holding the lock, auto-retry up to 3 times
+        if (Platform.OS === 'web' && isLockOrVfsError && attempts < 3) {
+          attempts++;
+          setTimeout(tryInit, attempts * 500);
+          return;
+        }
+        setDbError(msg);
+      }
     };
-    tryInit();
+    void tryInit();
   }, []);
 
   useEffect(() => {
@@ -109,32 +135,55 @@ export default function RootLayout() {
   // the static light tokens rather than waiting on ThemeProvider.
   let content;
   if (dbError) {
-    const isLockError = dbError.includes('createSyncAccessHandle') || dbError.includes('NoModificationAllowedError');
+    const isLockError =
+      dbError.includes('createSyncAccessHandle') ||
+      dbError.includes('NoModificationAllowedError') ||
+      dbError.includes('sqlite3_open_v2') ||
+      dbError.includes('cannot create file');
     content = (
       <View style={styles.gate}>
         <Text style={[TYPE.label, { color: COLORS.alert }]}>
-          {isLockError ? 'DATABASE LOCKED' : 'NO RECORD'}
+          {isLockError ? 'DATABASE LOCKED' : 'DATABASE ERROR'}
         </Text>
         <Text style={[TYPE.body, styles.gateText]}>
           {isLockError
-            ? 'Another browser tab or window has the database open. Please close other open PERAI tabs and click Retry.'
-            : `The database could not be opened. ${dbError}`}
+            ? 'The database handle is locked or busy. Please close duplicate PERAI tabs and click Retry, or Reset Storage if it persists.'
+            : `The database could not be opened: ${dbError}`}
         </Text>
-        <Pressable
-          onPress={openDb}
-          style={({ pressed }) => ({
-            marginTop: 18,
-            paddingVertical: 10,
-            paddingHorizontal: 22,
-            backgroundColor: COLORS.moss,
-            borderRadius: 12,
-            opacity: pressed ? 0.75 : 1,
-          })}
-        >
-          <Text style={{ color: COLORS.onAccent, fontFamily: 'IBMPlexSans_600SemiBold', fontSize: 15 }}>
-            Retry
-          </Text>
-        </Pressable>
+        <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
+          <Pressable
+            onPress={openDb}
+            style={({ pressed }) => ({
+              paddingVertical: 10,
+              paddingHorizontal: 22,
+              backgroundColor: COLORS.moss,
+              borderRadius: 12,
+              opacity: pressed ? 0.75 : 1,
+            })}
+          >
+            <Text style={{ color: COLORS.onAccent, fontFamily: 'IBMPlexSans_600SemiBold', fontSize: 15 }}>
+              Retry
+            </Text>
+          </Pressable>
+          {Platform.OS === 'web' && (
+            <Pressable
+              onPress={resetWebStorage}
+              style={({ pressed }) => ({
+                paddingVertical: 10,
+                paddingHorizontal: 16,
+                backgroundColor: COLORS.alertSoft,
+                borderWidth: 1,
+                borderColor: COLORS.rule,
+                borderRadius: 12,
+                opacity: pressed ? 0.75 : 1,
+              })}
+            >
+              <Text style={{ color: COLORS.alert, fontFamily: 'IBMPlexSans_600SemiBold', fontSize: 15 }}>
+                Reset Storage
+              </Text>
+            </Pressable>
+          )}
+        </View>
       </View>
     );
   } else if (!dbReady || !fontsReady) {
