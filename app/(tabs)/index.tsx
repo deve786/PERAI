@@ -86,14 +86,14 @@ export default function CaptureScreen() {
     return memories.filter((m) => types.includes(m.type)).map((m) => m.title);
   }, [memories]);
 
-  const pending = usePendingNotes({ people, listTitles }, configured);
+  const pending = usePendingNotes({ people, listTitles }, true);
   // Names of new games, films and products are checked against a web search
   // after saving, so adding never waits on it.
   const titles = useTitleChecks(configured);
 
   async function save(raw: string) {
     const note = raw.trim();
-    if (!note || saving || !configured) return;
+    if (!note || saving) return;
 
     setSaving(true);
     setError(null);

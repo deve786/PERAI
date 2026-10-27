@@ -12,9 +12,10 @@ import {
 } from '../types';
 import { DEFAULT_CURRENCY } from '../constants';
 import { localTimestamp } from '../format';
-import { EXTRACT_MODEL, requestJson } from './client';
+import { EXTRACT_MODEL, hasApiKey, requestJson } from './client';
 import type { TitleLanguage } from '../settings';
 import { normalizeGroupName } from '../groups';
+import { extractMemoriesOffline } from './extractOffline';
 
 /** Thrown when the model replied but we could not read a memory out of it. */
 export class ExtractionError extends Error {
@@ -305,37 +306,46 @@ export async function extractMemories(
   const trimmed = text.trim();
   if (!trimmed) return [];
 
-  const weekday = new Date(nowISO).toLocaleDateString('en-US', {
-    weekday: 'long',
-  });
+  // If online & configured with an API key, try the Gemini cloud model first
+  if (hasApiKey()) {
+    try {
+      const weekday = new Date(nowISO).toLocaleDateString('en-US', {
+        weekday: 'long',
+      });
 
-  const body = (
-    await requestJson({
-      model: EXTRACT_MODEL,
-      system: SYSTEM_PROMPT,
-      user:
-        `Current local time: ${localTimestamp(nowISO)} (${weekday})\n\n` +
-        (knownPeople.length > 0 ? `People already known: ${knownPeople.join(', ')}\n\n` : '') +
-        `Note:\n${trimmed}`,
-      schemaName: 'extracted_memories',
-      schema: EXTRACTION_SCHEMA,
-      retries: options.retries,
-    })
-  ).trim();
+      const body = (
+        await requestJson({
+          model: EXTRACT_MODEL,
+          system: SYSTEM_PROMPT,
+          user:
+            `Current local time: ${localTimestamp(nowISO)} (${weekday})\n\n` +
+            (knownPeople.length > 0 ? `People already known: ${knownPeople.join(', ')}\n\n` : '') +
+            `Note:\n${trimmed}`,
+          schemaName: 'extracted_memories',
+          schema: EXTRACTION_SCHEMA,
+          retries: options.retries,
+        })
+      ).trim();
 
-  if (!body) throw new ExtractionError();
+      if (body) {
+        const parsed = looseJsonParse(body);
+        const items = Array.isArray(parsed)
+          ? parsed
+          : (parsed as { memories?: unknown })?.memories;
 
-  const parsed = looseJsonParse(body);
-  const items = Array.isArray(parsed)
-    ? parsed
-    : (parsed as { memories?: unknown })?.memories;
+        if (Array.isArray(items)) {
+          const drafts = items
+            .map((item) => normaliseDraft(item, nowISO))
+            .filter((draft): draft is MemoryDraft => draft !== null);
 
-  if (!Array.isArray(items)) throw new ExtractionError();
+          if (drafts.length > 0) return drafts;
+        }
+      }
+    } catch (err) {
+      console.warn('[extractMemories] Online AI model unavailable, falling back to offline model:', err);
+    }
+  }
 
-  const drafts = items
-    .map((item) => normaliseDraft(item, nowISO))
-    .filter((draft): draft is MemoryDraft => draft !== null);
-
-  if (drafts.length === 0) throw new ExtractionError();
-  return drafts;
+  // Offline model: runs on-device with zero network requests
+  return extractMemoriesOffline(trimmed, nowISO, knownPeople);
 }

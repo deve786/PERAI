@@ -2,6 +2,7 @@ import { GoogleGenAI } from '@google/genai';
 import { getApiKey, hasApiKey, MissingApiKeyError } from './client';
 import { addAiLog } from './logger';
 import { todayStr } from '../dates';
+import { extractPaymentFromTextOffline } from '../paymentTextOffline';
 
 export interface ScannedItem {
   name: string;
@@ -296,19 +297,25 @@ No markdown backticks, no prose. If this doesn't describe a payment at all, retu
 
 /** Text-only counterpart to scanPaymentWithAI, for a share that sends words instead of an image. */
 export async function extractPaymentFromText(text: string, categoryNames: string[] = []): Promise<ScannedPayment> {
-  if (!hasApiKey()) {
-    throw new MissingApiKeyError();
+  if (hasApiKey()) {
+    try {
+      const client = new GoogleGenAI({ apiKey: getApiKey() });
+      const response = await client.models.generateContent({
+        model: OCR_MODEL,
+        contents: [
+          { role: 'user', parts: [{ text: `${PAYMENT_TEXT_SYSTEM_PROMPT}\n\n${PAYMENT_TEXT_USER_PROMPT}${promptExtras(categoryNames)}\n\nShared text:\n${text}` }] },
+        ],
+      });
+      const rawOutput = response.text || '';
+      if (rawOutput) {
+        const parsed = parsePayment(rawOutput, 'text');
+        if (parsed.amount > 0) return parsed;
+      }
+    } catch (err) {
+      console.warn('[extractPaymentFromText] Online model unavailable, falling back to offline parser:', err);
+    }
   }
-  const client = new GoogleGenAI({ apiKey: getApiKey() });
-  const response = await client.models.generateContent({
-    model: OCR_MODEL,
-    contents: [
-      { role: 'user', parts: [{ text: `${PAYMENT_TEXT_SYSTEM_PROMPT}\n\n${PAYMENT_TEXT_USER_PROMPT}${promptExtras(categoryNames)}\n\nShared text:\n${text}` }] },
-    ],
-  });
-  const rawOutput = response.text || '';
-  if (!rawOutput) {
-    throw new Error('Gemini returned an empty response for this shared text.');
-  }
-  return parsePayment(rawOutput, 'text');
+
+  // Fallback to offline on-device parser
+  return extractPaymentFromTextOffline(text, categoryNames);
 }

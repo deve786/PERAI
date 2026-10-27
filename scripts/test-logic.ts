@@ -117,6 +117,8 @@ import { lookupSpelling, spellingHints, spellingKey } from '../src/dictionary';
 import { backoffFor, nextDue, shouldRetry, MAX_ATTEMPTS, type PendingNote } from '../src/pendingNotes';
 import { widgetItems } from '../src/widget/widgetItems';
 import { computeNetWorth } from '../src/expense/accountsLogic';
+import { extractMemoriesOffline } from '../src/ai/extractOffline';
+import { extractPaymentFromTextOffline } from '../src/expense/paymentTextOffline';
 
 let passed = 0;
 let failed = 0;
@@ -2051,6 +2053,69 @@ section('telegram incremental sync & auto-sync intervals');
   check('formats 5m label correctly', formatAutoSyncInterval(5) === 'Every 5 minutes');
   check('formats 0m label as Off', formatAutoSyncInterval(0) === 'Off');
   check('formats 60m label as 1 hour', formatAutoSyncInterval(60) === 'Every 1 hour');
+}
+
+section('offline memory extractor');
+{
+  const now = '2026-10-27T10:00:00.000Z';
+
+  // 1. Simple task (like the user's "Clean home")
+  const t1 = extractMemoriesOffline('Clean home', now);
+  check('extracts simple task title', t1.length === 1 && t1[0].title === 'Clean home');
+  check('simple task type is task', t1[0].type === 'task');
+  check('simple task is active', t1[0].status === 'active');
+  check('simple task has a valid eventDate', typeof t1[0].eventDate === 'string');
+
+  // 2. Task with date and time
+  const t2 = extractMemoriesOffline('Buy milk tomorrow at 9am', now);
+  check('extracts title without date words', t2[0].title === 'Buy milk');
+  check('extracts tomorrow date expression', t2[0].dateExpression?.includes('tomorrow') === true);
+  check('sets 9am on tomorrow', new Date(t2[0].eventDate).getUTCHours() === 3 || t2[0].eventDate.includes('2026-10-28'));
+
+  // 3. Purchase note with amount
+  const p1 = extractMemoriesOffline('Bought groceries for 450 rupees', now);
+  check('recognizes purchase type', p1[0].type === 'purchase');
+  check('extracts purchase amount', p1[0].amount === 450);
+  check('categorizes groceries as Shopping', p1[0].category === 'Shopping');
+
+  // 4. Reminder
+  const r1 = extractMemoriesOffline('Remind me to call mom tonight', now);
+  check('recognizes reminder type', r1[0].type === 'reminder');
+  check('strips remind prefix', r1[0].title === 'Call mom');
+
+  // 5. Checklist with group
+  const g1 = extractMemoriesOffline('Kozhikode trip: book tickets, pack bags, get cash', now);
+  check('splits into 3 tasks', g1.length === 3);
+  check('assigns group name to all', g1.every((t) => t.groupName?.toLowerCase().includes('kozhikode')));
+}
+
+section('offline payment text extractor');
+{
+  // 1. Google Pay share text
+  const gpay = extractPaymentFromTextOffline(
+    'Paid ₹500 to Ramesh Kumar using Google Pay on 20 Oct 2026',
+    ['Food', 'Shopping']
+  );
+  check('extracts GPay amount', gpay.amount === 500);
+  check('extracts GPay payee', gpay.payee === 'Ramesh Kumar');
+  check('extracts date', gpay.date === '2026-10-20');
+
+  // 2. Bank SMS
+  const sms = extractPaymentFromTextOffline(
+    'Dear SBI User, your A/c ending 1234 debited by Rs 1,450.00 on 24-Oct-26 by transfer to SWIGGY',
+    ['Food', 'Shopping']
+  );
+  check('extracts SMS amount with decimal and commas', sms.amount === 1450);
+  check('extracts payee SWIGGY', sms.payee === 'SWIGGY');
+  check('extracts SBI bank with last four digits', sms.bank?.toLowerCase().includes('sbi') === true && sms.bank?.includes('1234') === true);
+  check('extracts date from SMS', sms.date === '2026-10-24');
+  check('categorizes food merchant', sms.category === 'Food');
+
+  // 3. PhonePe / Paytm text
+  const phonepe = extractPaymentFromTextOffline('Transaction Successful! Paid ₹350 to Auto Driver using PhonePe from HDFC Bank A/c XX5678');
+  check('extracts PhonePe amount', phonepe.amount === 350);
+  check('extracts payee Auto Driver', phonepe.payee === 'Auto Driver');
+  check('extracts HDFC Bank with last four', phonepe.bank?.toLowerCase().includes('hdfc') === true && phonepe.bank?.includes('5678') === true);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
