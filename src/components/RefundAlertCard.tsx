@@ -2,7 +2,7 @@ import React from 'react';
 import { StyleSheet, View, Text, Pressable } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { fmtMoney } from '@/expense/stats';
-import { FONTS, RADIUS } from '@/theme';
+import { FONTS } from '@/theme';
 
 export interface RefundAlertItem {
   id: string;
@@ -28,32 +28,41 @@ export function RefundAlertCard({ refunds, symbol = '₹', onFollowUp, onDismiss
 
   return (
     <View style={styles.card}>
-      <View style={styles.topHeader}>
-        <Text style={styles.cardHeaderTitle}>Refund Alert Watchdog</Text>
-        <View style={styles.warningIconBadge}>
-          <Ionicons name="warning" size={18} color="#f59e0b" />
-        </View>
+      <View style={styles.iconBadge}>
+        <Ionicons name="warning-outline" size={17} color="#f59e0b" />
       </View>
 
-      <Text style={styles.alertSubtitle}>Refund Alert: {titleText}</Text>
-      <Text style={styles.alertDetails}>
-        ({fmtMoney(item.amount, symbol)} • Overdue by {days} days)
-      </Text>
+      <View style={styles.infoCol}>
+        <Text style={styles.title} numberOfLines={1}>
+          Refund Alert: {titleText}
+        </Text>
+        <Text style={styles.details} numberOfLines={1}>
+          {fmtMoney(item.amount, symbol)} • Overdue by {days}d
+        </Text>
+      </View>
 
-      <View style={styles.actionsRow}>
-        {onDismiss ? (
-          <Pressable onPress={() => onDismiss(item.id)} style={styles.dismissBtn}>
-            <Text style={styles.dismissText}>Dismiss</Text>
-          </Pressable>
-        ) : null}
-
+      <View style={styles.actions}>
         <Pressable
           onPress={() => onFollowUp?.(item)}
-          style={({ pressed }) => [styles.followUpBtn, pressed && styles.followUpBtnPressed]}
+          style={({ pressed }) => [styles.followUpBtn, pressed && styles.btnPressed]}
+          accessibilityRole="button"
+          accessibilityLabel={`Follow up refund of ${titleText}`}
         >
           <Text style={styles.followUpText}>Follow Up</Text>
-          <Ionicons name="arrow-forward" size={14} color="#041f14" />
+          <Ionicons name="arrow-forward" size={12} color="#181204" />
         </Pressable>
+
+        {onDismiss ? (
+          <Pressable
+            onPress={() => onDismiss(item.id)}
+            hitSlop={8}
+            style={({ pressed }) => [styles.closeBtn, pressed && styles.btnPressed]}
+            accessibilityRole="button"
+            accessibilityLabel="Dismiss refund alert"
+          >
+            <Ionicons name="close" size={15} color="#a8a29e" />
+          </Pressable>
+        ) : null}
       </View>
     </View>
   );
@@ -61,32 +70,18 @@ export function RefundAlertCard({ refunds, symbol = '₹', onFollowUp, onDismiss
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: '#1c1710',
-    borderRadius: 18,
-    borderWidth: 1.5,
-    borderColor: 'rgba(245, 158, 11, 0.45)',
-    padding: 16,
-    marginBottom: 14,
-    shadowColor: '#f59e0b',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 10,
-    elevation: 4,
-  },
-  topHeader: {
+    backgroundColor: '#19140d',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.35)',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginBottom: 10,
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    gap: 10,
   },
-  cardHeaderTitle: {
-    fontFamily: FONTS.sansSemi,
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#ffffff',
-    letterSpacing: -0.2,
-  },
-  warningIconBadge: {
+  iconBadge: {
     width: 32,
     height: 32,
     borderRadius: 8,
@@ -94,83 +89,45 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  alertSubtitle: {
-    fontFamily: FONTS.sansSemi,
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#fef3c7',
-    marginBottom: 2,
-  },
-  alertDetails: {
-    fontFamily: FONTS.sans,
-    fontSize: 13,
-    color: '#d97706',
-    marginBottom: 12,
-  },
-  contentRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-  },
-  leftColumn: {
+  infoCol: {
     flex: 1,
-  },
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 7,
-    flexWrap: 'wrap',
+    gap: 1,
   },
   title: {
     fontFamily: FONTS.sansSemi,
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#ffffff',
-    lineHeight: 20,
-    flex: 1,
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#fef3c7',
   },
-  overdueTag: {
+  details: {
+    fontFamily: FONTS.sans,
+    fontSize: 11.5,
     color: '#f59e0b',
-    fontWeight: '800',
   },
-  subText: {
-    fontFamily: FONTS.sans,
-    fontSize: 12,
-    color: '#94a3b8',
-    marginTop: 4,
-  },
-  actionsRow: {
+  actions: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
     alignItems: 'center',
-    gap: 10,
-    marginTop: 10,
-  },
-  dismissBtn: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-  },
-  dismissText: {
-    fontFamily: FONTS.sans,
-    fontSize: 12,
-    color: '#94a3b8',
+    gap: 6,
   },
   followUpBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
-    backgroundColor: '#10b981',
-    paddingVertical: 7,
-    paddingHorizontal: 14,
-    borderRadius: 18,
+    gap: 4,
+    backgroundColor: '#f59e0b',
+    paddingVertical: 5,
+    paddingHorizontal: 9,
+    borderRadius: 10,
   },
-  followUpBtnPressed: {
-    opacity: 0.8,
+  btnPressed: {
+    opacity: 0.75,
   },
   followUpText: {
     fontFamily: FONTS.sansSemi,
-    fontSize: 13,
+    fontSize: 11.5,
     fontWeight: '700',
-    color: '#041f14',
+    color: '#181204',
+  },
+  closeBtn: {
+    padding: 2,
   },
 });

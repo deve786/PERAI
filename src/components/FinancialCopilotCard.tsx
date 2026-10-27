@@ -2,7 +2,7 @@ import React from 'react';
 import { StyleSheet, View, Text } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { fmtMoney } from '@/expense/stats';
-import { FONTS, RADIUS } from '@/theme';
+import { FONTS } from '@/theme';
 
 interface FinancialCopilotCardProps {
   totalSpent: number;
@@ -14,39 +14,45 @@ export function FinancialCopilotCard({ totalSpent, budget, symbol = '₹' }: Fin
   const effectiveBudget = budget > 0 ? budget : 25000;
   const pct = Math.min(1, Math.max(0, totalSpent / effectiveBudget));
   const spentPct = Math.round(pct * 100);
-  const remainingPct = 100 - spentPct;
   const remaining = Math.max(0, effectiveBudget - totalSpent);
   const isOver = totalSpent > effectiveBudget;
 
+  const barColor = isOver ? '#ef4444' : pct > 0.85 ? '#f59e0b' : '#10b981';
+
   return (
     <View style={styles.cardContainer}>
-      <Text style={styles.title}>Monthly Spending Health</Text>
+      <View style={styles.headerRow}>
+        <View style={styles.titleWrap}>
+          <Ionicons name="pulse" size={14} color="#10b981" />
+          <Text style={styles.title}>Monthly Spend Health</Text>
+        </View>
+        <Text style={[styles.percentBadge, { color: barColor }]}>
+          {spentPct}% spent
+        </Text>
+      </View>
 
-      {/* Pill Progress Bar with embedded percentages */}
       <View style={styles.progressTrack}>
         <View
           style={[
             styles.progressBar,
             {
-              width: `${Math.max(16, Math.min(100, spentPct))}%`,
-              backgroundColor: isOver ? '#ef4444' : pct > 0.85 ? '#f59e0b' : '#10b981',
+              width: `${Math.max(2, Math.min(100, spentPct))}%`,
+              backgroundColor: barColor,
             },
           ]}
-        >
-          <Text style={styles.barPercentageText}>{spentPct}%</Text>
-        </View>
-        <Text style={styles.trackRemainingText}>{remainingPct}%</Text>
+        />
       </View>
 
-      <Text style={styles.amountSummary}>
-        {fmtMoney(totalSpent, symbol)} spent of {fmtMoney(effectiveBudget, symbol)} budget
-      </Text>
-
-      <Text style={[styles.remainingText, isOver && { color: '#f87171' }]}>
-        {isOver
-          ? `Over budget by ${fmtMoney(totalSpent - effectiveBudget, symbol)}`
-          : `Remaining: ${fmtMoney(remaining, symbol)}`}
-      </Text>
+      <View style={styles.footerRow}>
+        <Text style={styles.amountSummary}>
+          {fmtMoney(totalSpent, symbol)} of {fmtMoney(effectiveBudget, symbol)}
+        </Text>
+        <Text style={[styles.statusText, { color: isOver ? '#f87171' : '#10b981' }]}>
+          {isOver
+            ? `${fmtMoney(totalSpent - effectiveBudget, symbol)} over`
+            : `${fmtMoney(remaining, symbol)} left`}
+        </Text>
+      </View>
     </View>
   );
 }
@@ -54,71 +60,58 @@ export function FinancialCopilotCard({ totalSpent, budget, symbol = '₹' }: Fin
 const styles = StyleSheet.create({
   cardContainer: {
     backgroundColor: '#121815',
-    borderRadius: 18,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.25)',
-    padding: 16,
-    marginBottom: 14,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.35,
-    shadowRadius: 10,
-    elevation: 4,
+    borderColor: 'rgba(16, 185, 129, 0.22)',
+    paddingVertical: 10,
+    paddingHorizontal: 13,
+    marginBottom: 10,
+    gap: 6,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  titleWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   title: {
     fontFamily: FONTS.sansSemi,
-    fontSize: 16,
-    fontWeight: '700',
+    fontSize: 13,
+    fontWeight: '600',
     color: '#ffffff',
-    letterSpacing: -0.2,
-    marginBottom: 12,
+  },
+  percentBadge: {
+    fontFamily: FONTS.sansSemi,
+    fontSize: 12,
+    fontWeight: '700',
   },
   progressTrack: {
-    height: 28,
-    borderRadius: 14,
+    height: 6,
+    borderRadius: 3,
     backgroundColor: 'rgba(255, 255, 255, 0.08)',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 4,
     overflow: 'hidden',
-    position: 'relative',
-    marginBottom: 12,
   },
   progressBar: {
-    height: 22,
-    borderRadius: 11,
-    justifyContent: 'center',
+    height: 6,
+    borderRadius: 3,
+  },
+  footerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 8,
-    shadowColor: '#10b981',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.5,
-    shadowRadius: 6,
-  },
-  barPercentageText: {
-    fontFamily: FONTS.sansSemi,
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#042f1a',
-  },
-  trackRemainingText: {
-    fontFamily: FONTS.sansSemi,
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#94a3b8',
-    paddingRight: 10,
   },
   amountSummary: {
-    fontFamily: FONTS.sansSemi,
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#e2e8f0',
-    marginBottom: 4,
-  },
-  remainingText: {
     fontFamily: FONTS.sans,
-    fontSize: 13,
+    fontSize: 11.5,
     color: '#94a3b8',
+  },
+  statusText: {
+    fontFamily: FONTS.sansSemi,
+    fontSize: 11.5,
+    fontWeight: '600',
   },
 });

@@ -222,7 +222,7 @@ export default function Home() {
           <FinancialCopilotCard totalSpent={total > 0 ? total : 18450} budget={budget > 0 ? budget : 25000} symbol={symbol} />
         )}
 
-        {/* Smart AI Financial Insights: Leak Detector & Auto-Import Ticket PDF */}
+        {/* Smart AI Financial Insights */}
         {isCurrentMonth && (
           <FinancialInsightsCard
             expenses={rows}
