@@ -10,6 +10,16 @@ export interface ChangelogEntry {
 /** Newest first. Add a new entry here with every release that changes user-visible behaviour. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.30.63',
+    build: 166,
+    type: 'ota',
+    date: '2026-10-27',
+    time: '06:53 PM',
+    highlights: [
+      'Revert to stable FIN-OS release',
+    ],
+  },
+  {
     version: '1.30.62',
     build: 165,
     type: 'ota',
