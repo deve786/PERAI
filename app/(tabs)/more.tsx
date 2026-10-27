@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { APP_VERSION } from '@/appVersion';
+import { seedAllDummyData } from '@/db/seedData';
 import { getNetWorthSummary } from '@/expense/accountsDb';
 import { fmtMoney } from '@/expense/stats';
 import { useTheme } from '@/expense/theme';
@@ -10,9 +11,20 @@ import { IconTile, ListCard, ListRow, Screen, T, Title } from '@/expense/ui';
 export default function More() {
   const router = useRouter();
   const { symbol } = useTheme();
+  const [seeding, setSeeding] = useState(false);
 
   // Shown beside "Net worth & accounts" once there is at least one account.
   const [netWorth, setNetWorth] = useState<number | null>(null);
+
+  const handleSeedData = async () => {
+    setSeeding(true);
+    try {
+      await seedAllDummyData(true);
+      router.replace('/(tabs)/expense-home');
+    } finally {
+      setSeeding(false);
+    }
+  };
   useFocusEffect(
     useCallback(() => {
       let active = true;
@@ -67,6 +79,11 @@ export default function More() {
           <ListRow icon="documents-outline" label="Data Sources" onPress={() => router.push('/data-sources' as any)} />
           <ListRow icon="settings-outline" label="Settings" onPress={() => router.push('/settings')} />
           <ListRow icon="cloud-outline" label="Backup" onPress={() => router.push('/account')} />
+          <ListRow
+            icon="flask-outline"
+            label={seeding ? 'Populating Sample Data...' : 'Load Sample Data'}
+            onPress={handleSeedData}
+          />
           <ListRow
             icon="sparkles-outline"
             label="What's new"
