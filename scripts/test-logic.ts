@@ -30,7 +30,22 @@ import {
 import { isFreshPartial, joinSpelledLetters, knownPeople, restatesEarlier } from '../src/speechText';
 import { listSections } from '../src/lists';
 import { answerFromList, listQuestion } from '../src/listQuestion';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { conversationQuery } from '../src/ai/ask';
+import {
+  SAMPLE_ACCOUNTS,
+  SAMPLE_BUDGETS,
+  SAMPLE_DOCUMENTS,
+  SAMPLE_EXPENSES,
+  SAMPLE_INCOME,
+  SAMPLE_LOANS,
+  SAMPLE_MEMORIES,
+  SAMPLE_RECURRING,
+  SAMPLE_TELEGRAM_CHANNEL,
+  SAMPLE_TELEGRAM_MESSAGE_ID,
+  SAMPLE_WEBSITE,
+} from '../src/db/sampleDataFingerprint';
 import {
   composeRowText,
   groupAnswerRows,
@@ -241,6 +256,66 @@ check('returns null with no period', guessDateRange('when did I last cut my hair
     range.from.getMonth() === 7 && range.to.getMonth() === 7,
     `${range.from.toDateString()} -> ${range.to.toDateString()}`
   );
+}
+
+section('sample data can be recognised exactly');
+{
+  // Every row the remover looks for must be one the seeder actually writes,
+  // word for word and figure for figure. If the seeder changes and this does
+  // not, sample rows would sit in someone's real data with nothing to take
+  // them out.
+  const seed = readFileSync(join(__dirname, '..', 'src', 'db', 'seedData.ts'), 'utf8');
+  const has = (text: string) => seed.includes(`'${text.replace(/'/g, "\\'")}'`) || seed.includes(`"${text}"`);
+  const hasAmount = (amount: number) => new RegExp(`amount: ${amount},`).test(seed);
+
+  for (const row of SAMPLE_EXPENSES) {
+    check(`expense "${row.note}" matches the seeder`, has(row.note) && has(row.notes) && hasAmount(row.amount));
+  }
+  for (const row of SAMPLE_INCOME) {
+    check(`income "${row.note}" matches the seeder`, has(row.note) && has(row.notes) && hasAmount(row.amount));
+  }
+  for (const row of SAMPLE_LOANS) {
+    check(`loan to ${row.person} matches the seeder`, has(row.person) && has(row.notes) && hasAmount(row.amount));
+  }
+  for (const row of SAMPLE_MEMORIES) {
+    check(`entry "${row.title}" matches the seeder`, has(row.title) && has(row.rawInput));
+  }
+  for (const row of SAMPLE_ACCOUNTS) {
+    check(`account ${row.id} matches the seeder`, has(row.id) && has(row.name));
+  }
+  for (const row of SAMPLE_RECURRING) {
+    check(`bill ${row.id} matches the seeder`, has(row.id) && has(row.note));
+  }
+  for (const row of SAMPLE_DOCUMENTS) {
+    check(`document ${row.id} matches the seeder`, seed.includes(`'${row.id}'`) && has(row.filename));
+  }
+  check('the sample website matches the seeder', has(SAMPLE_WEBSITE.id) && has(SAMPLE_WEBSITE.url));
+  check(
+    'the sample Telegram channel matches the seeder',
+    has(SAMPLE_TELEGRAM_CHANNEL.id) && has(SAMPLE_TELEGRAM_CHANNEL.username) && has(SAMPLE_TELEGRAM_MESSAGE_ID)
+  );
+  for (const row of SAMPLE_BUDGETS) {
+    check(
+      `budget on ${row.category} matches the seeder`,
+      has(row.category) && new RegExp(`monthly_budget = \\?[^\\n]*${row.amount}`).test(seed)
+    );
+  }
+
+  // The other direction: nothing the seeder writes is missed.
+  const seededExpenses = (seed.match(/await saveExpense\(/g) ?? []).length;
+  check('every seeded expense is fingerprinted', seededExpenses === SAMPLE_EXPENSES.length, `${seededExpenses} seeded`);
+  const seededIncome = (seed.match(/await saveIncome\(/g) ?? []).length;
+  check('every seeded income is fingerprinted', seededIncome === SAMPLE_INCOME.length, `${seededIncome} seeded`);
+  const seededLoans = (seed.match(/await saveBorrowLend\(/g) ?? []).length;
+  check('every seeded loan is fingerprinted', seededLoans === SAMPLE_LOANS.length, `${seededLoans} seeded`);
+  const seededEntries = (seed.match(/rawInput: '/g) ?? []).length;
+  check('every seeded entry is fingerprinted', seededEntries === SAMPLE_MEMORIES.length, `${seededEntries} seeded`);
+  const seededAccounts = (seed.match(/await saveAccount\(/g) ?? []).length;
+  check('every seeded account is fingerprinted', seededAccounts === SAMPLE_ACCOUNTS.length, `${seededAccounts} seeded`);
+  const seededBills = (seed.match(/INSERT OR REPLACE INTO recurring/g) ?? []).length;
+  check('every seeded bill is fingerprinted', seededBills === SAMPLE_RECURRING.length, `${seededBills} seeded`);
+  const seededBudgets = (seed.match(/SET monthly_budget = \?/g) ?? []).length;
+  check('every seeded budget is fingerprinted', seededBudgets === SAMPLE_BUDGETS.length, `${seededBudgets} seeded`);
 }
 
 section('answer lines are read back into their parts');
