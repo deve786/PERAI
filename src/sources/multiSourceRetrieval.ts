@@ -7,7 +7,8 @@ import type { DocumentChunk, TelegramMessage, WebsiteData } from './types';
 import { searchDocumentChunks } from './documents';
 import { searchWebsiteContent } from './websites';
 import { searchTelegramMessages } from './telegram';
-import { selectRelevantMemories } from '@/ai/retrieval';
+import { MAX_CONTEXT_MEMORIES, selectRelevantMemories } from '@/ai/retrieval';
+import { renderMemory } from '@/ai/ask';
 import { extractRelevantWebsiteSnippets } from './websiteLogic';
 import { generatePerVesselTimelines } from './tableParser';
 
@@ -24,6 +25,10 @@ export interface RetrievalResult {
   documentChunks: DocumentChunk[];
   websites: WebsiteData[];
   telegramMessages: TelegramMessage[];
+  /** The period the question named, if any — stated in the prompt so the model knows the scope. */
+  range?: { label: string } | null;
+  /** How many memories the question could have matched before the slice was taken. */
+  memoryPool?: number;
 }
 
 /**
@@ -41,7 +46,10 @@ export async function retrieveRelevantContent(
   } = {}
 ): Promise<RetrievalResult> {
   const {
-    maxMemories = 40,
+    // A month of ordinary capture runs well past 40 entries, and a total added
+    // up from the first 40 of them is wrong without ever looking wrong. The
+    // slice matches what the single-source path has always used.
+    maxMemories = MAX_CONTEXT_MEMORIES,
     maxDocuments = 12,
     maxWebsites = 6,
     maxTelegram = 20,
@@ -60,6 +68,8 @@ export async function retrieveRelevantContent(
     documentChunks,
     websites,
     telegramMessages,
+    range: memoryResult.range,
+    memoryPool: memoryResult.poolSize,
   };
 }
 
@@ -73,24 +83,43 @@ export function buildUnifiedContext(
 ): string {
   let context = '';
 
-  // Memories section
+  // Memories section.
+  //
+  // Rendered by renderMemory, the same way the single-source path has always
+  // rendered them. The short form this used to build left out the one field
+  // that decides half the questions asked of it — whether the entry is still
+  // to do or already done — so "which games are still left to play" listed
+  // the finished ones too. Type, category and tags went the same way.
   if (result.memories.length > 0) {
-    context += '\n\n=== YOUR PERSONAL MEMORIES ===\n';
+    const scope = result.range
+      ? `recorded during ${result.range.label}`
+      : 'the most relevant of what is recorded';
+    const truncated =
+      typeof result.memoryPool === 'number' && result.memoryPool > result.memories.length
+        ? ` — only ${result.memories.length} of ${result.memoryPool} are shown, so do NOT present a total or a count over them as complete; say it covers the ${result.memories.length} shown`
+        : '';
+    context += `\n\n=== YOUR PERSONAL MEMORIES (${scope}${truncated}) ===\n`;
     result.memories.forEach((m, i) => {
-      const people = m.people ? ` | People: ${m.people}` : '';
-      const location = m.location ? ` | Location: ${m.location}` : '';
-      const amount = m.amount !== null ? ` | Amount: ${m.currency || '₹'}${m.amount}` : '';
-      context += `[M${i}] ${m.title} (${m.eventDate})${people}${location}${amount}\n`;
-      if (m.rawInput && m.rawInput !== m.title) {
-        context += `  Note: ${m.rawInput}\n`;
-      }
+      context += `${renderMemory(m, `M${i}`)}\n\n`;
     });
   }
 
   // Expense context from Money data
   if (expenseContext) {
     context += '\n\n=== YOUR EXPENSE DATA ===\n';
-    context += typeof expenseContext === 'string' ? expenseContext : JSON.stringify(expenseContext, null, 2);
+    context +=
+      [
+        'HOW TO READ THIS: every total below is already worked out, and already has refunds and paybacks taken off.',
+        'Use the worked-out total whenever one covers what was asked, and do NOT add the figures up yourself:',
+        '- a place, or a category within a place ("tickets in Minicoy") -> byPlace[].total and byPlace[].byCategory',
+        '- a month, or a category within a month -> monthlySummaries[].total and .byCategory',
+        '- the last 7 or 30 days -> last7Days / last30Days; everything ever -> allTime',
+        'byPlace covers every expense ever recorded, not only the recent ones listed individually.',
+        'On an individual expense, "spent" is what it really cost after any refund or payback — total "spent", never "billedAmount", which is only what was billed before the money came back.',
+        'If no worked-out total covers the question, add up "spent" and say how many entries the figure covers.',
+        '',
+      ].join('\n');
+    context += typeof expenseContext === 'string' ? expenseContext : JSON.stringify(expenseContext);
   }
 
   // Document chunks section

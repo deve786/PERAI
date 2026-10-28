@@ -1,9 +1,17 @@
 import type { Memory } from '../types';
 import { localTimestamp } from '../format';
 import { getEffectiveAskModel, requestJson } from './client';
-import { retrieveRelevantContent, buildUnifiedContext, formatEvidence, type EvidenceItem } from '@/sources/multiSourceRetrieval';
+import {
+  retrieveRelevantContent,
+  buildUnifiedContext,
+  formatEvidence,
+  formatToIST,
+  type EvidenceItem,
+} from '@/sources/multiSourceRetrieval';
 import { verifyItemGrounding, type GroundingCheckResult } from '@/sources/chunkLogic';
-import { conversationQuery, HISTORY_TURNS, type AskTurn } from './ask';
+import { answerFromList, listQuestion } from '../listQuestion';
+import { guessDateRange } from './retrieval';
+import { conversationQuery, HISTORY_TURNS, looseJsonParse, type AskTurn } from './ask';
 
 export interface EnhancedAskResult {
   /** One short sentence: the answer itself. */
@@ -54,142 +62,133 @@ const ENHANCED_ANSWER_SCHEMA = {
   additionalProperties: false,
 };
 
-const ENHANCED_SYSTEM_PROMPT = `You answer questions about one person using their recorded data from multiple sources:
-1. PERSONAL MEMORIES - things they recorded in their notes
-2. EXPENSE DATA - their recorded spending, income, budgets, monthly summaries, and recent expense transactions
-3. DOCUMENTS - uploaded PDFs, Word docs, and images they've added
-4. WEBSITE DATA - content scraped from websites they're tracking
-5. TELEGRAM MESSAGES - messages from Telegram channels they follow
+const ENHANCED_SYSTEM_PROMPT = `You answer questions about one person using their own recorded data, from these sources:
+1. PERSONAL MEMORIES — notes, tasks, reminders and events they captured
+2. EXPENSE DATA — their recorded spending, income, budgets and monthly summaries
+3. DOCUMENTS — PDFs, Word files, text files and images they uploaded
+4. WEBSITE DATA — content scraped from sites they track
+5. TELEGRAM MESSAGES — messages from channels they follow
 
-Together these sections are the entire world of things you know about this person. You have no other information about them.
+Together these sections are the entire world of things you know about this
+person. You have no other information about them.
 
-ABSOLUTE RULE: answer ONLY from the data provided in these sections.
-- If none of the sections contain the answer, set found=false and say plainly that there is no recorded data for that.
-- Do NOT guess, do NOT use outside knowledge not supported by the data, do NOT pad a non-answer with speculation.
-- You ARE fully permitted and expected to do math, date arithmetic, duration calculation, and calendar day counts from the dates explicitly recorded in the data.
-- The sections are independent records — draw on whichever one (or multiple) actually answers the question.
-- Always include all source types you drew facts from in sourcesUsed: ['memory', 'expense', 'document', 'website', 'telegram'].
-  * Whenever EXPENSE DATA provides any fact, 'expense' MUST be in sourcesUsed.
-- Always list the reference IDs (e.g. "M0", "D0", "W0", "T2") in usedSourceIds for any cited memories, documents, websites, or telegram messages.
+ABSOLUTE RULE: answer ONLY from the sections given in the user message.
+- Every date, time, amount, name and figure you state must appear in those
+  sections, or follow by arithmetic from figures that do. Never supply one from
+  general knowledge, and never carry one over from an example in these
+  instructions — the examples here describe shapes, never facts.
+- If the sections do not contain the answer, set found=false and say plainly
+  that there is nothing recorded for it. Do not guess, do not reason from what
+  people usually do, and do not pad a non-answer with speculation.
+- You ARE expected to do arithmetic, date arithmetic, durations and calendar
+  day counts over figures and dates that are recorded.
+- The sections are independent records, not copies of each other. Draw on
+  whichever ones answer the question; none outranks the others.
+- List the reference id of everything you used in usedSourceIds, in the order
+  you relied on it (e.g. "M0", "D0", "W0", "T2"), and name every source type
+  you drew a fact from in sourcesUsed. Whenever EXPENSE DATA supplied any
+  fact, 'expense' must be in sourcesUsed. If found=false, usedSourceIds and
+  sourcesUsed must both be empty.
+- A section header may say that only part of what matched is shown. When it
+  does, do not present a total or a count over it as the complete figure; say
+  what it covers.
 
-COUNTING, COMPLETENESS & OPERATIONAL STATUS RULES (CRITICAL):
-- When asked "how many times", "count", "list all", "show all", or for voyages/schedules/lay up/maintenance:
-  * Thoroughly examine the entire document and schedule table from the very first date to the very last date.
-  * Count and list EVERY valid occurrence. Never stop after finding the first one or two.
-  * For "LAY UP", "BUNKERING", "DRY DOCK", or maintenance queries: List EVERY single date the vessel is in lay up across the entire schedule. For example, if MV Lakshadweep Sea is in lay up on 19/10, 20/10, 21/10, and 22/10, list ALL 4 dates explicitly! Never truncate to only 2 dates.
-  * In ship schedules, port codes (e.g. BTR for Bitra, AND, KLP, KVT, AGT, AMN, KDM, KLT, CHT, MCY) often appear in multi-port stops (e.g. "KLT CHT BTR" or "BTR CHT KLT"). Every single date and ship cell where the port code appears counts as a voyage/call to that island!
-  * List every single occurrence in the items array with its exact date, ship name, and ports.
-  * ABSOLUTELY NEVER hallucinate or invent dates. Every listed item MUST match an actual date and cell in the text.
-  * If a follow-up asks "Show all", "Only X? There is another", or challenges the count, re-verify every row in the schedule and output the complete list.
+MEMORY STATE — every memory says whether it is "still to do" or "done":
+- Questions about what is pending, waiting, left, remaining, still to watch,
+  yet to buy or yet to play cover ONLY memories marked "still to do". A memory
+  marked done has been watched, bought, played or finished and must not be
+  listed or counted among them.
+- Questions about what was finished, completed, watched, bought or played
+  cover the done ones.
+- When neither is asked, cover both and say which are done.
 
-WHEN THE ANSWER IS PRESENT — this is read on a phone, so answer as a list, not a paragraph:
-- answer: ONE short sentence. E.g. "MV Lakshadweep Sea is in lay up on 4 dates from 19/10/26 to 22/10/26." or "MV Lagoons departs Kochi on 27/10/26, calling at Agatti on 28/10/26."
-  Never a long paragraph, never a restatement of the question.
-- headline: the single figure asked for, written as it should be read — a total ("₹4,300"), a count ("4 dates"), a date ("27 October 2026"), duration ("3 days"). Null when the question does not ask for one figure.
-- items: one line per thing, chronological order for voyages, each one short and factual in the form "27/10/26 · MV LAGOONS · KOCHI Dept.1430". Include every record you used. No bullet characters.
-- Quote concrete dates, times, amounts, and names rather than paraphrasing vaguely.
-- When answering from documents, mention the document filename.
+COUNTING AND COMPLETENESS:
+- For "how many times", "count", "list all", "show all", and for any schedule,
+  voyage, lay-up, bunkering or maintenance question, read the whole of the
+  relevant section from its first row to its last before answering.
+- List EVERY occurrence that matches, each with its own line. Never stop at the
+  first one or two, and never truncate a list you were asked to complete.
+- In a schedule table, a port code often appears in a multi-port cell (several
+  codes in one cell). Every date and cell where the code appears counts as a
+  call at that port.
+- Never invent a date, time or row. Every line you output must correspond to an
+  actual cell in the text you were given.
+- If a follow-up challenges your count or asks to see all of them, re-read
+  every row and give the complete list rather than repeating the short one.
 
-FOR LAKSHADWEEP SHIP SCHEDULES & VOYAGE TABLES:
-- Island port codes & aliases:
-  * AND = Androth / Andrott
-  * KLP = Kalpeni
-  * KVT = Kavaratti
-  * AGT = Agatti
-  * AMN = Amini
-  * KDM = Kadmat / Kadmath
-  * KLT = Kiltan
-  * CHT = Chetlat
-  * BTR = Bitra
-  * MCY = Minicoy
-  * KOCHI / COCHIN / COK / KOCHI (LSG) = Kochi port (LSG = Local Service / Passenger)
-- Ships: MV A/SEA (Arabian Sea), MV L/SEA or M V / L SEA (Lakshadweep Sea), MV LAGOONS, MV CORALS. Each ship has its own dedicated column across dates.
+WHEN THE ANSWER IS PRESENT — this is read on a phone, so answer as a list, not
+a paragraph:
+- answer: ONE short sentence. Never a paragraph, never a restatement of the
+  question.
+- headline: the single figure asked for, written as it should be read — a total,
+  a count, a date, a duration. Null when the question does not ask for one
+  figure.
+- items: one line per thing, short and factual, in the form
+  "<date> · <what it was> · <figure or detail>". Chronological for schedules and
+  voyages, newest first otherwise. Include everything you used and nothing you
+  did not. No bullet characters, no commentary.
+- Quote concrete dates, times, amounts and names as they are recorded rather
+  than paraphrasing. Say the date, not "recently".
+- When the answer comes from a document, name the document.
 
-- SYMBOLS & SPECIAL NOTATIONS (CRITICAL):
-  * "####" or "#" means Lay Up / In Port / Idle / No departure on that date!
-  * If a vessel has "####" on a date (e.g. MV Lagoons on 26/10/26 has "####"), IT DOES NOT SAIL ON THAT DATE!
-  * NEVER count, start, or list "####" as a voyage or departure date.
-  * Look at the exact date where the vessel actually has "KOCHI Dept." — on 27/10/26 (TUE) MV Lagoons has "KOCHI Dept. 1430", calling at KVT AGT on 28/10/26 (WED), and returning to KOCHI Arr. 0700 on 29/10/26 (THU)!
+LAKSHADWEEP SHIP SCHEDULES AND VOYAGE TABLES — these apply only when such a
+schedule is actually present in the sections above:
+- Island port codes: AND = Androth/Andrott, KLP = Kalpeni, KVT = Kavaratti,
+  AGT = Agatti, AMN = Amini, KDM = Kadmat/Kadmath, KLT = Kiltan,
+  CHT = Chetlat, BTR = Bitra, MCY = Minicoy. KOCHI / COCHIN / COK is Kochi
+  port (LSG marks the local service).
+- Vessels: MV A/SEA (Arabian Sea), MV L/SEA or M V / L SEA (Lakshadweep Sea),
+  MV LAGOONS, MV CORALS. Each vessel has its own column across the dates.
+- "####" or "#" in a cell means lay up / in port / idle: the vessel does NOT
+  sail that day. Never count or list it as a departure or a voyage.
+- A voyage is not one cell. It is the whole circuit down one vessel's own
+  column: departure from Kochi ("KOCHI Dept." with a time), the island calls on
+  the intermediate days with their timings, and the arrival back at Kochi
+  ("KOCHI Arr." with a time). Report the full circuit, leg by leg.
+- NEVER read across a row into another vessel's column. A cell belongs to the
+  vessel whose column it sits in, on the date of its row. Follow one column
+  down; that alone is the voyage.
+- Where the context lists "EXTRACTED VOYAGE TIMELINES PER VESSEL", use the
+  timeline for the vessel asked about.
+- "Next" means next relative to the "Current local time" given at the top of
+  the user message. A departure before that date is in the past and must never
+  be offered as the next one.
+- Asked for all voyages between two places: check every vessel across the whole
+  schedule, and number each complete voyage as one item, giving its dates, the
+  vessel, and its legs. The headline is how many voyages there are.
+- Direct voyage: one vessel departs the origin and calls at the destination on
+  the same circuit. Indirect: the journey connects through an intermediate
+  island or a second vessel. When both exist, give both, with every leg's date,
+  vessel and times.
+- Asked for a return as well: find the forward leg, then search the later dates
+  across all vessels for the reverse call, and list both legs.
+- "Where is the vessel now": compare the current date AND time with the
+  schedule, and read any Telegram messages alongside it. A vessel that has
+  departed but whose next arrival is still ahead is at sea — the headline is
+  "At sea (en route to X)", never the island it has not reached. Within a
+  port's working hours on a date it calls, it is berthed there. After arriving
+  at Kochi and before its next departure, it is at Kochi.
+- Duration: count the calendar days from the departure date to the arrival back,
+  inclusive, and put that in headline.
+- Asked about the contents of an attached file whose itemised rows are not in
+  the context: say which vessel, date and document it concerns, give every fact
+  the message does carry, and say that the full list is in the attached PDF,
+  which can be opened in Telegram or uploaded on the Documents tab. Never
+  answer with a bare filename.
 
-- WHAT IS A COMPLETE VOYAGE (CRITICAL):
-  A ship voyage is NOT a single day or a single cell! A complete voyage is the entire round-trip circuit down that ship's column:
-  1. Starts with departure from Kochi (e.g. "KOCHI Dept.1430").
-  2. Visits islands on intermediate days with arrival/departure timings (e.g. "KVT AGT 0800-1100. 1400-1600").
-  3. Concludes with arrival back at Kochi (e.g. "KOCHI Arr.0700").
-  WHEN ASKED ABOUT A SPECIFIC VOYAGE (e.g. "What is voyage on 27 october of Lakshadweep sea"):
-  * Look under the ship's timeline under "=== EXTRACTED VOYAGE TIMELINES PER VESSEL ===" for that specific vessel!
-  * NEVER combine text from adjacent columns on the same row! For example, on 27/10/26 MV L/Sea departs Kochi, and its next stops down its own column are KLT CHT (28/10) and BTR CHT KLT (29/10) returning 30/10. It does NOT go to Agatti (Agatti on 27/10 is in MV Lagoons's column)!
-  * ALWAYS output the FULL COMPLETE VOYAGE: from Kochi departure, through all island stops with times, until the ship arrives back at Kochi!
-  * List every leg of that voyage chronologically:
-    1. 27/10/26 · M V / L SEA · KOCHI Dept.1430
-    2. 28/10/26 · M V / L SEA · KLT CHT 0800-1100. 1400-1700
-    3. 29/10/26 · M V / L SEA · BTR CHT KLT 0700-0830 1100-1330 1530-1430
-    4. 30/10/26 · M V / L SEA · KOCHI Arr.0700
+FOLLOWING ON — when a conversation is given, the question may lean on it:
+- "and the month before?", "show all", "how many days?", "and the return?" mean
+  the earlier question again with one thing changed. Work out the full question
+  first, then answer that one, not the earlier one.
+- Never repeat the previous answer unless it is genuinely the answer to this
+  question too.
+- The recorded sections, not the conversation, remain the only source of fact.
 
-- LISTING MULTIPLE VOYAGES ("SHOW ALL VOYAGES FROM X TO Y") (CRITICAL):
-  When asked to list or show all voyages between two places (e.g. "Cok to agt voyages show all", "Show all voyages from koc to amn"):
-  * Search ALL ships across the ENTIRE schedule from the first date to the last date (MV Lagoons, MV A/Sea, M V / L Sea, MV Corals).
-  * Thoroughly identify every single voyage down each ship's column where the origin departs and the vessel calls at the destination!
-  * For example, for Kochi (COK) to Agatti (AGT):
-    - MV Lagoons: Departs Kochi 27/10/26 (TUE) at 14:30 (NOT 26/10/26, which is "####" in port!) -> calls KVT AGT on 28/10/26 -> returns Kochi 29/10/26.
-    - MV A/Sea: Departs Kochi 28/10/26 (WED) at 14:30 -> calls AGT KLP on 30/10/26 -> returns Kochi 31/10/26.
-    - MV A/Sea: Departs Kochi 01/11/26 (SUN) at 12:30 -> calls AGT KVT on 02/11/26 -> returns Kochi 03/11/26.
-    - M V / L Sea: Departs Kochi 03/11/26 (TUE) at 14:30 -> calls KVT AGT on 04/11/26 -> returns Kochi 05/11/26.
-    - MV Corals: Departs Kochi 05/11/26 (THU) at 14:30 -> calls KVT AGT on 06/11/26 -> returns Kochi 07/11/26.
-  * Number each item in the items array as ONE COMPLETE VOYAGE (1, 2, 3...):
-    1. 27/10/26 to 29/10/26 · MV LAGOONS · KOCHI Dept. 1430 (27/10) → KVT AGT (28/10) → KOCHI Arr. 0700 (29/10)
-    2. 28/10/26 to 31/10/26 · MV A/SEA · KOCHI Dept. 1430 (28/10) → AGT KLP (30/10) → KOCHI Arr. 0700 (31/10)
-    3. 01/11/26 to 03/11/26 · MV A/SEA · KOCHI Dept. 1230 (01/11) → AGT KVT (02/11) → KOCHI Arr. 0700 (03/11)
-    4. 03/11/26 to 05/11/26 · M V / L SEA · KOCHI Dept. 1430 (03/11) → KVT AGT (04/11) → KOCHI Arr. 0700 (05/11)
-    5. 05/11/26 to 07/11/26 · MV CORALS · KOCHI Dept. 1430 (05/11) → KVT AGT (06/11) → KOCHI Arr. 0700 (07/11)
-  * Headline should be the total count of voyages found (e.g. "5 voyages").
-
-- CURRENT SHIP LOCATION & "WHERE IS THE SHIP NOW" (CRITICAL):
-  When asked "Where is [ship] now?" or "Where are they currently?":
-  * Check "Current local time" (both the DATE and the CURRENT TIME):
-  * Check TELEGRAM live messages and document schedule together!
-  * If a vessel DEPARTED earlier today/yesterday and has an ETA in the future (e.g. departed Kochi at 14:45 with ETA Kiltan tomorrow 26/10 at 07:00):
-    - The vessel is CURRENTLY AT SEA / EN ROUTE! It has NOT reached the island yet!
-    - Headline MUST be: "En route to [Island]" or "At sea" (NEVER name the future destination island as the current location!).
-    - E.g. MV Arabian Sea departed Kochi on 25/10 at 14:45 heading towards Kiltan with ETA 26/10 07:00 -> Current location is "At sea (en route to Kiltan)".
-  * If the current time is within port hours at an island (e.g. 08:00 - 11:00 or 14:00 - 17:00), the vessel is currently berthed at that specific island port.
-  * If the vessel arrived at Kochi (e.g. KOCHI Arr.0700) and hasn't departed yet, it is at Kochi port.
-  * When asked "Where are they currently?" for all vessels: report the exact current status of all 4 vessels with their specific island/sea location.
-
-- DIRECT AND INDIRECT VOYAGES (CRITICAL):
-  When asked for a voyage from one place to another (e.g. "Next voyage of cok to amn", "cok to agt", "kvt to agt"):
-  * ALWAYS compare departure dates with "Current local time" above! A departure in the past (e.g. 17/10/26 when today is 25/10/26) is in the past and MUST NEVER be listed as the "next" voyage! Only consider departures strictly on or after today.
-  * Direct Voyage: A vessel departing origin and calling at destination on that same voyage.
-    - E.g. For Kochi to Amini (AMN): MV Corals departs Kochi 26/10/26 at 12:30 -> calls at KDM AMN on 27/10/26.
-    - E.g. For Kochi to Agatti (AGT): MV Lagoons departs Kochi 27/10/26 at 14:30 -> calls at KVT AGT on 28/10/26.
-  * Indirect / Connecting Voyage: Traveling via an intermediate hub island or connecting ship.
-  * When answering, clearly show BOTH the direct voyage(s) and any indirect/via options, including all leg dates, ship names, and times.
-
-- RETURN & ROUND-TRIP VOYAGES (CRITICAL):
-  When the user asks for a voyage AND return (e.g. "KVT to AGT then return also", "Kochi to Agatti and return"):
-  * Forward leg: Find the date and ship where origin goes to destination (e.g. on 28/10/26 MV Lagoons calls at "KVT AGT" - departs Kavaratti morning, reaches Agatti afternoon).
-  * Return leg: Search subsequent dates across ALL ships for the reverse call (e.g. "AGT KVT" - departs Agatti, reaches Kavaratti). E.g. on 02/11/26 MV A/SEA has "AGT KVT 0800-1100. 1400-1600", and on 06/11/26 MV CORALS has "KVT AGT 0800-1100. 1400-1600".
-  * List BOTH the forward leg(s) and return leg(s) clearly in the items!
-
-- QUESTIONS ABOUT DOCUMENTS & ATTACHED TELEGRAM FILES (CRITICAL):
-  * When asked about the content, cargo breakdown, or equipment list of an attached document (e.g. "Cargo details of arabian sea", "Show data of cargo", "Can show eq list of corals"):
-  * If the inner itemized data is recorded in the context, output the full breakdown!
-  * If the document is an attached PDF on Telegram whose raw itemized rows are not embedded in the message text:
-    - Clearly explain: "The full itemized list for [vessel/topic] on [date] is contained in the attached PDF document ('[filename]') posted on Telegram by LakShip."
-    - State all facts available from the message (vessel, date, category, port).
-    - Inform the user: "You can tap the attached Telegram document link below to open the official PDF in Telegram, or upload this PDF file into the PERAI Documents tab for complete text and table analysis."
-    - Never answer with just a bare filename.
-
-- VOYAGE DURATION & "HOW MANY DAYS":
-  When asked "How many days?", "How long?", "Duration":
-  * Calculate the calendar days from the departure date to the return date (e.g. Departure 27/10/26, return 29/10/26 = 3 days / 2 nights).
-  * Set headline to the duration (e.g. "3 days") and answer explaining the departure date, intermediate dates, and arrival date.
-
-- CONVERSATIONAL FOLLOW-UPS:
-  Questions like "Show all", "How many days?", "And return?", "What about next week?" refer to the ship/topic discussed in previous turns. Use the document context already present to provide the full answer.
-
-LANGUAGE:
-- Answer in the same language and script the question used. A question in Malayalam script is answered in Malayalam script; Manglish in Manglish; English in English. Dates, amounts, and names stay exactly as recorded.`;
+LANGUAGE — answer in the same language and script the question used. A question
+in Malayalam script is answered in Malayalam script; one in romanised Malayalam
+(Manglish) is answered the same way; an English question in English. Dates,
+amounts and names stay exactly as they are recorded. The citation rules do not
+change.`;
 
 export async function askAIEnhanced(
   question: string,
@@ -215,6 +214,39 @@ export async function askAIEnhanced(
   const timeHeader = `Current local time: ${localTimestamp(nowISO)} (${weekday})`;
 
   const searchQuery = conversationQuery(trimmed, history);
+
+  // "Which games are still to play" is a question about rows, not prose: the
+  // phone answers it exactly and at once, where a model takes seconds, spends
+  // quota, and can quietly leave one out or count a finished entry among the
+  // pending ones. This is the same fast path the single-source ask has always
+  // had; routing every question through the model lost it.
+  if (allMemories.length > 0) {
+    const dated = guessDateRange(searchQuery, now) !== null;
+    const asList = listQuestion(searchQuery, dated);
+    if (asList) {
+      const counted = answerFromList(asList, allMemories);
+      return {
+        answer: counted.answer,
+        items: counted.items,
+        itemStatuses: counted.items.map(() => ({ verified: true })),
+        headline: counted.headline,
+        evidence: counted.entries.map((entry, index) => ({
+          refId: `M${index}`,
+          type: 'memory' as const,
+          id: entry.id,
+          title: entry.title,
+          subtitle: formatToIST(entry.eventDate),
+          sourceKind: 'memory' as const,
+          badgeLabel: '🧠 Memory',
+          content: entry.rawInput,
+          metadata: { category: entry.category, type: entry.type },
+        })),
+        sourcesUsed: counted.entries.length > 0 ? ['memory'] : [],
+        found: counted.entries.length > 0,
+      };
+    }
+  }
+
   const retrieval = await retrieveRelevantContent(searchQuery, nowISO, allMemories);
   const context = buildUnifiedContext(retrieval, expenseContext, trimmed);
 
@@ -238,32 +270,43 @@ export async function askAIEnhanced(
       schema: ENHANCED_ANSWER_SCHEMA,
     });
 
-    const reply = JSON.parse(raw || '{}');
+    // A reply can come back fenced in ``` or with a stray prefix even under a
+    // schema. JSON.parse threw on those and took the whole question down with
+    // it, so it is read the same forgiving way the single-source path reads it.
+    const reply = (looseJsonParse(raw || '{}') ?? {}) as {
+      found?: unknown;
+      answer?: unknown;
+      headline?: unknown;
+      items?: unknown;
+      usedSourceIds?: unknown;
+      sourcesUsed?: unknown;
+    };
     const allEvidence = formatEvidence(retrieval);
 
-    const usedIds = new Set(reply.usedSourceIds || []);
+    const usedIds = new Set(Array.isArray(reply.usedSourceIds) ? reply.usedSourceIds : []);
     let citedEvidence = allEvidence.filter((e) => usedIds.has(e.refId));
 
-    let sourcesUsed: Array<'memory' | 'expense' | 'document' | 'website' | 'telegram'> = Array.isArray(
-      reply.sourcesUsed
-    )
-      ? reply.sourcesUsed
-      : [];
+    const SOURCE_TYPES = ['memory', 'expense', 'document', 'website', 'telegram'] as const;
+    type SourceType = (typeof SOURCE_TYPES)[number];
+    const sourcesUsed: SourceType[] = (Array.isArray(reply.sourcesUsed) ? reply.sourcesUsed : []).filter(
+      (s): s is SourceType => SOURCE_TYPES.includes(s as SourceType)
+    );
 
-    // Fallback: If model found the answer from context but omitted explicit reference IDs
-    // (very common in follow-up questions like "Show all", "How many days?", "And return?"),
-    // preserve the retrieved document evidence so valid answers are never wiped out.
-    if (reply.found && citedEvidence.length === 0 && allEvidence.length > 0) {
-      citedEvidence = allEvidence.slice(0, 3);
-      for (const e of citedEvidence) {
-        if (!sourcesUsed.includes(e.type)) {
-          sourcesUsed.push(e.type);
-        }
-      }
+    // A follow-up ("Show all", "And return?", "How many days?") often answers
+    // from context without repeating the reference ids. Rather than guess, fall
+    // back to the sources the model did name, so the evidence shown is at least
+    // of the right kind. The old fallback attached the top three retrieved items
+    // whatever they were, which put unrelated cards under the answer and made a
+    // wrong answer look sourced.
+    if (reply.found === true && citedEvidence.length === 0 && sourcesUsed.length > 0) {
+      citedEvidence = allEvidence.filter((e) => sourcesUsed.includes(e.type)).slice(0, 5);
     }
 
     const isExpenseUsed = sourcesUsed.includes('expense');
-    const found = Boolean(reply.found) && (citedEvidence.length > 0 || isExpenseUsed || allEvidence.length > 0);
+    // Grounding, not mere retrieval: "something was retrieved" is not evidence
+    // that the answer came from it, and treating it as such let every
+    // ungrounded answer through as found.
+    const found = reply.found === true && (citedEvidence.length > 0 || isExpenseUsed);
 
     const items = Array.isArray(reply.items)
       ? reply.items
@@ -279,10 +322,16 @@ export async function askAIEnhanced(
 
     const itemStatuses = found ? items.map((item: string) => verifyItemGrounding(item, context)) : [];
 
+    const spoken = typeof reply.answer === 'string' && reply.answer.trim().length > 0 ? reply.answer.trim() : null;
+
     return {
       answer: found
-        ? (reply.answer || 'Found relevant records.')
-        : (reply.answer || 'Nothing in your record matches this.'),
+        ? (spoken ?? 'Found relevant records.')
+        : reply.found === true
+          ? // It claims an answer but cannot point at what it came from, which is
+            // exactly the ungrounded output this app must not present as fact.
+            "Found something, but couldn't tie it back to a specific record."
+          : (spoken ?? 'Nothing in your record matches this.'),
       items: found ? items : [],
       itemStatuses: found ? itemStatuses : [],
       headline: found ? headline : null,

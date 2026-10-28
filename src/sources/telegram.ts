@@ -5,6 +5,7 @@ import { getSourcesDb, uuid } from './client';
 import { getClient, EXTRACT_MODEL, hasApiKey } from '@/ai/client';
 import { currentUserId, getSupabase, isConfigured } from '@/sync/client';
 import { getTelegramBridgeUrl } from '@/settings';
+import { tokenize } from '@/ai/retrieval';
 
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
@@ -1425,25 +1426,29 @@ const ISLAND_PORT_ALIASES: Record<string, string[]> = {
   kochi: ['cochin'],
 };
 
+/**
+ * Find the stored messages worth putting in front of the model.
+ *
+ * Matching used to be an OR over every word of the question, so "the" or "and"
+ * matched every message in the channel and the newest twenty came back
+ * whatever they were about. Each message is now scored by how many distinct
+ * search terms it contains, and only the messages that come close to the best
+ * match are kept.
+ */
 export async function searchTelegramMessages(query: string, limit = 50): Promise<TelegramMessage[]> {
   const db = await getSourcesDb();
-  const rawWords = query.toLowerCase().split(/\s+/).filter(w => w.length >= 2);
-  const keywordsSet = new Set<string>();
-
-  for (const w of rawWords) {
-    if (w.length > 2) keywordsSet.add(w);
-    if (w === 'shiip') keywordsSet.add('ship');
-    const aliases = ISLAND_PORT_ALIASES[w];
-    if (aliases) {
-      aliases.forEach(a => keywordsSet.add(a));
-    }
+  const keywords = new Set<string>();
+  for (const word of tokenize(query)) {
+    keywords.add(word);
+    const aliases = ISLAND_PORT_ALIASES[word];
+    if (aliases) aliases.forEach((alias) => keywords.add(alias));
   }
 
-  const keywords = Array.from(keywordsSet);
-  if (keywords.length === 0) return [];
+  const terms = [...keywords];
+  if (terms.length === 0) return [];
 
-  const conditions = keywords.map(() => 'LOWER(message_text) LIKE ?').join(' OR ');
-  const params = keywords.map(k => `%${k}%`);
+  const score = terms.map(() => 'CASE WHEN LOWER(message_text) LIKE ? THEN 1 ELSE 0 END').join(' + ');
+  const params = terms.map((k) => `%${k}%`);
 
   const rows = await db.getAllAsync<{
     id: string;
@@ -1456,16 +1461,27 @@ export async function searchTelegramMessages(query: string, limit = 50): Promise
     media_type: string;
     media_path: string | null;
     synced_at: string;
+    hits: number;
   }>(
-    `SELECT id, channel_id, channel_name, message_id, message_text, message_date, sender_name, media_type, media_path, synced_at
+    `SELECT id, channel_id, channel_name, message_id, message_text, message_date, sender_name, media_type, media_path, synced_at, (${score}) AS hits
      FROM telegram_messages
-     WHERE deleted = 0 AND (${conditions})
-     ORDER BY message_date DESC
+     WHERE deleted = 0 AND (${score}) > 0
+     ORDER BY hits DESC, message_date DESC
      LIMIT ?`,
-    [...params, limit]
+    [...params, ...params, Math.max(limit * 3, limit)]
   );
 
-  return rows.map(row => ({
+  if (rows.length === 0) return [];
+
+  const best = rows[0].hits;
+  const threshold = Math.max(1, Math.ceil(best / 2));
+  const kept = rows.filter((row) => row.hits >= threshold).slice(0, limit);
+
+  // Back in date order once the weak matches are out, so a schedule reads
+  // forwards rather than by how well each line scored.
+  kept.sort((a, b) => b.message_date.localeCompare(a.message_date));
+
+  return kept.map(row => ({
     id: row.id,
     channelId: row.channel_id,
     channelName: row.channel_name,

@@ -53,6 +53,92 @@ export interface DateRange {
   label: string;
 }
 
+const MONTHS = [
+  'january', 'february', 'march', 'april', 'may', 'june',
+  'july', 'august', 'september', 'october', 'november', 'december',
+];
+
+/** Monday of the week `d` falls in. */
+function startOfWeek(d: Date): Date {
+  const monday = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  // getDay() is 0 for Sunday, which belongs to the week that began six days ago.
+  const shift = (monday.getDay() + 6) % 7;
+  monday.setDate(monday.getDate() - shift);
+  return monday;
+}
+
+const MONTH_PATTERN = new RegExp(
+  `\\b(${MONTHS.map((m) => `${m.slice(0, 3)}(?:${m.slice(3)})?`).join('|')})\\.?\\s*(\\d{4})?\\b`
+);
+
+/**
+ * "in March", "June 2025", "last december".
+ *
+ * A bare month name with no year means the most recent time that month
+ * happened: asked in October, "in December" is last December, not the one
+ * still to come, because the record only ever holds the past.
+ */
+function matchMonth(q: string, now: Date): DateRange | null {
+  const found = q.match(MONTH_PATTERN);
+  if (!found) return null;
+
+  // "may" is also an ordinary English verb ("how much may I spend"), so it
+  // only counts as a month when a year or a date-ish word sits beside it.
+  const name = found[1];
+  if (name.startsWith('may') && !found[2] && !/\b(?:in|during|of|for|last|this)\s+may\b/.test(q)) {
+    return null;
+  }
+
+  const index = MONTHS.findIndex((month) => month.startsWith(name.slice(0, 3)));
+  if (index === -1) return null;
+
+  const year = found[2]
+    ? Number(found[2])
+    : index <= now.getMonth()
+      ? now.getFullYear()
+      : now.getFullYear() - 1;
+
+  const label = `${MONTHS[index][0].toUpperCase()}${MONTHS[index].slice(1)} ${year}`;
+  return {
+    from: new Date(year, index, 1),
+    // Day 0 of the next month is the last day of this one.
+    to: new Date(year, index + 1, 0, 23, 59, 59, 999),
+    label,
+  };
+}
+
+const YEAR_BEFORE = /\b(?:in|during|of|for|from|since|on|year|through|till|until|between|and|before|after)$/;
+const YEAR_AFTER = /^(?:spending|spend|spent|expenses?|total|totals|summary|budget|income|memories|notes|onwards)\b/;
+const MONEY_BEFORE = /(?:₹|\$|rs\.?|inr|usd|aed|eur|about|around|nearly|roughly|only|just)$/;
+const MONEY_AFTER = /^(?:rupees?|rs\.?|inr|bucks|dollars?|usd|aed|eur|each|per|only|worth)\b/;
+
+/**
+ * A four-digit number in a question is a year far less often than it is an
+ * amount: "did I spend 2000 last month" used to be read as the whole of the
+ * year 2000, which searched an empty window and answered "nothing recorded".
+ *
+ * So a year has to look like one: inside a plausible range, introduced by a
+ * word that frames a year, and not sitting next to money.
+ */
+function matchYear(q: string, now: Date): number | null {
+  const pattern = /\b(\d{4})\b/g;
+  const earliest = 1990;
+  const latest = now.getFullYear() + 5;
+
+  for (let found = pattern.exec(q); found; found = pattern.exec(q)) {
+    const year = Number(found[1]);
+    if (year < earliest || year > latest) continue;
+
+    const before = q.slice(0, found.index).trimEnd();
+    const after = q.slice(found.index + found[1].length).trimStart();
+    if (MONEY_BEFORE.test(before) || MONEY_AFTER.test(after)) continue;
+    if (YEAR_BEFORE.test(before) || YEAR_AFTER.test(after)) return year;
+    // A question that is nothing but the year ("2024?") is about the year.
+    if (before === '' && after.replace(/[^a-z0-9]/g, '') === '') return year;
+  }
+  return null;
+}
+
 /**
  * Detect a time window named in the question. Returns null when the question
  * names no period, in which case the whole timeline stays eligible.
@@ -62,13 +148,17 @@ export function guessDateRange(question: string, now: Date): DateRange | null {
   const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
   const endOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
 
-  const explicitYear = q.match(/\b(19|20)\d{2}\b/);
-  if (explicitYear) {
-    const year = Number(explicitYear[0]);
+  // A named month, with or without a year: "in March", "June 2025". Checked
+  // before the bare-year rule so "March 2026" is read as the month, not 2026.
+  const namedMonth = matchMonth(q, now);
+  if (namedMonth) return namedMonth;
+
+  const explicitYear = matchYear(q, now);
+  if (explicitYear !== null) {
     return {
-      from: new Date(year, 0, 1),
-      to: new Date(year, 11, 31, 23, 59, 59, 999),
-      label: String(year),
+      from: new Date(explicitYear, 0, 1),
+      to: new Date(explicitYear, 11, 31, 23, 59, 59, 999),
+      label: String(explicitYear),
     };
   }
 
@@ -93,11 +183,20 @@ export function guessDateRange(question: string, now: Date): DateRange | null {
     return { from: startOfDay(y), to: endOfDay(y), label: 'yesterday' };
   }
 
-  if (/\b(this|last)\s+week\b/.test(q)) {
-    const weeks = q.includes('last week') ? 2 : 1;
-    const from = new Date(now);
-    from.setDate(from.getDate() - 7 * weeks);
-    return { from: startOfDay(from), to: endOfDay(now), label: q.includes('last week') ? 'last week' : 'this week' };
+  // Calendar weeks, Monday-based. "Last week" is the week that has finished,
+  // not the last fourteen days: the old window folded this week's entries into
+  // every "what did I spend last week" answer and inflated the total.
+  if (/\b(?:last|past|previous)\s+week\b/.test(q)) {
+    const monday = startOfWeek(now);
+    const from = new Date(monday);
+    from.setDate(from.getDate() - 7);
+    const to = new Date(monday);
+    to.setDate(to.getDate() - 1);
+    return { from: startOfDay(from), to: endOfDay(to), label: 'last week' };
+  }
+
+  if (/\bthis\s+week\b/.test(q)) {
+    return { from: startOfDay(startOfWeek(now)), to: endOfDay(now), label: 'this week' };
   }
 
   if (/\bthis\s+month\b/.test(q)) {
@@ -172,6 +271,13 @@ export interface RetrievalResult {
   range: DateRange | null;
   /** True when at least one memory matched on keywords rather than recency. */
   hadKeywordMatch: boolean;
+  /**
+   * How many memories were eligible before `limit` was applied.
+   *
+   * A total worked out from a slice of a period is simply wrong, so the caller
+   * has to be able to tell the model when it is not seeing everything.
+   */
+  poolSize: number;
 }
 
 /**
@@ -251,5 +357,6 @@ export function selectRelevantMemories(
     memories: scored.slice(0, limit).map((entry) => entry.memory),
     range,
     hadKeywordMatch,
+    poolSize: candidates.length,
   };
 }

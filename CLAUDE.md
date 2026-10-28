@@ -132,36 +132,14 @@ A comprehensive multi-source data integration system that enhances the existing 
 - [x] List views for all source types
 - [x] Delete/refresh actions
 
-### 🚧 PHASE 8: Text Extraction (MISSING)
-**Status: NOT STARTED - This is the immediate blocker**
+### ✅ PHASE 8: Text Extraction (COMPLETED)
+- [x] `src/sources/extractors.ts` implements `extractText(fileUri, fileType)`
+- [x] TXT read directly, PDF/DOCX via the text extractor, images via Gemini OCR
 
-Missing file: `src/sources/extractors.ts`
-
-This file is imported by `documents.ts` but doesn't exist yet. It needs to implement:
-
-```typescript
-export async function extractText(
-  fileUri: string, 
-  fileType: 'pdf' | 'docx' | 'txt' | 'image' | 'other'
-): Promise<string>
-```
-
-**Requirements:**
-- TXT files: Direct read with FileSystem
-- PDF files: expo-pdf or similar (or skip for MVP)
-- DOCX files: Complex format (skip for MVP or use external service)
-- Images: OCR via existing Gemini integration (reuse receipt OCR logic)
-- Other: Return empty string or throw error
-
-### 🔲 PHASE 9: Integration & Testing (PENDING)
-- [ ] Initialize sources DB in app startup
-- [ ] Add Data Sources link to More tab
-- [ ] Integrate askEnhanced into existing Ask tab
-- [ ] Test document upload flow
-- [ ] Test website scraping
-- [ ] Test Telegram integration
-- [ ] Test multi-source queries
-- [ ] Error handling and edge cases
+### ✅ PHASE 9: Integration (COMPLETED)
+- [x] Sources DB initialised in app startup (`app/_layout.tsx`)
+- [x] Data Sources screen reachable from More
+- [x] `askAIEnhanced` wired into the Ask tab
 
 ### 🔲 PHASE 10: Polish & Optimization (PENDING)
 - [ ] Loading states for long operations
@@ -175,17 +153,36 @@ export async function extractText(
 
 ## Current Branch
 
-`claude/perai-expo-ota-update-5muwbn`
+`master`
+
+## Answer Accuracy — rules to keep
+
+The Ask tab answers from records, so the ways it can be wrong are specific.
+These were each the cause of a real wrong answer; do not undo them.
+
+1. **Never put worked examples with concrete data in a prompt.** The enhanced
+   prompt once carried sample voyages with real-looking dates. The model
+   recited one of them — "01/11/2026, MV Arabian Sea" — as a fact about a
+   schedule that said no such thing. Rules in prompts, never facts.
+2. **The model must not do arithmetic over a list if the app can do it first.**
+   Totals per month, per category and per place are worked out in
+   `buildChatContext` so an answer is a lookup. Asked to add rows up itself it
+   used the pre-refund column and dropped entries, and gave a different total
+   each time the same question was asked.
+3. **`spent` is net of refunds and paybacks; `billedAmount` is not a total.**
+   A ticket bought for someone who paid it back is ₹0 of spending.
+4. **Memories are rendered by `renderMemory`,** which includes whether an entry
+   is still to do or done. A short rendering that drops it makes every
+   "what's still left" question wrong.
+5. **Retrieval must rank.** Document, website and Telegram search score by how
+   many distinct search terms match, and drop sources well below the best
+   match. An unranked OR over every word matched "the" in every document.
+6. **An answer is only `found` when it is traceable** to a cited source or to
+   the expense block. Something merely being retrieved is not evidence.
 
 ## What's Not Done
 
-1. **Text Extractors** - Critical blocker, file doesn't exist
-2. **App Integration** - Sources DB not initialized in app startup
-3. **UI Navigation** - Data Sources screen not linked from More tab
-4. **Ask Tab Integration** - askEnhanced not wired up to replace existing ask
-5. **Testing** - No end-to-end testing of the full flow
-6. **Error Handling** - Minimal error handling in place
-
-## Next Immediate Steps
-
-**START WITH PHASE 8** - Create the missing extractors file. This is the blocker preventing documents from working.
+1. **Testing** - `scripts/test-ai.ts` covers the single-source `askAI` only;
+   the multi-source path cannot be imported under plain Node, so it is checked
+   by hand against the live API.
+2. **Error Handling** - thin in places outside the Ask flow.

@@ -8,6 +8,12 @@ import { getSourcesDb, uuid } from './client';
 import { extractText } from './extractors';
 import { containsMarkdownTable, extractAllTables, findShipColumn, extractShipVoyage, findPortInShipVoyage, findNextVoyageFromPort, type ParsedTable, type TableColumn } from './tableParser';
 import { currentUserId, getSupabase, isConfigured } from '@/sync/client';
+import { tokenize } from '@/ai/retrieval';
+
+/** How many documents may be drawn on for one question. */
+const MAX_DOCUMENTS_IN_CONTEXT = 3;
+/** Up to this many chunks, a document is short enough to send whole. */
+const SMALL_DOCUMENT_CHUNKS = 25;
 
 export interface Document {
   id: string;
@@ -548,65 +554,97 @@ const ISLAND_PORT_ALIASES: Record<string, string[]> = {
   ships: ['ship', 'mv', 'vessel'],
 };
 
+/**
+ * Question words that match almost every document and so tell us nothing about
+ * which one is wanted. Without this, "the" and "and" matched every chunk ever
+ * stored and the search came back with whatever the database happened to
+ * return first.
+ */
+const SEARCH_NOISE = new Set([
+  'show', 'tell', 'give', 'find', 'need', 'want', 'know', 'please', 'also',
+  'next', 'now', 'today', 'there', 'any', 'all', 'some', 'more', 'other',
+  'data', 'details', 'detail', 'info', 'information', 'list', 'see',
+]);
+
+/** The words worth searching for, with island and port aliases folded in. */
+function searchTerms(query: string): string[] {
+  const terms = new Set<string>();
+  for (const word of tokenize(query)) {
+    if (SEARCH_NOISE.has(word)) continue;
+    terms.add(word);
+    const aliases = ISLAND_PORT_ALIASES[word];
+    if (aliases) aliases.forEach((alias) => terms.add(alias));
+  }
+  return [...terms];
+}
+
+/**
+ * Find the stored chunks worth putting in front of the model.
+ *
+ * Matching used to be an OR over every word of the question with no ranking at
+ * all, so a document that merely contained "the" ranked level with the one
+ * that actually answered the question, and whichever the database returned
+ * first was the one quoted. On top of that, any matched PDF had every one of
+ * its chunks added, so unrelated documents arrived whole and buried the
+ * relevant one.
+ *
+ * Now each chunk is scored by how many distinct search terms it contains,
+ * documents are kept only if they come close to the best match, and the whole
+ * result is capped.
+ */
 export async function searchDocumentChunks(query: string, limit = 50): Promise<DocumentChunk[]> {
   const db = await getSourcesDb();
-  const rawWords = query.toLowerCase().split(/\s+/).filter(w => w.length >= 2);
-  const keywordsSet = new Set<string>();
-
-  for (const w of rawWords) {
-    if (w.length > 2) keywordsSet.add(w);
-    if (w === 'mv') keywordsSet.add('mv');
-    if (w === 'shiip') keywordsSet.add('ship');
-    const aliases = ISLAND_PORT_ALIASES[w];
-    if (aliases) {
-      aliases.forEach(a => keywordsSet.add(a));
-    }
-  }
-
-  const keywords = Array.from(keywordsSet);
+  const keywords = searchTerms(query);
   if (keywords.length === 0) return [];
 
-  // Simple keyword matching - could be enhanced with FTS5 or embeddings
-  const conditions = keywords.map(() => 'LOWER(content) LIKE ?').join(' OR ');
-  const params = keywords.map(k => `%${k}%`);
+  // How many of the search terms each chunk contains.
+  const score = keywords.map(() => 'CASE WHEN LOWER(c.content) LIKE ? THEN 1 ELSE 0 END').join(' + ');
+  const params = keywords.map((k) => `%${k}%`);
 
-  // Find matched chunks and their document metadata
-  const rows = await db.getAllAsync<{
-    id: string;
+  const matches = await db.getAllAsync<{
     document_id: string;
     chunk_index: number;
-    filename: string;
     chunk_count: number;
+    hits: number;
   }>(
-    `SELECT c.id, c.document_id, c.chunk_index, d.filename, d.chunk_count
+    `SELECT c.document_id, c.chunk_index, d.chunk_count, (${score}) AS hits
      FROM document_chunks c
      JOIN documents d ON c.document_id = d.id
-     WHERE d.deleted = 0 AND d.processed = 1 AND (${conditions})
-     LIMIT ?`,
-    [...params, limit]
+     WHERE d.deleted = 0 AND d.processed = 1 AND (${score}) > 0
+     ORDER BY hits DESC
+     LIMIT 400`,
+    [...params, ...params]
   );
 
-  if (rows.length === 0) return [];
+  if (matches.length === 0) return [];
 
-  // Group matched document IDs and the specific indices that matched
-  const matchedDocs = new Map<string, { chunkCount: number; matchedIndices: Set<number> }>();
-  for (const r of rows) {
-    if (!matchedDocs.has(r.document_id)) {
-      matchedDocs.set(r.document_id, {
-        chunkCount: r.chunk_count || 1,
-        matchedIndices: new Set(),
-      });
-    }
-    matchedDocs.get(r.document_id)!.matchedIndices.add(r.chunk_index);
+  const perDoc = new Map<string, { chunkCount: number; best: number; matched: Set<number> }>();
+  for (const row of matches) {
+    const entry = perDoc.get(row.document_id) ?? {
+      chunkCount: row.chunk_count || 1,
+      best: 0,
+      matched: new Set<number>(),
+    };
+    entry.best = Math.max(entry.best, row.hits);
+    entry.matched.add(row.chunk_index);
+    perDoc.set(row.document_id, entry);
   }
 
-  // Retrieve sequential context: for documents with <= 12 chunks (schedules, notices, letters),
-  // retrieve all chunks in order so tables across page breaks remain whole!
-  // For large documents, retrieve the matched chunk plus adjacent preceding and succeeding chunks.
-  const allDocIds = Array.from(matchedDocs.keys());
-  const docPlaceholders = allDocIds.map(() => '?').join(',');
+  // Keep only documents that come close to the best match in the set. A
+  // document that hits one term out of six is not what was asked about, and
+  // citing it is worse than citing nothing.
+  const bestOverall = Math.max(...[...perDoc.values()].map((d) => d.best));
+  const threshold = Math.max(1, Math.ceil(bestOverall / 2));
+  const chosen = [...perDoc.entries()]
+    .filter(([, d]) => d.best >= threshold)
+    .sort((a, b) => b[1].best - a[1].best)
+    .slice(0, MAX_DOCUMENTS_IN_CONTEXT);
 
-  const allCandidateChunks = await db.getAllAsync<{
+  if (chosen.length === 0) return [];
+
+  const docIds = chosen.map(([id]) => id);
+  const placeholders = docIds.map(() => '?').join(',');
+  const all = await db.getAllAsync<{
     id: string;
     document_id: string;
     chunk_index: number;
@@ -618,67 +656,35 @@ export async function searchDocumentChunks(query: string, limit = 50): Promise<D
     `SELECT c.id, c.document_id, c.chunk_index, c.content, c.page_number, c.created_at, d.filename
      FROM document_chunks c
      JOIN documents d ON c.document_id = d.id
-     WHERE c.document_id IN (${docPlaceholders}) AND d.deleted = 0
+     WHERE c.document_id IN (${placeholders}) AND d.deleted = 0
      ORDER BY c.document_id, c.chunk_index ASC`,
-    allDocIds
+    docIds
   );
 
-  const finalChunks: typeof allCandidateChunks = [];
-  for (const c of allCandidateChunks) {
-    const meta = matchedDocs.get(c.document_id);
-    if (!meta) continue;
-    if (meta.chunkCount <= 25) {
-      finalChunks.push(c);
-    } else {
-      const isNearMatch = Array.from(meta.matchedIndices).some(
-        (mIdx) => Math.abs(mIdx - c.chunk_index) <= 1
-      );
-      if (isNearMatch) {
-        finalChunks.push(c);
-      }
-    }
+  const byDoc = new Map<string, typeof all>();
+  for (const chunk of all) {
+    const list = byDoc.get(chunk.document_id) ?? [];
+    list.push(chunk);
+    byDoc.set(chunk.document_id, list);
   }
 
-  // For table-based documents (schedules), also gather chunks from the same document
-  // that contain ship names or port codes to enable column-wise voyage lookup
-  for (const docId of allDocIds) {
-    const doc = await db.getFirstAsync<{ filename: string; file_type: string }>(
-      'SELECT filename, file_type FROM documents WHERE id = ?',
-      [docId]
-    );
-
-    if (doc?.file_type === 'pdf') {
-      // For PDF documents, retrieve all chunks to enable column-wise search
-      const pdfChunks = await db.getAllAsync<{
-        id: string;
-        document_id: string;
-        chunk_index: number;
-        content: string;
-        page_number: number | null;
-        created_at: string;
-        filename: string;
-      }>(
-        `SELECT c.id, c.document_id, c.chunk_index, c.content, c.page_number, c.created_at, d.filename
-         FROM document_chunks c
-         JOIN documents d ON c.document_id = d.id
-         WHERE c.document_id = ? AND d.deleted = 0
-         ORDER BY c.chunk_index ASC`,
-        [docId]
-      );
-
-      // Add chunks from this document that weren't already included
-      for (const c of pdfChunks) {
-        if (!finalChunks.some(f => f.id === c.id)) {
-          finalChunks.push(c);
-        }
-      }
+  const picked: typeof all = [];
+  for (const [docId, meta] of chosen) {
+    const chunks = byDoc.get(docId) ?? [];
+    // A short document — a schedule, a notice, a letter — goes in whole, so a
+    // table that runs over a page break stays readable. A long one contributes
+    // the chunks that matched plus their immediate neighbours.
+    const whole = meta.chunkCount <= SMALL_DOCUMENT_CHUNKS;
+    for (const chunk of chunks) {
+      if (picked.length >= limit) break;
+      const near =
+        whole || [...meta.matched].some((index) => Math.abs(index - chunk.chunk_index) <= 1);
+      if (near) picked.push(chunk);
     }
+    if (picked.length >= limit) break;
   }
 
-  // Deduplicate by id
-  const uniqueChunks = finalChunks.filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i);
-
-  return uniqueChunks.map((row) => ({
+  return picked.map((row) => ({
     id: row.id,
     documentId: row.document_id,
     chunkIndex: row.chunk_index,

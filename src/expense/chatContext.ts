@@ -1,7 +1,7 @@
 import { listAccounts } from './accountsDb';
 import { listExpenses, listIncome, type ExpenseRow, type IncomeRow } from './db';
 import { addDays, monthRange, todayStr } from './dates';
-import { byCategory, sum } from './stats';
+import { byCategory, net, sum } from './stats';
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -55,9 +55,16 @@ export async function buildChatContext(currency: string, budget: number) {
   // Every field worth asking about — not just the handful the model used to
   // see — so "any refunded?" or "for whom" or "which bank" can be answered
   // straight from this snapshot instead of coming back empty.
+  //
+  // `spent` comes first and is the net figure, because that is the one almost
+  // every question means. When both were offered as `amount` and `netAmount`,
+  // answers were added up from `amount` and counted money that had been
+  // refunded or paid back — a ticket bought for someone else and settled in
+  // full still showed as spending.
   const line = (r: ExpenseRow) => ({
     date: r.date,
-    amount: r.amount,
+    spent: r2(net(r)),
+    billedAmount: r2(net(r)) === r2(r.amount) ? null : r.amount,
     category: r.cat_name,
     subCategory: r.sub_category || null,
     note: r.note || null,
@@ -76,7 +83,6 @@ export async function buildChatContext(currency: string, budget: number) {
     reimbursed: r.reimbursed === 1,
     reimburseAmount: r.reimburse_amount ?? null,
     reimburseBank: r.reimburse_account_id ? bankName.get(r.reimburse_account_id) ?? null : null,
-    netAmount: r2(Math.max(0, r.amount - (r.refund_amount ?? 0) - (r.reimburse_amount ?? 0))),
   });
 
   const incomeLine = (r: IncomeRow) => ({
@@ -90,6 +96,34 @@ export async function buildChatContext(currency: string, budget: number) {
     forUser: r.user_tag || null,
     place: r.place || null,
   });
+
+  // Totals per place, and per category within each place.
+  //
+  // "How much were the tickets in Minicoy" used to be answered by the model
+  // picking the Minicoy rows out of the list and adding them up in its head. It
+  // added up the wrong column, dropped rows, and gave a different total every
+  // time it was asked. Every figure it needs is worked out here instead, net of
+  // refunds and paybacks, so the answer is a lookup rather than a sum.
+  const placeTotals = new Map<string, { total: number; count: number; byCategory: Map<string, number> }>();
+  for (const row of all) {
+    const place = (row.place || '').trim();
+    if (!place) continue;
+    const entry = placeTotals.get(place) ?? { total: 0, count: 0, byCategory: new Map<string, number>() };
+    entry.total += net(row);
+    entry.count += 1;
+    entry.byCategory.set(row.cat_name, (entry.byCategory.get(row.cat_name) ?? 0) + net(row));
+    placeTotals.set(place, entry);
+  }
+
+  const byPlace = [...placeTotals.entries()]
+    .sort((a, b) => b[1].total - a[1].total)
+    .slice(0, 40)
+    .map(([place, entry]) => ({
+      place,
+      total: r2(entry.total),
+      count: entry.count,
+      byCategory: Object.fromEntries([...entry.byCategory].map(([name, value]) => [name, r2(value)])),
+    }));
 
   const totalSpent = r2(sum(all));
   const totalIncome = r2(allIncome.reduce((acc, r) => acc + r.amount, 0));
@@ -120,6 +154,9 @@ export async function buildChatContext(currency: string, budget: number) {
       byCategory: Object.fromEntries(byCategory(window(30)).map((c) => [c.name, r2(c.total)])),
     },
     monthlySummaries: months,
+    // Net of refunds and paybacks, over every expense ever recorded, not just
+    // the recent ones listed individually below.
+    byPlace,
     // Most recent individual expenses (older ones are only visible via monthlySummaries).
     recentExpenses: all.slice(0, 150).map(line),
     recentExpensesNote:

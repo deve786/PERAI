@@ -198,7 +198,7 @@ async function translateToKeywords(question: string): Promise<string> {
   }
 }
 
-function looseJsonParse(raw: string): unknown {
+export function looseJsonParse(raw: string): unknown {
   const text = raw.trim();
   const candidates: string[] = [text];
 

@@ -234,6 +234,80 @@ check('returns null with no period', guessDateRange('when did I last cut my hair
   );
 }
 
+section('guessDateRange: a week is a week, not a fortnight');
+{
+  // A fixed Wednesday, so the week boundaries are checkable by hand.
+  const wednesday = new Date(2026, 9, 28, 10, 0, 0);
+  const last = guessDateRange('what did I spend last week', wednesday)!;
+  check(
+    'last week starts on the previous Monday',
+    last.from.getDate() === 19 && last.from.getMonth() === 9,
+    last.from.toDateString()
+  );
+  check(
+    'last week ends on the Sunday before this one',
+    last.to.getDate() === 25 && last.to.getMonth() === 9,
+    last.to.toDateString()
+  );
+  check('last week does not reach into this week', last.to.getTime() < wednesday.getTime());
+
+  const current = guessDateRange('what did I spend this week', wednesday)!;
+  check('this week starts on Monday', current.from.getDate() === 26, current.from.toDateString());
+  check('this week runs to today', current.to.getDate() === 28, current.to.toDateString());
+
+  // Sunday belongs to the week that began on the Monday before it.
+  const sunday = new Date(2026, 10, 1, 10, 0, 0);
+  const sundayWeek = guessDateRange('this week', sunday)!;
+  check(
+    'Sunday still belongs to the week that began on Monday',
+    sundayWeek.from.getMonth() === 9 && sundayWeek.from.getDate() === 26,
+    sundayWeek.from.toDateString()
+  );
+}
+
+section('guessDateRange: an amount is not a year');
+{
+  const now = new Date(2026, 9, 28, 10, 0, 0);
+  check(
+    'a spent amount is not read as a year',
+    guessDateRange('did I spend 2000 on anything last month', now)?.label === 'last month',
+    guessDateRange('did I spend 2000 on anything last month', now)
+  );
+  check(
+    'an amount followed by a currency word is not a year',
+    guessDateRange('did I pay the 1999 rupees bill', now) === null
+  );
+  check(
+    'a four digit number beyond the plausible range is not a year',
+    guessDateRange('show me the 2050 transaction', now) === null
+  );
+  check('a year introduced as one is still a year', guessDateRange('what happened in 2024', now)?.label === '2024');
+  check('a bare year on its own is a year', guessDateRange('2024?', now)?.label === '2024');
+}
+
+section('guessDateRange: named months');
+{
+  const now = new Date(2026, 9, 28, 10, 0, 0); // October 2026
+  const march = guessDateRange('how much in March', now)!;
+  check('a bare month name is recognised', march?.label === 'March 2026', march?.label);
+  check(
+    'the month spans only that month',
+    march.from.getMonth() === 2 && march.to.getMonth() === 2 && march.to.getDate() === 31,
+    `${march.from.toDateString()} -> ${march.to.toDateString()}`
+  );
+
+  const withYear = guessDateRange('how much in March 2026', now)!;
+  check('a month with a year is the month, not the year', withYear?.label === 'March 2026', withYear?.label);
+
+  // Asked in October, "December" can only mean the December that has been.
+  const december = guessDateRange('what did I spend in December', now)!;
+  check('a month still to come means last year', december?.label === 'December 2025', december?.label);
+
+  check('February is matched from its short form', guessDateRange('spending in Feb', now)?.label === 'February 2026');
+  check('"may" alone is not treated as a month', guessDateRange('how much may I spend', now) === null);
+  check('"in May" is treated as a month', guessDateRange('what did I spend in May', now)?.label === 'May 2026');
+}
+
 section('selectRelevantMemories');
 {
   const { memories, hadKeywordMatch } = selectRelevantMemories(

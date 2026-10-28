@@ -2,6 +2,7 @@
  * Website data scraping, multi-page crawling, and management.
  */
 import { getSourcesDb, uuid } from './client';
+import { tokenize } from '@/ai/retrieval';
 import { savePublicTelegramChannel } from './telegram';
 import {
   extractLinksFromHtml,
@@ -394,14 +395,21 @@ export async function clearAllWebsites(): Promise<number> {
   return res.changes;
 }
 
+/**
+ * Find the tracked pages worth putting in front of the model.
+ *
+ * Scored by how many distinct search terms each page contains, rather than
+ * returning any page that happened to contain one common word.
+ */
 export async function searchWebsiteContent(query: string, limit = 10): Promise<WebsiteData[]> {
   const db = await getSourcesDb();
-  const keywords = query.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+  const terms = tokenize(query);
+  if (terms.length === 0) return [];
 
-  if (keywords.length === 0) return [];
-
-  const conditions = keywords.map(() => '(LOWER(content) LIKE ? OR LOWER(title) LIKE ?)').join(' OR ');
-  const params = keywords.flatMap(k => [`%${k}%`, `%${k}%`]);
+  const score = terms
+    .map(() => '(CASE WHEN LOWER(content) LIKE ? THEN 1 ELSE 0 END) + (CASE WHEN LOWER(title) LIKE ? THEN 1 ELSE 0 END)')
+    .join(' + ');
+  const params = terms.flatMap((k) => [`%${k}%`, `%${k}%`]);
 
   const rows = await db.getAllAsync<{
     id: string;
@@ -412,24 +420,33 @@ export async function searchWebsiteContent(query: string, limit = 10): Promise<W
     last_updated: string;
     refresh_interval: number;
     auto_refresh: number;
+    hits: number;
   }>(
-    `SELECT id, url, title, content, scraped_at, last_updated, refresh_interval, auto_refresh
+    `SELECT id, url, title, content, scraped_at, last_updated, refresh_interval, auto_refresh, (${score}) AS hits
      FROM website_data
-     WHERE deleted = 0 AND (${conditions})
+     WHERE deleted = 0 AND (${score}) > 0
+     ORDER BY hits DESC
      LIMIT ?`,
-    [...params, limit]
+    [...params, ...params, limit]
   );
 
-  return rows.map(row => ({
-    id: row.id,
-    url: row.url,
-    title: row.title,
-    content: row.content,
-    scrapedAt: row.scraped_at,
-    lastUpdated: row.last_updated,
-    refreshInterval: row.refresh_interval,
-    autoRefresh: row.auto_refresh === 1,
-  }));
+  if (rows.length === 0) return [];
+
+  const best = rows[0].hits;
+  const threshold = Math.max(1, Math.ceil(best / 2));
+
+  return rows
+    .filter((row) => row.hits >= threshold)
+    .map(row => ({
+      id: row.id,
+      url: row.url,
+      title: row.title,
+      content: row.content,
+      scrapedAt: row.scraped_at,
+      lastUpdated: row.last_updated,
+      refreshInterval: row.refresh_interval,
+      autoRefresh: row.auto_refresh === 1,
+    }));
 }
 
 export async function refreshStaleWebsites(): Promise<number> {

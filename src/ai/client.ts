@@ -203,6 +203,18 @@ export async function requestText(options: {
   }
 }
 
+/**
+ * A fixed seed, so the same question over the same records gives the same
+ * answer twice.
+ *
+ * Asking "how much were the tickets in Minicoy" twice used to return two
+ * different totals, which is worse than either being wrong: there was no way
+ * to tell which one to believe. Sampling is still not strictly deterministic,
+ * but it no longer wanders between runs for no reason. Extraction and
+ * answering both want the predictable end of the range, never the creative one.
+ */
+const DECODE_SEED = 7;
+
 let groqApiKeyInMemory: string | null = null;
 
 export function setGroqApiKeyInMemory(key: string): void {
@@ -255,6 +267,7 @@ async function sendGroqOnce(options: {
       ],
       response_format: { type: 'json_object' },
       temperature: 0.1,
+      seed: DECODE_SEED,
     }),
   });
 
@@ -308,6 +321,7 @@ async function sendGeminiOnce(options: {
     model: options.model,
     system_instruction: options.system,
     input: options.user,
+    generation_config: { seed: DECODE_SEED },
     response_format: {
       type: 'text',
       mime_type: 'application/json',
