@@ -33,6 +33,8 @@ import {
 } from '@/settings';
 import { describeError, hasApiKey, setSelectedModelInMemory } from '@/ai/client';
 import { showDialog } from '@/dialogStore';
+import { AnswerRows } from '@/components/AnswerRows';
+import { toAnswerRows } from '@/ai/answerRows';
 import { MemoryRow } from '@/components/MemoryRow';
 import { PlanCard } from '@/components/PlanCard';
 import { forgetQuestion, getAllMemories, getRecentQuestions, saveQuestion, insertMemory } from '@/db/queries';
@@ -500,32 +502,13 @@ export default function AskScreen() {
                     {result.answer}
                   </Text>
 
-                  {/* The substance as a list: a phone screen makes a paragraph of
-                      dates and amounts almost unreadable. */}
-                  {result.items.length > 0 ? (
-                    <View style={styles.items}>
-                      {result.items.map((item, i) => {
-                        const status = 'itemStatuses' in result && result.itemStatuses ? result.itemStatuses[i] : undefined;
-                        const isUnverified = status && !status.verified;
-                        return (
-                          <View key={`${item}-${i}`} style={styles.item}>
-                            <Text style={[type.gutter, styles.itemMark]}>{i + 1}</Text>
-                            <View style={styles.itemContentCol}>
-                              <Text style={[type.body, styles.itemText]}>{item}</Text>
-                              {isUnverified ? (
-                                <View style={styles.unverifiedBadge}>
-                                  <Ionicons name="warning-outline" size={11} color={colors.alert} />
-                                  <Text style={styles.unverifiedBadgeText}>
-                                    Unverified in source{status.reason ? ` · ${status.reason}` : ''}
-                                  </Text>
-                                </View>
-                              ) : null}
-                            </View>
-                          </View>
-                        );
-                      })}
-                    </View>
-                  ) : null}
+                  {/* The substance, laid out: a phone screen makes a paragraph of
+                      dates and amounts almost unreadable, so each line is given
+                      a gutter date, a title, and its figure in a column. */}
+                  <AnswerRows
+                    rows={toAnswerRows(result.items, 'rows' in result ? result.rows : undefined)}
+                    statuses={'itemStatuses' in result ? result.itemStatuses : undefined}
+                  />
 
                   {/* Island Travel Copilot: Timetable Timeline Step Card (Design 1) */}
                   {(() => {
@@ -951,29 +934,6 @@ function makeStyles(colors: Colors) {
       color: colors.ink,
     },
     answerSmall: { fontFamily: FONTS.sans, fontSize: 15, lineHeight: 22, color: colors.ink },
-    items: { gap: 4 },
-    item: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingVertical: 4 },
-    itemMark: { width: 18, color: colors.mist, marginTop: 2 },
-    itemContentCol: { flex: 1, gap: 2 },
-    itemText: { color: colors.ink },
-    unverifiedBadge: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 4,
-      marginTop: 3,
-      paddingHorizontal: 7,
-      paddingVertical: 2,
-      borderRadius: RADIUS.input,
-      backgroundColor: colors.alertSoft,
-      borderWidth: 1,
-      borderColor: colors.alert,
-      alignSelf: 'flex-start',
-    },
-    unverifiedBadgeText: {
-      fontFamily: FONTS.sansMedium,
-      fontSize: 11,
-      color: colors.alert,
-    },
     sourceRow: {
       flexDirection: 'row',
       alignItems: 'center',

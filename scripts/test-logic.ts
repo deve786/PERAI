@@ -31,6 +31,15 @@ import { isFreshPartial, joinSpelledLetters, knownPeople, restatesEarlier } from
 import { listSections } from '../src/lists';
 import { answerFromList, listQuestion } from '../src/listQuestion';
 import { conversationQuery } from '../src/ai/ask';
+import {
+  composeRowText,
+  groupAnswerRows,
+  hasSections,
+  parseAnswerRow,
+  toAnswerRows,
+  trimRedundantDetail,
+  type AnswerRow,
+} from '../src/ai/answerRows';
 import { hasPassed, isStruck, overdueToClose, sinkStruck } from '../src/strike';
 import { nextOccurrence } from '../src/repeat';
 import { planDay } from '../src/today';
@@ -232,6 +241,87 @@ check('returns null with no period', guessDateRange('when did I last cut my hair
     range.from.getMonth() === 7 && range.to.getMonth() === 7,
     `${range.from.toDateString()} -> ${range.to.toDateString()}`
   );
+}
+
+section('answer lines are read back into their parts');
+{
+  const row = parseAnswerRow('2026-10-28 · Ship (Zeesh) · Ticket · ₹1,456 · [Paid back in full]');
+  check('the date goes to the gutter', row.date === '2026-10-28', row.date);
+  check('the title is what the thing is', row.title === 'Ship (Zeesh)', row.title);
+  check('the amount is kept apart', row.amount === '₹1,456', row.amount);
+  check('what is left becomes the detail', row.detail === 'Ticket', row.detail);
+  check('a bracketed aside becomes a note', row.note === 'Paid back in full', row.note);
+
+  const dated = parseAnswerRow('Thursday, 1 October 2026 · Elden Ring');
+  check('a weekday prefix is still a date', dated.date === 'Thursday, 1 October 2026', dated.date);
+  check('a line with no figure has no amount', dated.amount === null, dated.amount);
+
+  const plain = parseAnswerRow('Nothing was recorded that week');
+  check('a sentence stays a sentence', plain.title === 'Nothing was recorded that week' && plain.date === null);
+
+  const ship = parseAnswerRow('27/10/26 · MV LAGOONS · KOCHI Dept.1430');
+  check('a short date is recognised', ship.date === '27/10/26', ship.date);
+  check('the vessel is the title', ship.title === 'MV LAGOONS', ship.title);
+  check('the ports are the detail', ship.detail === 'KOCHI Dept.1430', ship.detail);
+
+  check(
+    'a parsed line composes back to itself',
+    composeRowText(parseAnswerRow('2026-10-16 · Ship (Thoo) · 2nd class · ₹1,180')) ===
+      '2026-10-16 · Ship (Thoo) · 2nd class · ₹1,180',
+    composeRowText(parseAnswerRow('2026-10-16 · Ship (Thoo) · 2nd class · ₹1,180'))
+  );
+}
+
+section('answer lines are grouped for the screen');
+{
+  const row = (group: string | null, title: string): AnswerRow => ({
+    group, date: null, title, detail: null, amount: null, note: null,
+  });
+
+  const grouped = groupAnswerRows([
+    row('Minicoy', 'Ticket'),
+    row('Minicoy', 'Food'),
+    row('Agatti', 'Ticket'),
+  ]);
+  check('rows sharing a heading stay together', grouped.length === 2, grouped.length);
+  check('the first section is Minicoy with two rows', grouped[0].heading === 'Minicoy' && grouped[0].rows.length === 2);
+  check('the second section is Agatti', grouped[1].heading === 'Agatti' && grouped[1].rows.length === 1);
+  check('two named sections are drawn as sections', hasSections(grouped));
+
+  const flat = groupAnswerRows([row(null, 'One'), row(null, 'Two')]);
+  check('an ungrouped list is one section', flat.length === 1 && flat[0].heading === null);
+  check('one unnamed section is not drawn as sections', !hasSections(flat));
+
+  const partly = groupAnswerRows([row('Minicoy', 'Ticket'), row(null, 'Something else')]);
+  check('a half-grouped list is not drawn as sections', !hasSections(partly));
+
+  check('structured rows win over the flat strings', toAnswerRows(['ignored'], [row('A', 'Kept')])[0].title === 'Kept');
+  check('flat strings are used when there are no rows', toAnswerRows(['3 Oct · Taxi · ₹300'])[0].title === 'Taxi');
+}
+
+section('a detail that only repeats the row is dropped');
+{
+  check(
+    'a detail restating the title and heading is dropped',
+    trimRedundantDetail('Minicoy expense category', 'Ticket', 'Minicoy') === null
+  );
+  check(
+    'a detail restating only the title is dropped',
+    trimRedundantDetail('Ticket category', 'Ticket', null) === null
+  );
+  check(
+    'a detail made only of filler is dropped',
+    trimRedundantDetail('Total spending', 'Food', 'Agatti') === null
+  );
+  check(
+    'a detail that adds a fact is kept',
+    trimRedundantDetail('Paid by UPI from SBI', 'Ticket', 'Minicoy') === 'Paid by UPI from SBI'
+  );
+  check(
+    'a detail naming a document is kept',
+    trimRedundantDetail('From lakport.pdf', 'MV LAGOONS', null) === 'From lakport.pdf'
+  );
+  check('no detail stays no detail', trimRedundantDetail(null, 'Ticket', 'Minicoy') === null);
 }
 
 section('guessDateRange: a week is a week, not a fortnight');

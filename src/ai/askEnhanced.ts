@@ -12,12 +12,15 @@ import { verifyItemGrounding, type GroundingCheckResult } from '@/sources/chunkL
 import { answerFromList, listQuestion } from '../listQuestion';
 import { guessDateRange } from './retrieval';
 import { conversationQuery, HISTORY_TURNS, looseJsonParse, type AskTurn } from './ask';
+import { composeRowText, parseAnswerRow, trimRedundantDetail, type AnswerRow } from './answerRows';
 
 export interface EnhancedAskResult {
   /** One short sentence: the answer itself. */
   answer: string;
-  /** The things the answer is made of, one per line. */
+  /** The things the answer is made of, one per line, as flat text. */
   items: string[];
+  /** The same lines with their parts kept apart, so the screen can lay them out. */
+  rows?: AnswerRow[];
   /** Verification status for each item against the source context to flag hallucinations. */
   itemStatuses?: GroundingCheckResult[];
   /** A figure the question asked for, shown large above the list. */
@@ -44,8 +47,37 @@ const ENHANCED_ANSWER_SCHEMA = {
     },
     items: {
       type: 'array',
-      description: 'One line per thing the answer covers, newest first. Each line is short and factual.',
-      items: { type: 'string' },
+      description:
+        'One entry per thing the answer covers. Give the parts separately — the screen lays them out as a table, so never pack a date or a figure into the title.',
+      items: {
+        type: 'object',
+        properties: {
+          group: {
+            type: ['string', 'null'],
+            description:
+              'Heading this entry belongs under — a place, a month, a vessel, a category. Entries sharing a heading are drawn together under it. Null when the list needs no headings.',
+          },
+          date: {
+            type: ['string', 'null'],
+            description: 'The date of this entry, exactly as recorded. Null if it has none.',
+          },
+          title: { type: 'string', description: 'What this entry is, in a few words. No date, no amount.' },
+          detail: {
+            type: ['string', 'null'],
+            description: 'A second line of supporting facts — category, payment method, class, ports, who it was for.',
+          },
+          amount: {
+            type: ['string', 'null'],
+            description: 'The figure for this entry alone, e.g. "₹1,456" or "3 days". Null if it has none.',
+          },
+          note: {
+            type: ['string', 'null'],
+            description: 'A short aside worth flagging, e.g. "Paid back in full" or "Refunded ₹1,815". Null when there is none.',
+          },
+        },
+        required: ['group', 'date', 'title', 'detail', 'amount', 'note'],
+        additionalProperties: false,
+      },
     },
     usedSourceIds: {
       type: 'array',
@@ -123,13 +155,45 @@ a paragraph:
 - headline: the single figure asked for, written as it should be read — a total,
   a count, a date, a duration. Null when the question does not ask for one
   figure.
-- items: one line per thing, short and factual, in the form
-  "<date> · <what it was> · <figure or detail>". Chronological for schedules and
-  voyages, newest first otherwise. Include everything you used and nothing you
-  did not. No bullet characters, no commentary.
+- items: one entry per thing. The screen draws these as a table, so keep the
+  parts apart and never pack them into one string:
+  * title — what the thing is, in a few words. Never put a date or a figure in it.
+  * date — the date, exactly as recorded, or null.
+  * amount — the figure for that entry alone, or null.
+  * detail — a second line of supporting facts: category, payment method, class,
+    ports and times, who it was for, which document it came from. Write the
+    values alone, separated by " · ", as in "Ticket · 2nd class · UPI" — never
+    as field names, as in "Category: Ticket, Method: UPI". It must add
+    something the title does not already say: never restate the title or the
+    heading, and leave it null when there is nothing further to add.
+  * note — a short aside worth flagging on its own, such as "Paid back in full"
+    or "Refunded ₹1,815". Null when there is nothing to flag.
+  * group — the heading the entry sits under. Set it whenever the list covers
+    more than one place, month, vessel or category, so each set is drawn under
+    its own heading instead of running together. Entries sharing a heading must
+    be given the same text and kept next to each other. Null for a flat list.
+  Chronological for schedules and voyages, newest first otherwise. No bullet
+  characters, no commentary, no numbering — the screen adds all of that.
+
+ALWAYS SHOW WHAT A FIGURE IS MADE OF. A total on its own is not an answer: the
+question behind "how much" is almost always "on what". So whenever you give a
+total or a count, the items must show what it covers:
+- If the data carries a breakdown of that total — a byCategory map on a place
+  or a month — give EVERY part of it its own entry: the part's name as title,
+  its figure as amount, and the place or month as group. Largest part first.
+- Otherwise list the individual entries behind the total, one each.
+- Never write a breakdown into a sentence or a title, as in
+  "Minicoy total: ₹2,904.90 (Bills: ₹465.90, Ticket: ₹1,825.00)". Every part
+  named there must be an entry of its own, or it cannot be read on a phone.
+- The overall total belongs in headline and in the answer sentence. Do not also
+  give it a line of its own among the parts; the parts are the list.
+- When the question compares two things, give both their own group, and put
+  the comparison itself — the difference, which is larger — in the answer
+  sentence.
+
 - Quote concrete dates, times, amounts and names as they are recorded rather
   than paraphrasing. Say the date, not "recently".
-- When the answer comes from a document, name the document.
+- When the answer comes from a document, name the document in detail.
 
 LAKSHADWEEP SHIP SCHEDULES AND VOYAGE TABLES — these apply only when such a
 schedule is actually present in the sections above:
@@ -228,6 +292,7 @@ export async function askAIEnhanced(
       return {
         answer: counted.answer,
         items: counted.items,
+        rows: counted.items.map(parseAnswerRow),
         itemStatuses: counted.items.map(() => ({ verified: true })),
         headline: counted.headline,
         evidence: counted.entries.map((entry, index) => ({
@@ -308,12 +373,36 @@ export async function askAIEnhanced(
     // ungrounded answer through as found.
     const found = reply.found === true && (citedEvidence.length > 0 || isExpenseUsed);
 
-    const items = Array.isArray(reply.items)
-      ? reply.items
-          .filter((item: unknown): item is string => typeof item === 'string')
-          .map((item: string) => item.replace(/^\s*[-•*–]\s*/, '').trim())
-          .filter(Boolean)
-      : [];
+    // Entries come back with their parts kept apart so the screen can lay them
+    // out as a table. A model that answers with plain strings anyway — or an
+    // older answer being re-read — is parsed back into the same shape.
+    const rows: AnswerRow[] = (Array.isArray(reply.items) ? reply.items : [])
+      .map((item: unknown): AnswerRow | null => {
+        if (typeof item === 'string') {
+          const text = item.replace(/^\s*[-•*–]\s*/, '').trim();
+          return text ? parseAnswerRow(text) : null;
+        }
+        if (!item || typeof item !== 'object') return null;
+        const raw = item as Record<string, unknown>;
+        const text = (value: unknown): string | null =>
+          typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+        const title = text(raw.title);
+        if (!title) return null;
+        const group = text(raw.group);
+        return {
+          group,
+          date: text(raw.date),
+          title,
+          detail: trimRedundantDetail(text(raw.detail), title, group),
+          amount: text(raw.amount),
+          note: text(raw.note),
+        };
+      })
+      .filter((row: AnswerRow | null): row is AnswerRow => row !== null);
+
+    // The flat form is what the grounding check reads and what the next turn
+    // of the conversation is reminded of, so it is kept alongside.
+    const items = rows.map(composeRowText);
 
     const headline =
       typeof reply.headline === 'string' && reply.headline.trim().length > 0
@@ -333,6 +422,7 @@ export async function askAIEnhanced(
             "Found something, but couldn't tie it back to a specific record."
           : (spoken ?? 'Nothing in your record matches this.'),
       items: found ? items : [],
+      rows: found ? rows : [],
       itemStatuses: found ? itemStatuses : [],
       headline: found ? headline : null,
       evidence: citedEvidence,
