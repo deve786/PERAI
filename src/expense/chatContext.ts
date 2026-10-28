@@ -63,7 +63,7 @@ export async function buildChatContext(currency: string, budget: number) {
     reimbursed: r.reimbursed === 1,
     reimburseAmount: r.reimburse_amount ?? null,
     reimburseBank: r.reimburse_account_id ? bankName.get(r.reimburse_account_id) ?? null : null,
-    netAmount: r2(r.amount - (r.refund_amount ?? 0)),
+    netAmount: r2(Math.max(0, r.amount - (r.refund_amount ?? 0) - (r.reimburse_amount ?? 0))),
   });
 
   return {

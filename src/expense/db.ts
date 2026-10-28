@@ -605,7 +605,7 @@ export async function setCategoryBudget(id: string, budget: number | null) {
 export async function categorySpendBetween(from: string, to: string) {
   const db = await getDb();
   const rows = await db.getAllAsync<{ category_id: string; total: number }>(
-    `SELECT category_id, SUM(amount - COALESCE(refund_amount, 0)) AS total FROM expenses
+    `SELECT category_id, SUM(MAX(0, amount - COALESCE(refund_amount, 0) - COALESCE(reimburse_amount, 0))) AS total FROM expenses
       WHERE deleted = 0 AND date >= ? AND date <= ?
       GROUP BY category_id`,
     from, to

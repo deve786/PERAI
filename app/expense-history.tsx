@@ -173,24 +173,82 @@ export default function History() {
 
   return (
     <Screen>
-      <TopBar title="History" onBack={() => router.back()} />
+      <TopBar
+        title="History"
+        onBack={() => router.back()}
+        right={
+          <Pressable
+            onPress={() => router.push('/expense/passbook' as any)}
+            accessibilityRole="button"
+            accessibilityLabel="Open bank passbook and net worth history"
+            style={({ pressed }) => ({
+              paddingHorizontal: 12,
+              paddingVertical: 6,
+              borderRadius: radius.pill,
+              backgroundColor: c.accentSoft,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 4,
+              opacity: pressed ? 0.7 : 1,
+            })}
+          >
+            <Ionicons name="receipt-outline" size={15} color={c.accent} />
+            <T size={13} weight="600" style={{ color: c.accent }}>Passbook</T>
+          </Pressable>
+        }
+      />
       <FlatList
         data={groups}
         keyExtractor={(g) => g.date}
         ListHeaderComponent={header}
         contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 40 }}
-        renderItem={({ item: g }) => (
-          <View style={{ marginTop: 16 }}>
-            <T size={14} weight="600" sub style={{ marginBottom: 6 }}>{dayHeading(g.date)}</T>
-            <ListCard>
-              {g.items.map((e, i) =>
-                e.kind === 'expense'
-                  ? <ExpenseItem key={`e${e.row.id}`} e={e.row} showDate={false} onDeleted={load} trip={tripFor.get(e.row.id)} last={i === g.items.length - 1} />
-                  : <IncomeItem key={`i${e.row.id}`} e={e.row} showDate={false} onDeleted={load} last={i === g.items.length - 1} />
-              )}
-            </ListCard>
-          </View>
-        )}
+        renderItem={({ item: g }) => {
+          const dayExpenses = g.items.filter((e) => e.kind === 'expense').map((e) => e.row);
+          const dayIncomes = g.items.filter((e) => e.kind === 'income').map((e) => e.row);
+          const daySpent = sum(dayExpenses);
+          const dayEarned = sum(dayIncomes);
+
+          return (
+            <View style={{ marginTop: 16 }}>
+              <Row style={{ justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
+                <T size={14} weight="600" sub>{dayHeading(g.date)}</T>
+                {kind === 'expense' ? (
+                  daySpent > 0 ? (
+                    <T size={13} weight="600" tabular style={{ color: c.sub }}>
+                      {fmtMoney(daySpent, symbol)}
+                    </T>
+                  ) : null
+                ) : kind === 'income' ? (
+                  dayEarned > 0 ? (
+                    <T size={13} weight="600" tabular style={{ color: c.good }}>
+                      +{fmtMoney(dayEarned, symbol)}
+                    </T>
+                  ) : null
+                ) : (
+                  <Row style={{ gap: 8 }}>
+                    {daySpent > 0 ? (
+                      <T size={13} weight="600" tabular style={{ color: c.sub }}>
+                        {fmtMoney(daySpent, symbol)}
+                      </T>
+                    ) : null}
+                    {dayEarned > 0 ? (
+                      <T size={13} weight="600" tabular style={{ color: c.good }}>
+                        +{fmtMoney(dayEarned, symbol)}
+                      </T>
+                    ) : null}
+                  </Row>
+                )}
+              </Row>
+              <ListCard>
+                {g.items.map((e, i) =>
+                  e.kind === 'expense'
+                    ? <ExpenseItem key={`e${e.row.id}`} e={e.row} showDate={false} onDeleted={load} trip={tripFor.get(e.row.id)} last={i === g.items.length - 1} />
+                    : <IncomeItem key={`i${e.row.id}`} e={e.row} showDate={false} onDeleted={load} last={i === g.items.length - 1} />
+                )}
+              </ListCard>
+            </View>
+          );
+        }}
         ListEmptyComponent={
           <Empty
             icon={hasAny ? 'search-outline' : 'receipt-outline'}

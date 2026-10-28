@@ -4,10 +4,11 @@ import { addDays, daysBetween, fromStr } from './dates';
 export type CatTotal = { name: string; color: string; icon: string; total: number; count: number };
 export type DayTotal = { label: string; date: string; total: number };
 
-/** An expense's amount after subtracting whatever's been refunded from it. Rows with no such field (income, recurring) pass through unchanged. */
-const net = (r: { amount: number; refund_amount?: number | null }) => r.amount - (r.refund_amount ?? 0);
+/** An expense's amount after subtracting whatever's been refunded or paid back by someone. Rows with no such field (income, recurring) pass through unchanged. */
+export const net = (r: { amount: number; refund_amount?: number | null; reimburse_amount?: number | null }) =>
+  Math.max(0, r.amount - (r.refund_amount ?? 0) - (r.reimburse_amount ?? 0));
 
-export const sum = (rows: { amount: number; refund_amount?: number | null }[]) => rows.reduce((a, r) => a + net(r), 0);
+export const sum = (rows: { amount: number; refund_amount?: number | null; reimburse_amount?: number | null }[]) => rows.reduce((a, r) => a + net(r), 0);
 
 export function byCategory(rows: ExpenseRow[]): CatTotal[] {
   const map = new Map<string, CatTotal>();
@@ -21,7 +22,7 @@ export function byCategory(rows: ExpenseRow[]): CatTotal[] {
 }
 
 /** Daily totals for short ranges (<= 45 days), weekly buckets for longer ones, monthly for very long. */
-export function trend(rows: { date: string; amount: number; refund_amount?: number | null }[], from: string, to: string): DayTotal[] {
+export function trend(rows: { date: string; amount: number; refund_amount?: number | null; reimburse_amount?: number | null }[], from: string, to: string): DayTotal[] {
   const span = daysBetween(from, to);
   const out: DayTotal[] = [];
   if (span <= 45) {

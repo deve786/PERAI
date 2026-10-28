@@ -42,7 +42,8 @@ import {
   crossedThreshold,
 } from '../src/expense/budgets';
 import { monthRange } from '../src/expense/dates';
-import { sum } from '../src/expense/stats';
+import { byCategory, net, sum } from '../src/expense/stats';
+import { computePassbookSummary, groupPassbookByDate, sourceBadge, type PassbookEntry } from '../src/expense/passbookLogic';
 import {
   categoryFromHistory,
   knownCategoryName,
@@ -2118,5 +2119,102 @@ section('offline payment text extractor');
   check('extracts HDFC Bank with last four', phonepe.bank?.toLowerCase().includes('hdfc') === true && phonepe.bank?.includes('5678') === true);
 }
 
+section('payback and reimbursement spend deduction');
+{
+  const expenseWithoutPayback = { amount: 5000, refund_amount: null, reimburse_amount: null };
+  const expenseWithPayback = { amount: 5269, refund_amount: null, reimburse_amount: 5269 };
+  const expenseWithPartialPayback = { amount: 5269, refund_amount: 731, reimburse_amount: 2000 };
+  const expenseOverPayback = { amount: 1000, refund_amount: null, reimburse_amount: 1500 };
+
+  check('expense without payback retains full amount', net(expenseWithoutPayback) === 5000);
+  check('full payback reduces net expense to 0', net(expenseWithPayback) === 0);
+  check('partial payback and refund both reduce net expense', net(expenseWithPartialPayback) === 2538);
+  check('net expense never goes negative when overpaid', net(expenseOverPayback) === 0);
+
+  const rows = [
+    { id: '1', date: '2026-10-28', note: 'Ticket 1', notes: '', method: 'UPI', recurring_id: null, category_id: 'c1', cat_name: 'Ticket', cat_icon: 'airplane', cat_color: '#333', item_count: 1, amount: 5000, refund_amount: null, reimburse_amount: 5000 },
+    { id: '2', date: '2026-10-28', note: 'Ticket 2', notes: '', method: 'UPI', recurring_id: null, category_id: 'c1', cat_name: 'Ticket', cat_icon: 'airplane', cat_color: '#333', item_count: 1, amount: 2000, refund_amount: null, reimburse_amount: 500 },
+    { id: '3', date: '2026-10-28', note: 'Dinner', notes: '', method: 'Cash', recurring_id: null, category_id: 'c2', cat_name: 'Food', cat_icon: 'restaurant', cat_color: '#444', item_count: 1, amount: 450, refund_amount: null, reimburse_amount: null },
+  ];
+
+  const catTotals = byCategory(rows);
+  const ticketCat = catTotals.find((c) => c.name === 'Ticket');
+  const foodCat = catTotals.find((c) => c.name === 'Food');
+
+  check('category total reflects payback reduction', ticketCat?.total === 1500);
+  check('unaffected category total remains intact', foodCat?.total === 450);
+  check('total sum across all rows reflects paybacks', sum(rows) === 1950);
+}
+
+section('passbook and net worth transaction history');
+{
+  const sampleEntries: PassbookEntry[] = [
+    {
+      id: 'inc-1',
+      date: '2026-10-28',
+      type: 'in',
+      amount: 50000,
+      netAmount: 50000,
+      title: 'Salary Oct',
+      subtitle: 'Salary',
+      category: 'Salary',
+      categoryIcon: 'wallet-outline',
+      categoryColor: '#2E9465',
+      method: 'Bank Transfer',
+      accountId: 'acc-hdfc',
+      accountName: 'HDFC Bank',
+    },
+    {
+      id: 'exp-1',
+      date: '2026-10-28',
+      type: 'out',
+      amount: 5269,
+      netAmount: 0,
+      reimburseAmount: 5269,
+      title: 'Flight Ticket',
+      subtitle: 'Ticket · @Rahul',
+      category: 'Ticket',
+      categoryIcon: 'airplane-outline',
+      categoryColor: '#C8553D',
+      method: 'UPI',
+      accountId: 'acc-sbi',
+      accountName: 'SBI Bank',
+      userTag: 'Rahul',
+    },
+    {
+      id: 'exp-2',
+      date: '2026-10-27',
+      type: 'out',
+      amount: 1200,
+      netAmount: 1200,
+      title: 'Groceries',
+      subtitle: 'Food · Supermarket',
+      category: 'Food',
+      categoryIcon: 'cart-outline',
+      categoryColor: '#2E7DB8',
+      method: 'UPI',
+      accountId: 'acc-hdfc',
+      accountName: 'HDFC Bank',
+    },
+  ];
+
+  const summary = computePassbookSummary(sampleEntries);
+  check('computes passbook total in', summary.totalIn === 50000);
+  check('computes passbook total out using net amounts', summary.totalOut === 1200);
+  check('computes net flow correctly', summary.netFlow === 48800);
+
+  const outBadge = sourceBadge(sampleEntries[1]);
+  check('formats out source badge correctly', outBadge.label === 'From SBI Bank' && outBadge.isSource === true);
+
+  const inBadge = sourceBadge(sampleEntries[0]);
+  check('formats in source badge correctly', inBadge.label === 'Into HDFC Bank' && inBadge.isSource === false);
+
+  const groups = groupPassbookByDate(sampleEntries);
+  check('groups entries by day', groups.length === 2);
+  check('today group has correct in and out', groups[0].dayIn === 50000 && groups[0].dayOut === 0);
+  check('yesterday group has correct out', groups[1].dayOut === 1200 && groups[1].dayIn === 0);
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
+
