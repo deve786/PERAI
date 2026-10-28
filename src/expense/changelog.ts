@@ -10,6 +10,16 @@ export interface ChangelogEntry {
 /** Newest first. Add a new entry here with every release that changes user-visible behaviour. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.33.1',
+    build: 172,
+    type: 'ota',
+    date: '2026-10-28',
+    time: '10:14 AM',
+    highlights: [
+      'Add running balance to bank passbook, fix refund alert banner, remove morning briefing',
+    ],
+  },
+  {
     version: '1.33.0',
     build: 171,
     type: 'ota',
