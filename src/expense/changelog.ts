@@ -10,6 +10,16 @@ export interface ChangelogEntry {
 /** Newest first. Add a new entry here with every release that changes user-visible behaviour. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.33.4',
+    build: 175,
+    type: 'ota',
+    date: '2026-10-28',
+    time: '07:57 PM',
+    highlights: [
+      'Ask answers now come from your records, not from prompt examples: correct net totals, right documents cited, accurate dates',
+    ],
+  },
+  {
     version: '1.33.3',
     build: 174,
     type: 'ota',
