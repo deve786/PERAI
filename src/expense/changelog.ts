@@ -10,6 +10,16 @@ export interface ChangelogEntry {
 /** Newest first. Add a new entry here with every release that changes user-visible behaviour. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.34.0',
+    build: 178,
+    type: 'ota',
+    date: '2026-10-28',
+    time: '09:32 PM',
+    highlights: [
+      'New look: comparison charts, calendar heatmap, money waterfall, budget pace ring, swipe rows with Undo, entry sheet, smarter Ask loading, long-press tab shortcuts',
+    ],
+  },
+  {
     version: '1.33.6',
     build: 177,
     type: 'ota',
