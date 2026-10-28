@@ -36,7 +36,6 @@ import { showDialog } from '@/dialogStore';
 import { MemoryRow } from '@/components/MemoryRow';
 import { PlanCard } from '@/components/PlanCard';
 import { forgetQuestion, getAllMemories, getRecentQuestions, saveQuestion, insertMemory } from '@/db/queries';
-import { MorningIslandBriefing } from '@/components/MorningIslandBriefing';
 import { TimetableTimelineCard, extractTimelineFromText, type TimelineStep } from '@/components/TimetableTimelineCard';
 import { VoiceWaveform } from '@/components/VoiceWaveform';
 import { buildChatContext } from '@/expense/chatContext';
@@ -465,14 +464,6 @@ export default function AskScreen() {
             );
           })()}
 
-          {/* Island Travel Copilot: Morning Island Briefing (Design 1) */}
-          {thread.length === 0 && !listening ? (
-            <MorningIslandBriefing
-              onSelectVessel={(vessel) => {
-                void ask(`What is the latest schedule, departures, and timings for ${vessel}?`);
-              }}
-            />
-          ) : null}
 
           {scope && thread.length === 0 && !listening ? (
             <Text style={[type.fine, styles.scope]}>{scope}</Text>

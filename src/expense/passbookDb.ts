@@ -22,6 +22,7 @@ export async function listPassbookEntries(accountId?: string | null): Promise<Pa
       e.user_tag,
       e.place,
       e.account_id,
+      e.updated_at,
       COALESCE(c.name, 'Expense') AS cat_name,
       COALESCE(c.icon, 'receipt-outline') AS cat_icon,
       COALESCE(c.color, '#C8553D') AS cat_color
@@ -48,6 +49,7 @@ export async function listPassbookEntries(accountId?: string | null): Promise<Pa
       i.user_tag,
       i.place,
       i.account_id,
+      i.updated_at,
       COALESCE(c.name, 'Income') AS cat_name,
       COALESCE(c.icon, 'wallet-outline') AS cat_icon,
       COALESCE(c.color, '#2E9465') AS cat_color
@@ -93,6 +95,7 @@ export async function listPassbookEntries(accountId?: string | null): Promise<Pa
       accountInstitution: acc?.institution,
       userTag: e.user_tag || undefined,
       place: e.place || undefined,
+      updatedAt: e.updated_at || undefined,
     });
   }
 
@@ -118,13 +121,16 @@ export async function listPassbookEntries(accountId?: string | null): Promise<Pa
       accountInstitution: acc?.institution,
       userTag: i.user_tag || undefined,
       place: i.place || undefined,
+      updatedAt: i.updated_at || undefined,
     });
   }
 
-  // Sort descending by date, with income appearing above expenses if on same day
+  // Sort descending by date, with latest updated_at first within the same day
   entries.sort((a, b) => {
     const d = b.date.localeCompare(a.date);
     if (d !== 0) return d;
+    const u = (b.updatedAt || '').localeCompare(a.updatedAt || '');
+    if (u !== 0) return u;
     return b.id.localeCompare(a.id);
   });
 

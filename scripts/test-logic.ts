@@ -43,7 +43,7 @@ import {
 } from '../src/expense/budgets';
 import { monthRange } from '../src/expense/dates';
 import { byCategory, net, sum } from '../src/expense/stats';
-import { computePassbookSummary, groupPassbookByDate, sourceBadge, type PassbookEntry } from '../src/expense/passbookLogic';
+import { attachRunningBalances, computePassbookSummary, groupPassbookByDate, sourceBadge, type PassbookEntry } from '../src/expense/passbookLogic';
 import {
   categoryFromHistory,
   knownCategoryName,
@@ -2213,6 +2213,11 @@ section('passbook and net worth transaction history');
   check('groups entries by day', groups.length === 2);
   check('today group has correct in and out', groups[0].dayIn === 50000 && groups[0].dayOut === 0);
   check('yesterday group has correct out', groups[1].dayOut === 1200 && groups[1].dayIn === 0);
+
+  const withBalances = attachRunningBalances(sampleEntries, 100000);
+  check('attaches current balance to latest entry', withBalances[0].runningBalance === 100000);
+  check('rolls backwards correctly across expense', withBalances[1].runningBalance === 50000);
+  check('rolls backwards correctly to oldest entry', withBalances[2].runningBalance === 55269);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

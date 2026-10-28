@@ -195,7 +195,7 @@ export default function Home() {
           </Pressable>
         )}
 
-        {/* Proactive Refund Watchdog (Design 2) */}
+        {/* Proactive Refund Watchdog */}
         {refundAlerts.length > 0 ? (
           <RefundAlertCard
             refunds={refundAlerts}
@@ -203,19 +203,7 @@ export default function Home() {
             onFollowUp={(item) => router.push({ pathname: '/expense/expense', params: { id: String(item.id) } })}
             onDismiss={(id) => setRefundAlerts((prev) => prev.filter((r) => r.id !== id))}
           />
-        ) : (
-          <RefundAlertCard
-            refunds={[{
-              id: 'demo-refund-1',
-              amount: 1420,
-              note: 'IRCTC Tatkal',
-              daysOverdue: 2,
-            }]}
-            symbol={symbol}
-            onFollowUp={() => router.push('/expense/expense')}
-            onDismiss={() => setRefundAlerts([])}
-          />
-        )}
+        ) : null}
 
         {/* AI Financial Copilot: Monthly Spending Health (Design 2) */}
         {isCurrentMonth && (

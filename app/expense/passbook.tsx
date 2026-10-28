@@ -5,6 +5,7 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { listAccounts, type AccountItem } from '@/expense/accountsDb';
 import { listPassbookEntries } from '@/expense/passbookDb';
 import {
+  attachRunningBalances,
   computePassbookSummary,
   groupPassbookByDate,
   sourceBadge,
@@ -60,9 +61,16 @@ export default function PassbookScreen() {
     [accounts, selectedAccountId]
   );
 
+  const entriesWithBalances = useMemo(() => {
+    const baseBalance = selectedAccount
+      ? (selectedAccount.balance || 0)
+      : accounts.reduce((sum, a) => sum + (a.balance || 0), 0);
+    return attachRunningBalances(entries, baseBalance);
+  }, [entries, selectedAccount, accounts]);
+
   const filteredEntries = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    return entries.filter((e) => {
+    return entriesWithBalances.filter((e) => {
       if (flow === 'in' && e.type !== 'in') return false;
       if (flow === 'out' && e.type !== 'out') return false;
       if (!needle) return true;
@@ -78,7 +86,7 @@ export default function PassbookScreen() {
         (e.userTag?.toLowerCase().includes(needle) ?? false)
       );
     });
-  }, [entries, flow, q]);
+  }, [entriesWithBalances, flow, q]);
 
   const summary = useMemo(() => computePassbookSummary(filteredEntries), [filteredEntries]);
   const dayGroups = useMemo(() => groupPassbookByDate(filteredEntries), [filteredEntries]);
@@ -227,7 +235,6 @@ export default function PassbookScreen() {
             <ListCard>
               {g.items.map((it, i) => {
                 const badge = sourceBadge(it);
-                const hasDeductions = (it.refundAmount != null && it.refundAmount > 0) || (it.reimburseAmount != null && it.reimburseAmount > 0);
 
                 return (
                   <Pressable
@@ -249,7 +256,7 @@ export default function PassbookScreen() {
                         {it.subtitle ? <T size={13} sub numberOfLines={1}>{it.subtitle}</T> : null}
 
                         {/* Source/Destination badge showing which bank it came from or went to */}
-                        <Row style={{ marginTop: 2, alignItems: 'center' }}>
+                        <Row style={{ marginTop: 2, alignItems: 'center', flexWrap: 'wrap', gap: 5 }}>
                           <View
                             style={[
                               styles.sourcePill,
@@ -272,6 +279,20 @@ export default function PassbookScreen() {
                               {badge.label}
                             </T>
                           </View>
+                          {it.refundAmount ? (
+                            <View style={[styles.sourcePill, { backgroundColor: `${c.warn}15`, borderColor: `${c.warn}40` }]}>
+                              <T size={11} weight="500" style={{ color: c.warn }}>
+                                Refunded {fmtMoney(it.refundAmount, symbol)}
+                              </T>
+                            </View>
+                          ) : null}
+                          {it.reimburseAmount ? (
+                            <View style={[styles.sourcePill, { backgroundColor: `${c.good}15`, borderColor: `${c.good}40` }]}>
+                              <T size={11} weight="500" style={{ color: c.good }}>
+                                Paid back {fmtMoney(it.reimburseAmount, symbol)}
+                              </T>
+                            </View>
+                          ) : null}
                         </Row>
                       </View>
 
@@ -282,11 +303,11 @@ export default function PassbookScreen() {
                           tabular
                           style={{ color: it.type === 'in' ? c.good : c.text }}
                         >
-                          {it.type === 'in' ? `+${fmtMoney(it.amount, symbol)}` : `−${fmtMoney(it.netAmount, symbol)}`}
+                          {it.type === 'in' ? `+${fmtMoney(it.amount, symbol)}` : `−${fmtMoney(it.amount, symbol)}`}
                         </T>
-                        {hasDeductions ? (
-                          <T size={11} sub tabular style={{ textDecorationLine: 'line-through', opacity: 0.6 }}>
-                            {fmtMoney(it.amount, symbol)}
+                        {it.runningBalance !== undefined ? (
+                          <T size={12} sub tabular style={{ color: c.sub, marginTop: 2 }}>
+                            {selectedAccountId ? 'Bal: ' : 'Net: '}{fmtMoney(it.runningBalance, symbol)}
                           </T>
                         ) : null}
                       </View>

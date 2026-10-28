@@ -20,6 +20,8 @@ export interface PassbookEntry {
   accountInstitution?: string;
   userTag?: string;
   place?: string;
+  updatedAt?: string;
+  runningBalance?: number;
 }
 
 export interface PassbookSummary {
@@ -112,4 +114,29 @@ export function groupPassbookByDate(entries: PassbookEntry[]): DayPassbookGroup[
   }
 
   return groups;
+}
+
+/**
+ * Calculates and attaches the running balance to each transaction entry,
+ * matching how a bank passbook statement displays the account balance at each point in time.
+ * Entries must be sorted in descending order (newest first).
+ */
+export function attachRunningBalances(
+  entries: PassbookEntry[],
+  currentBalance: number
+): PassbookEntry[] {
+  let rolling = currentBalance;
+  return entries.map((entry) => {
+    const bal = Math.round(rolling * 100) / 100;
+    const delta = entry.amount;
+    if (entry.type === 'in') {
+      rolling = Math.round((rolling - delta) * 100) / 100;
+    } else {
+      rolling = Math.round((rolling + delta) * 100) / 100;
+    }
+    return {
+      ...entry,
+      runningBalance: bal,
+    };
+  });
 }
