@@ -422,12 +422,13 @@ export default function ExpenseForm() {
     }
     // Whoever this was tagged "for user" can pay back what it cost — any
     // category, not just a Ticket, so it's keyed off the tag, not isTicket.
+    // They may pay back the exact amount, a partial amount, or more (e.g. rounded up, tip/extra).
     if (finalUserTag) {
       const parsedReimburse = round2((reimburseSame ? value : parseAmt(reimburseAmount)) || 0);
-      if (reimbursed && parsedReimburse > value) {
+      if (reimbursed && !reimburseSame && parsedReimburse <= 0) {
         showDialog({
           title: 'Invalid payback amount',
-          message: `The payback amount (${fmtMoney(parsedReimburse, symbol)}) cannot be greater than the expense amount (${fmtMoney(value, symbol)}).`,
+          message: 'Please enter a valid amount they paid back.',
         });
         setSaving(false);
         return;
@@ -436,6 +437,8 @@ export default function ExpenseForm() {
         newId,
         reimbursed && parsedReimburse > 0 ? { amount: parsedReimburse, accountId: reimburseAccountId } : null
       );
+    } else if (editId) {
+      await setExpenseReimbursement(newId, null);
     }
     // Shown on Home, since this screen closes itself below.
     await noteBudgetCrossing(finalCatId, round2(value), symbol);
@@ -592,10 +595,11 @@ export default function ExpenseForm() {
         value: `${fmtMoney(parseAmt(refundAmount) || 0, symbol)}${refundPeopleCount.trim() ? ` (${refundPeopleCount} of ${peopleCount})` : ''}${refundAccountId ? ` · ${bankName(refundAccountId)}` : ''}`,
       });
     }
-    if (reimbursed && reimburseAmount.trim()) {
+    const effectiveReimburse = round2((reimburseSame ? value : parseAmt(reimburseAmount)) || 0);
+    if (reimbursed && effectiveReimburse > 0) {
       details.push({
         icon: 'checkmark-circle-outline', label: `Paid back by ${userTag || 'them'}`, tone: c.good,
-        value: `${fmtMoney(parseAmt(reimburseAmount) || 0, symbol)}${reimburseAccountId ? ` · ${bankName(reimburseAccountId)}` : ''}`,
+        value: `${fmtMoney(effectiveReimburse, symbol)}${reimburseAccountId ? ` · ${bankName(reimburseAccountId)}` : ''}`,
       });
     }
     if (notes.trim()) details.push({ icon: 'document-text-outline', label: 'Notes', value: notes, block: true });

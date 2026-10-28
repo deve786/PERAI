@@ -2156,6 +2156,13 @@ section('payback and reimbursement spend deduction');
   check('category total reflects payback reduction', ticketCat?.total === 1500);
   check('unaffected category total remains intact', foodCat?.total === 450);
   check('total sum across all rows reflects paybacks', sum(rows) === 1950);
+
+  const rowsWithOverPayback = [
+    { id: '4', date: '2026-10-28', note: 'Paid for friend lunch', notes: '', method: 'UPI', recurring_id: null, category_id: 'c2', cat_name: 'Food', cat_icon: 'restaurant', cat_color: '#444', item_count: 1, amount: 450, refund_amount: null, reimburse_amount: 500 },
+  ];
+  const overTotals = byCategory(rowsWithOverPayback);
+  check('over-payback sets category total to 0 without going negative', overTotals[0]?.total === 0);
+  check('over-payback sum is 0', sum(rowsWithOverPayback) === 0);
 }
 
 section('passbook and net worth transaction history');
