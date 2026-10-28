@@ -31,6 +31,23 @@ import { isFreshPartial, joinSpelledLetters, knownPeople, restatesEarlier } from
 import { listSections } from '../src/lists';
 import { answerFromList, listQuestion } from '../src/listQuestion';
 import { readFileSync } from 'node:fs';
+import {
+  answerBarShares,
+  blend,
+  bucketName,
+  bucketTick,
+  budgetPace,
+  delta,
+  heatLevels,
+  heatRamp,
+  heatWeeks,
+  monthlyTotals,
+  parseMoney,
+  sparkPoints,
+  waterfallDomain,
+  waterfallSteps,
+} from '../src/charts/chartLogic';
+import { describeStage } from '../src/ai/stageText';
 import { join } from 'node:path';
 import { conversationQuery } from '../src/ai/ask';
 import {
@@ -256,6 +273,159 @@ check('returns null with no period', guessDateRange('when did I last cut my hair
     range.from.getMonth() === 7 && range.to.getMonth() === 7,
     `${range.from.toDateString()} -> ${range.to.toDateString()}`
   );
+}
+
+section('chart arithmetic: colour');
+{
+  check('blending at full strength is the colour itself', blend('#2F5D45', '#FFFFFF', 1) === '#2f5d45', blend('#2F5D45', '#FFFFFF', 1));
+  check('blending at nothing is the background', blend('#2F5D45', '#FFFFFF', 0) === '#ffffff');
+  check('blending halfway sits between', blend('#000000', '#FFFFFF', 0.5) === '#808080', blend('#000000', '#FFFFFF', 0.5));
+  const ramp = heatRamp('#2F5D45', '#FFFFFF');
+  check('the heat ramp has four steps', ramp.length === 4);
+  check('the heat ramp ends on the accent itself', ramp[3] === '#2f5d45');
+  // The validated values: these exact steps passed every ordinal check.
+  check('the light-mode ramp is the one that was validated', ramp.join(',') === '#a1b6ab,#7c998a,#547a66,#2f5d45', ramp.join(','));
+}
+
+section('chart arithmetic: calendar heatmap');
+{
+  const levels = heatLevels([0, 10, 20, 30, 40, 0, 1000]);
+  check('a day with nothing is level 0', levels[0] === 0 && levels[5] === 0);
+  check('the largest day is the darkest step', levels[6] === 4);
+  check('steps rise with the amount', levels[1] <= levels[2] && levels[2] <= levels[3] && levels[3] <= levels[4]);
+  // One huge day must not wash every ordinary day out to the palest step.
+  const spiky = heatLevels([10, 12, 14, 16, 10000]);
+  check('one huge day does not flatten the rest', new Set(spiky.slice(0, 4)).size >= 3, spiky);
+  check('no activity at all is all zeros', heatLevels([0, 0, 0]).every((l) => l === 0));
+
+  // October 2026 starts on a Thursday and ends on a Saturday.
+  const totals = new Map([['2026-10-16', { value: 3273, count: 5 }]]);
+  const weeks = heatWeeks('2026-10-01', '2026-10-31', totals);
+  check('every week has seven days', weeks.every((week) => week.length === 7));
+  check('the grid starts on the Monday before the 1st', weeks[0][0].date === '2026-09-28', weeks[0][0].date);
+  check('days before the period are marked outside', weeks[0][0].outside && weeks[0][2].outside && !weeks[0][3].outside);
+  check('the 1st falls on Thursday', weeks[0][3].date === '2026-10-01');
+  check('the grid ends on the Sunday after the 31st', weeks[weeks.length - 1][6].date === '2026-11-01');
+  check('the day after the period is outside', weeks[weeks.length - 1][6].outside);
+  const sixteenth = weeks.flat().find((cell) => cell.date === '2026-10-16');
+  check('a day carries its total and count', sixteenth?.value === 3273 && sixteenth.count === 5);
+  check('the only active day is the darkest', sixteenth?.level === 4);
+  check('a period running backwards is empty', heatWeeks('2026-10-31', '2026-10-01', totals).length === 0);
+}
+
+section('chart arithmetic: waterfall');
+{
+  const steps = waterfallSteps(10000, [
+    { name: 'Food', total: 3000 },
+    { name: 'Travel', total: 4000 },
+  ]);
+  check('it starts at income', steps[0].kind === 'start' && steps[0].to === 10000);
+  check('the largest category comes off first', steps[1].label === 'Travel' && steps[1].from === 10000 && steps[1].to === 6000);
+  check('each step starts where the last ended', steps[2].from === 6000 && steps[2].to === 3000);
+  check('it ends on what was left', steps[3].kind === 'end' && steps[3].to === 3000 && steps[3].label === 'Left over');
+
+  const over = waterfallSteps(1000, [{ name: 'Rent', total: 1500 }]);
+  check('spending past income ends as overspent', over[over.length - 1].label === 'Overspent' && over[over.length - 1].to === -500);
+  const [low, high] = waterfallDomain(over);
+  check('the axis reaches below zero when money ran out', low === -500 && high === 1000, [low, high]);
+
+  const many = waterfallSteps(
+    100000,
+    Array.from({ length: 9 }, (_, i) => ({ name: `C${i}`, total: 1000 * (9 - i) }))
+  );
+  check('beyond six categories the rest fold into one step', many.some((s) => s.label === 'Everything else'));
+  check('folding loses no money', many[many.length - 1].to === 100000 - 45000, many[many.length - 1].to);
+  check('a category with nothing in it gets no step', !waterfallSteps(100, [{ name: 'Zero', total: 0 }]).some((s) => s.label === 'Zero'));
+}
+
+section('chart arithmetic: comparisons');
+{
+  const spendingUp = delta(1200, 1000, false);
+  check('spending up 20% is reported as 20%', spendingUp.pct === 20 && spendingUp.direction === 'up');
+  check('spending going up is not good news', spendingUp.good === false);
+  check('income going up is good news', delta(1200, 1000, true).good === true);
+  check('income going down is not', delta(800, 1000, true).good === false);
+  check('no change is neither good nor bad', delta(1000, 1000, true).good === null);
+  check('nothing to compare with gives no percentage', delta(500, 0, true).pct === null);
+  // A net that went from -1000 to -500 improved, even though both are negative.
+  check('a negative figure that rises is an improvement', delta(-500, -1000, true).direction === 'up' && delta(-500, -1000, true).good === true);
+}
+
+section('chart arithmetic: budget pace');
+{
+  const early = budgetPace(6800, 10000, 10, 31);
+  check('68% used on the 10th is ahead of pace', early.aheadBy > 0, early);
+  check('days left counts the rest of the month', early.daysLeft === 21);
+  check('what is left per day keeps you on budget', Math.abs(early.perDayLeft - 3200 / 21) < 0.01, early.perDayLeft);
+  const late = budgetPace(6800, 10000, 25, 31);
+  check('68% used on the 25th is under pace', late.aheadBy < 0, late);
+  const over = budgetPace(12000, 10000, 20, 30);
+  check('over budget leaves nothing per day', over.perDayLeft === 0);
+  check('no budget means nothing used', budgetPace(500, 0, 10, 30).used === 0);
+}
+
+section('chart arithmetic: sparklines');
+{
+  const months = monthlyTotals(
+    [
+      { date: '2026-10-05', value: 100 },
+      { date: '2026-10-20', value: 50 },
+      { date: '2026-08-01', value: 30 },
+      { date: '2025-01-01', value: 999 },
+    ],
+    '2026-10-28',
+    6
+  );
+  check('six months, oldest first', months.length === 6, months);
+  check('the last value is this month', months[5] === 150, months);
+  check('a quiet month is a zero, not a gap', months[4] === 0, months);
+  check('a month out of range is left out', !months.includes(999));
+  const points = sparkPoints([0, 10, 5], 50, 20);
+  check('a sparkline has a point per value', points.length === 3);
+  check('the highest value sits highest', points[1][1] < points[0][1] && points[1][1] < points[2][1]);
+  check('the line spans the width', points[0][0] === 3 && points[2][0] === 47);
+}
+
+section('chart arithmetic: bars inside an answer');
+{
+  check('rupees with commas and paise are read', parseMoney('₹1,825.00') === 1825);
+  check('a bare figure is read', parseMoney('4300') === 4300);
+  check('a duration is not money', parseMoney('3 days') === null);
+  check('nothing is not money', parseMoney(null) === null);
+  const shares = answerBarShares(['₹2,904.90', '₹1,825.00', null, '3 days']);
+  check('the largest figure fills the bar', shares?.[0] === 1);
+  check('a smaller figure is its share of the largest', Math.abs((shares?.[1] ?? 0) - 1825 / 2904.9) < 0.0001);
+  check('a row with no money gets no bar', shares?.[2] === null && shares?.[3] === null);
+  check('a single money figure draws no bars at all', answerBarShares(['₹500', 'note']) === null);
+}
+
+section('chart arithmetic: naming buckets');
+{
+  check('a day bucket reads as its date', bucketTick({ date: '2026-10-16', label: '16' }) === '16 Oct');
+  check('a month bucket reads as month and year', bucketTick({ date: '2026-10-01', label: '10' }) === 'Oct 2026');
+  check('a day is named with its weekday', bucketName({ date: '2026-10-16', label: '16' }) === 'Fri 16 Oct', bucketName({ date: '2026-10-16', label: '16' }));
+  check('a week is named by its first day', bucketName({ date: '2026-10-05', label: 'W2' }) === 'Week of 5 Oct');
+  check('a month is named as month and year', bucketName({ date: '2026-10-01', label: '10' }) === 'Oct 2026');
+}
+
+section('what the waiting answer says');
+{
+  check('it starts by searching', describeStage(null) === 'Searching your record…');
+  check(
+    'it names what it found',
+    describeStage({ step: 'reading', found: { memories: 0, documents: 3, websites: 0, messages: 12, expenses: true } }) ===
+      'Reading 3 documents, 12 messages and your expenses…',
+    describeStage({ step: 'reading', found: { memories: 0, documents: 3, websites: 0, messages: 12, expenses: true } })
+  );
+  check(
+    'one of a thing is singular',
+    describeStage({ step: 'reading', found: { memories: 1, documents: 0, websites: 0, messages: 0, expenses: false } }) === 'Reading 1 note…'
+  );
+  check(
+    'finding nothing says so',
+    describeStage({ step: 'reading', found: { memories: 0, documents: 0, websites: 0, messages: 0, expenses: false } }).startsWith('Nothing')
+  );
+  check('then it writes', describeStage({ step: 'writing' }) === 'Writing the answer…');
 }
 
 section('sample data can be recognised exactly');

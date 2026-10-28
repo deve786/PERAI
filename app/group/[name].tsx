@@ -30,6 +30,7 @@ import { fullDateLabel, toSentence } from '@/format';
 import { groupSummaries, membersOf, normalizeGroupName, splitTasks } from '@/groups';
 import { logOk } from '@/log';
 import { showDialog } from '@/dialogStore';
+import { useProvideAskContext } from '@/askContextStore';
 import { normalizeQuery } from '@/manglish';
 import { knownPeople } from '@/speechText';
 import { dueToday, parseWhen } from '@/whenText';
@@ -52,6 +53,8 @@ export default function GroupScreen() {
   const router = useRouter();
   const { name } = useLocalSearchParams<{ name: string }>();
   const groupName = normalizeGroupName(decodeURIComponent(String(name ?? ''))) ?? '';
+  // The floating Ask button on this page asks about this group.
+  useProvideAskContext(groupName ? { label: groupName, prefill: `In ${groupName}, ` } : null);
 
   const { memories } = useMemories();
   const { empty } = useGroups();
@@ -637,7 +640,7 @@ export default function GroupScreen() {
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
-  content: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 48, gap: 16 },
+  content: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 104, gap: 16 },
   roundButton: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   gapCard: { gap: 10 },
   noMargin: { marginBottom: 0 },

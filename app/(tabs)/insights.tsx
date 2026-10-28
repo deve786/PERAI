@@ -6,7 +6,12 @@ import { Ionicons } from '@expo/vector-icons';
 import { Donut, DualBars, RankedCounts } from '@/components/InsightCharts';
 import { memoryInsights } from '@/insights';
 import { useMemories } from '@/useMemories';
-import { Bars, RankedCategories } from '@/expense/charts';
+import { RankedCategories } from '@/expense/charts';
+import { TrendBars } from '@/components/charts/TrendBars';
+import { CalendarHeatmap } from '@/components/charts/CalendarHeatmap';
+import { Waterfall } from '@/components/charts/Waterfall';
+import { bucketName, bucketTick, monthlyTotals } from '@/charts/chartLogic';
+import { useProvideAskContext } from '@/askContextStore';
 import {
   listCategories,
   listExpenses,
@@ -28,7 +33,7 @@ import {
   toStr,
   todayStr,
 } from '@/expense/dates';
-import { byCategory, fmtMoney, previousRange, sum, trend } from '@/expense/stats';
+import { byCategory, fmtMoney, net as netOf, previousRange, sum, trend } from '@/expense/stats';
 import { radius, useTheme } from '@/expense/theme';
 import { Card, Chip, Empty, Meter, Row, Screen, Segmented, T, Title } from '@/expense/ui';
 
@@ -168,17 +173,22 @@ export default function Insights() {
   const [recurring, setRecurring] = useState<Recurring[]>([]);
   const [loans, setLoans] = useState<BorrowLendSummary | null>(null);
   const [catBudgets, setCatBudgets] = useState<Map<string, number>>(new Map());
+  // Six months of expenses, for the sparkline beside each category.
+  const [recentSix, setRecentSix] = useState<ExpenseRow[]>([]);
 
   const load = useCallback(async () => {
     try {
-      const [rows, prevRows, incomeRows, recurringRows, loanSummary, cats] = await Promise.all([
+      const sixFrom = toStr(new Date(new Date().getFullYear(), new Date().getMonth() - 5, 1));
+      const [rows, prevRows, incomeRows, recurringRows, loanSummary, cats, sixRows] = await Promise.all([
         listExpenses(from, to),
         listExpenses(prevFrom, prevTo),
         listIncome(from, to),
         listRecurring(),
         getBorrowLendSummary().catch(() => null),
         listCategories().catch(() => []),
+        listExpenses(sixFrom, todayStr()),
       ]);
+      setRecentSix(sixRows);
       setExpenses(rows);
       setPrevExpenses(prevRows);
       setIncome(incomeRows);
@@ -217,18 +227,78 @@ export default function Insights() {
   // Page padding 20 + card padding 16 + card border, each side.
   const chartWidth = width - 74;
 
-  const categories = useMemo(() => byCategory(expenses), [expenses]);
+  // A category whose spending was all refunded or paid back cost nothing, and a
+  // "₹0 · 0%" row only takes room from the ones that did.
+  const categories = useMemo(() => byCategory(expenses).filter((k) => k.total > 0), [expenses]);
   const spendSeries = useMemo(() => trend(expenses, from, to), [expenses, from, to]);
   const incomeSeries = useMemo(() => trend(income, from, to), [income, from, to]);
+  // The span before, bucket for bucket, drawn behind this one's bars.
+  const prevSpendSeries = useMemo(
+    () => trend(prevExpenses, prevFrom, prevTo).map((bucket) => bucket.total),
+    [prevExpenses, prevFrom, prevTo]
+  );
+  const spendPoints = useMemo(
+    () => spendSeries.map((bucket) => ({ ...bucket, label: bucketTick(bucket), raw: bucket.label })),
+    [spendSeries]
+  );
+
+  // Net spend and how many entries, per day, for the calendar.
+  const spendByDay = useMemo(() => {
+    const days = new Map<string, { value: number; count: number }>();
+    for (const row of expenses) {
+      const day = days.get(row.date) ?? { value: 0, count: 0 };
+      day.value += netOf(row);
+      day.count += 1;
+      days.set(row.date, day);
+    }
+    return days;
+  }, [expenses]);
+
+  // Six monthly totals per category, oldest first, for the sparklines.
+  const categoryTrends = useMemo(() => {
+    const byName = new Map<string, { date: string; value: number }[]>();
+    for (const row of recentSix) {
+      const list = byName.get(row.cat_name) ?? [];
+      list.push({ date: row.date, value: netOf(row) });
+      byName.set(row.cat_name, list);
+    }
+    const today = todayStr();
+    return new Map([...byName].map(([name, rows]) => [name, monthlyTotals(rows, today, 6)]));
+  }, [recentSix]);
+
+  // Ranked and written as what was really spent: an expense that was paid
+  // back or refunded is not one of your largest, and was not paid by that
+  // method in any sense that matters. Both used the billed amount before.
   const biggest = useMemo(
-    () => [...expenses].sort((a, b) => b.amount - a.amount).slice(0, 5),
+    () => [...expenses].sort((a, b) => netOf(b) - netOf(a)).filter((row) => netOf(row) > 0).slice(0, 5),
     [expenses]
   );
   const methods = useMemo(() => {
     const totals = new Map<string, number>();
-    for (const row of expenses) totals.set(row.method, (totals.get(row.method) ?? 0) + row.amount);
-    return [...totals.entries()].sort((a, b) => b[1] - a[1]);
+    for (const row of expenses) totals.set(row.method, (totals.get(row.method) ?? 0) + netOf(row));
+    return [...totals.entries()].filter(([, total]) => total > 0).sort((a, b) => b[1] - a[1]);
   }, [expenses]);
+
+  // Notes captured per day, for their calendar.
+  const capturedByDay = useMemo(() => {
+    const days = new Map<string, { value: number; count: number }>();
+    for (const memory of memories) {
+      const day = toStr(new Date(memory.createdAt));
+      if (day < from || day > to) continue;
+      const entry = days.get(day) ?? { value: 0, count: 0 };
+      entry.value += 1;
+      entry.count += 1;
+      days.set(day, entry);
+    }
+    return days;
+  }, [memories, from, to]);
+  const capturedPoints = useMemo(
+    () => record.perDay.map((bucket) => ({ ...bucket, label: bucketTick(bucket), raw: bucket.label })),
+    [record.perDay]
+  );
+
+  // The floating Ask button on this screen asks about the period on show.
+  useProvideAskContext({ label: label, prefill: `In ${label}, ` });
 
   const inOutSeries = useMemo(
     () =>
@@ -398,13 +468,44 @@ export default function Insights() {
 
               {categories.length > 0 ? (
                 <Block title="Where it went">
-                  <RankedCategories data={categories} total={spent} budgets={catBudgets} />
+                  <RankedCategories data={categories} total={spent} budgets={catBudgets} trends={categoryTrends} />
+                  <T size={12} sub>The line beside each is its last six months.</T>
+                </Block>
+              ) : null}
+
+              {earned > 0 && categories.length > 0 ? (
+                <Block title="Where the income went">
+                  <Waterfall
+                    income={earned}
+                    categories={categories.map((k) => ({ name: k.name, total: k.total }))}
+                    format={(v) => fmtMoney(Math.abs(v), symbol)}
+                  />
                 </Block>
               ) : null}
 
               {expenses.length > 0 ? (
                 <Block title={trendTitle}>
-                  <Bars data={spendSeries} width={chartWidth} />
+                  <TrendBars
+                    data={spendPoints}
+                    previous={prevSpendSeries}
+                    width={chartWidth}
+                    format={(v) => fmtMoney(v, symbol)}
+                    legend={[label, period === 'month' ? compareTo : 'Period before']}
+                    describe={(point) => bucketName(spendSeries.find((s) => s.date === point.date) ?? point)}
+                  />
+                </Block>
+              ) : null}
+
+              {expenses.length > 0 && span <= 400 ? (
+                <Block title="Every day">
+                  <CalendarHeatmap
+                    from={from}
+                    to={to}
+                    totals={spendByDay}
+                    width={chartWidth}
+                    format={(v) => fmtMoney(v, symbol)}
+                    noun={{ one: "expense", many: "expenses" }}
+                  />
                 </Block>
               ) : null}
 
@@ -416,7 +517,7 @@ export default function Insights() {
                         key={row.id}
                         title={row.note || row.cat_name}
                         sub={row.note ? `${row.cat_name} · ${prettyDate(row.date)}` : prettyDate(row.date)}
-                        value={fmtMoney(row.amount, symbol)}
+                        value={fmtMoney(netOf(row), symbol)}
                         last={i === biggest.length - 1}
                       />
                     ))}
@@ -559,8 +660,28 @@ export default function Insights() {
               </Block>
 
               <Block title="What you captured">
-                <Bars data={record.perDay} width={chartWidth} />
+                <TrendBars
+                  data={capturedPoints}
+                  previous={prevRecord.perDay.map((bucket) => bucket.total)}
+                  width={chartWidth}
+                  format={(v) => `${v} ${v === 1 ? 'entry' : 'entries'}`}
+                  legend={[label, period === 'month' ? compareTo : 'Period before']}
+                  describe={(point) => bucketName(record.perDay.find((b) => b.date === point.date) ?? point)}
+                />
               </Block>
+
+              {span <= 400 ? (
+                <Block title="Every day">
+                  <CalendarHeatmap
+                    from={from}
+                    to={to}
+                    totals={capturedByDay}
+                    width={chartWidth}
+                    format={(v) => `${v} ${v === 1 ? 'entry' : 'entries'}`}
+                    noun={{ one: "entry", many: "entries" }}
+                  />
+                </Block>
+              ) : null}
 
               {typeRows.length > 0 ? (
                 <Block title="By kind">
@@ -767,7 +888,7 @@ function Glossary({ entries }: { entries: { term: string; meaning: string }[] })
 }
 
 const styles = StyleSheet.create({
-  content: { padding: 20, paddingTop: 12, paddingBottom: 40, gap: 12 },
+  content: { padding: 20, paddingTop: 12, paddingBottom: 104, gap: 12 },
   chipScroller: { marginHorizontal: -20 },
   chipRow: { paddingHorizontal: 20, paddingTop: 4 },
   navButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },

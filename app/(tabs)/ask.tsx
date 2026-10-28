@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
   ActivityIndicator,
   Keyboard,
@@ -13,7 +13,10 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { askAI, type AskResult } from '@/ai/ask';
-import { askAIEnhanced, type EnhancedAskResult } from '@/ai/askEnhanced';
+import { askAIEnhanced, type AskStage, type EnhancedAskResult } from '@/ai/askEnhanced';
+import { describeStage } from '@/ai/stageText';
+import { AnswerSkeleton } from '@/components/AnswerSkeleton';
+import * as Haptics from 'expo-haptics';
 import {
   looksLikeCommand,
   planCommand,
@@ -96,6 +99,8 @@ export default function AskScreen() {
 
   const [question, setQuestion] = useState('');
   const [asking, setAsking] = useState('');
+  // Where the answer has got to, for the line under the waiting card.
+  const [askStage, setAskStage] = useState<AskStage | null>(null);
   /** The conversation, newest first — a follow-up is answered knowing these. */
   const [thread, setThread] = useState<{
     question: string;
@@ -114,6 +119,27 @@ export default function AskScreen() {
   const router = useRouter();
   const configured = hasApiKey();
   const { budget, setBudget } = useExpenseTheme();
+
+  // Arrived from "Ask about this" or the floating Ask button: the question is
+  // started for you, with the cursor at its end, and nothing is sent until
+  // you finish it.
+  const { prefill } = useLocalSearchParams<{ prefill?: string }>();
+  const askInput = useRef<TextInput>(null);
+  // Taken into the box once per arrival, during render; the parameter is then
+  // cleared, so the same start can be offered again next time.
+  const [takenPrefill, setTakenPrefill] = useState<string | null>(null);
+  if (prefill && prefill !== takenPrefill) {
+    setTakenPrefill(prefill);
+    setQuestion(prefill);
+  } else if (!prefill && takenPrefill !== null) {
+    setTakenPrefill(null);
+  }
+  useEffect(() => {
+    if (!prefill) return;
+    router.setParams({ prefill: undefined });
+    const focus = setTimeout(() => askInput.current?.focus(), 250);
+    return () => clearTimeout(focus);
+  }, [prefill, router]);
 
   const { memories } = useMemories();
   const [recentQuestions, setRecentQuestions] = useState<string[]>([]);
@@ -305,18 +331,29 @@ export default function AskScreen() {
 
       const startTime = Date.now();
       const result =
-        tripAnswer ?? (await askAIEnhanced(q, new Date().toISOString(), all, history, expenseContext));
+        tripAnswer ??
+        (await askAIEnhanced(q, new Date().toISOString(), all, history, expenseContext, {
+          onStage: setAskStage,
+        }));
       const durationMs = Date.now() - startTime;
       scrollToNewest.current = true;
       setThread((current) => [{ question: q, result, durationMs }, ...current]);
+      // A tap you feel when the answer lands, so you can look away while it
+      // works. A softer one when it found nothing.
+      void (result.found
+        ? Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+        : Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+      ).catch(() => {});
       await saveQuestion(q);
       await loadRecent();
     } catch (err) {
       // Leave the question in the box so it can be retried with one press.
       setQuestion(q);
       setError(describeError(err));
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
     } finally {
       setAsking('');
+      setAskStage(null);
       setBusy(false);
     }
   }
@@ -624,12 +661,16 @@ export default function AskScreen() {
                   <Text style={styles.bubbleText}>{asking}</Text>
                 </View>
               ) : null}
-              <View style={[styles.answerCard, styles.pending]}>
-                <ActivityIndicator size="small" color={colors.moss} />
-                <Text style={type.body}>
-                  {plan ? 'Applying the change…' : 'Searching your record…'}
-                </Text>
-              </View>
+              {plan ? (
+                <View style={[styles.answerCard, styles.pending]}>
+                  <ActivityIndicator size="small" color={colors.moss} />
+                  <Text style={type.body}>Applying the change…</Text>
+                </View>
+              ) : (
+                // The answer's own shape, standing where it will land, with a
+                // line saying what is being read — not an unexplained spinner.
+                <AnswerSkeleton stage={describeStage(askStage)} />
+              )}
             </View>
           ) : null}
 
@@ -792,6 +833,7 @@ export default function AskScreen() {
 
           <View style={styles.inputRow}>
             <TextInput
+              ref={askInput}
               value={displayQuestion}
               onChangeText={setQuestion}
               placeholder={

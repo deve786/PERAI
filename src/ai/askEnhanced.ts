@@ -254,13 +254,36 @@ in Malayalam script is answered in Malayalam script; one in romanised Malayalam
 amounts and names stay exactly as they are recorded. The citation rules do not
 change.`;
 
+/**
+ * Where an answer has got to, for the screen to say while it waits.
+ *
+ * Finding things takes well under a second; writing the answer is most of the
+ * wait. Saying which is happening — and what was found — turns ten seconds of
+ * an unexplained spinner into ten seconds of visible progress.
+ */
+export type AskStage =
+  | { step: 'searching' }
+  | {
+      step: 'reading';
+      found: { memories: number; documents: number; websites: number; messages: number; expenses: boolean };
+    }
+  | { step: 'writing' };
+
 export async function askAIEnhanced(
   question: string,
   nowISO: string,
   allMemories: Memory[],
   history: AskTurn[] = [],
-  expenseContext?: unknown
+  expenseContext?: unknown,
+  options: { onStage?: (stage: AskStage) => void } = {}
 ): Promise<EnhancedAskResult> {
+  const stage = (next: AskStage) => {
+    try {
+      options.onStage?.(next);
+    } catch {
+      // A progress line is never worth failing an answer over.
+    }
+  };
   const trimmed = question.trim();
   if (!trimmed) {
     return {
@@ -312,7 +335,18 @@ export async function askAIEnhanced(
     }
   }
 
+  stage({ step: 'searching' });
   const retrieval = await retrieveRelevantContent(searchQuery, nowISO, allMemories);
+  stage({
+    step: 'reading',
+    found: {
+      memories: retrieval.memories.length,
+      documents: new Set(retrieval.documentChunks.map((chunk) => chunk.documentId)).size,
+      websites: retrieval.websites.length,
+      messages: retrieval.telegramMessages.length,
+      expenses: expenseContext !== undefined && expenseContext !== null,
+    },
+  });
   const context = buildUnifiedContext(retrieval, expenseContext, trimmed);
 
   const recentHistory = history.slice(-HISTORY_TURNS);
@@ -327,6 +361,7 @@ export async function askAIEnhanced(
   const userMessage = `${timeHeader}\n\n${context}${historyPrompt}\n\nQUESTION: ${trimmed}\n\nAnswer strictly from the data provided above. Cite source IDs and include all sourcesUsed.`;
 
   try {
+    stage({ step: 'writing' });
     const raw = await requestJson({
       model: getEffectiveAskModel(),
       system: ENHANCED_SYSTEM_PROMPT,

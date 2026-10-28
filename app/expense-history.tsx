@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { FlatList, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { SectionList, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { expenseTripLabels, listCategories, listExpenses, listIncome, listIncomeCategories, type Category, type ExpenseRow, type IncomeRow } from '@/expense/db';
@@ -197,20 +197,24 @@ export default function History() {
           </Pressable>
         }
       />
-      <FlatList
-        data={groups}
+      {/* Each day's heading and totals stay pinned while its entries scroll
+          under them, so a long day never leaves you guessing which it was. */}
+      <SectionList
+        sections={groups.map((g) => ({ key: g.date, data: [g] }))}
         keyExtractor={(g) => g.date}
+        stickySectionHeadersEnabled
         ListHeaderComponent={header}
         contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 40 }}
-        renderItem={({ item: g }) => {
+        renderSectionHeader={({ section }) => {
+          const g = section.data[0];
           const dayExpenses = g.items.filter((e) => e.kind === 'expense').map((e) => e.row);
           const dayIncomes = g.items.filter((e) => e.kind === 'income').map((e) => e.row);
           const daySpent = sum(dayExpenses);
           const dayEarned = sum(dayIncomes);
 
           return (
-            <View style={{ marginTop: 16 }}>
-              <Row style={{ justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
+            <View style={{ paddingTop: 16, paddingBottom: 6, backgroundColor: c.bg }}>
+              <Row style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
                 <T size={14} weight="600" sub>{dayHeading(g.date)}</T>
                 {kind === 'expense' ? (
                   daySpent > 0 ? (
@@ -239,16 +243,18 @@ export default function History() {
                   </Row>
                 )}
               </Row>
-              <ListCard>
-                {g.items.map((e, i) =>
-                  e.kind === 'expense'
-                    ? <ExpenseItem key={`e${e.row.id}`} e={e.row} showDate={false} onDeleted={load} trip={tripFor.get(e.row.id)} last={i === g.items.length - 1} />
-                    : <IncomeItem key={`i${e.row.id}`} e={e.row} showDate={false} onDeleted={load} last={i === g.items.length - 1} />
-                )}
-              </ListCard>
             </View>
           );
         }}
+        renderItem={({ item: g }) => (
+          <ListCard>
+            {g.items.map((e, i) =>
+              e.kind === 'expense'
+                ? <ExpenseItem key={`e${e.row.id}`} e={e.row} showDate={false} onDeleted={load} trip={tripFor.get(e.row.id)} last={i === g.items.length - 1} />
+                : <IncomeItem key={`i${e.row.id}`} e={e.row} showDate={false} onDeleted={load} last={i === g.items.length - 1} />
+            )}
+          </ListCard>
+        )}
         ListEmptyComponent={
           <Empty
             icon={hasAny ? 'search-outline' : 'receipt-outline'}

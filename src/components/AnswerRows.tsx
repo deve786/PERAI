@@ -1,8 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
-import { memo, useMemo } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { memo, useEffect, useMemo, useState } from 'react';
+import { Animated, StyleSheet, Text, View } from 'react-native';
 import type { AnswerRow } from '../ai/answerRows';
 import { groupAnswerRows, hasSections } from '../ai/answerRows';
+import { answerBarShares } from '../charts/chartLogic';
 import type { GroundingCheckResult } from '../sources/chunkLogic';
 import { useTheme } from '../ThemeContext';
 import { FONTS, RADIUS, type Colors, type TypeScale } from '../theme';
@@ -32,12 +33,16 @@ export const AnswerRows = memo(function AnswerRows({ rows, statuses }: AnswerRow
 
   const groups = useMemo(() => groupAnswerRows(rows), [rows]);
   const sectioned = hasSections(groups);
+  // One scale for the whole answer, so a figure in one group can be compared
+  // by eye with a figure in another. Null when fewer than two rows carry money.
+  const shares = useMemo(() => answerBarShares(rows.map((row) => row.amount)), [rows]);
 
   if (rows.length === 0) return null;
 
   // Numbering runs across the whole answer, not per section, so "the third
   // one" means the same thing whether or not the list happens to be grouped.
-  let position = 0;
+  // Each group starts where the ones before it left off.
+  const starts = groups.map((_, i) => groups.slice(0, i).reduce((sum, g) => sum + g.rows.length, 0));
 
   return (
     <View style={styles.list}>
@@ -56,9 +61,11 @@ export const AnswerRows = memo(function AnswerRows({ rows, statuses }: AnswerRow
           ) : null}
 
           {group.rows.map((row, rowIndex) => {
-            const status = statuses?.[position];
+            const index = starts[groupIndex] + rowIndex;
+            const position = index + 1;
+            const status = statuses?.[index];
             const unverified = status !== undefined && !status.verified;
-            position += 1;
+            const share = shares?.[index] ?? null;
 
             return (
               <View key={`${row.title}-${rowIndex}`} style={styles.row}>
@@ -77,6 +84,7 @@ export const AnswerRows = memo(function AnswerRows({ rows, statuses }: AnswerRow
                   {row.detail ? (
                     <Text style={[type.fine, styles.detail]}>{row.detail}</Text>
                   ) : null}
+                  {share !== null ? <AnswerBar share={share} color={colors.moss} track={colors.well} /> : null}
                   {row.note ? (
                     <View style={styles.note}>
                       <Text style={styles.noteText}>{row.note}</Text>
@@ -105,6 +113,36 @@ export const AnswerRows = memo(function AnswerRows({ rows, statuses }: AnswerRow
     </View>
   );
 });
+
+/**
+ * A thin bar under a row with a money figure, its length that figure's share
+ * of the largest in the answer. It grows in once, from the left, so the eye
+ * catches the ranking before reading any number. The figure itself stays in
+ * text at the end of the row; the bar never stands in for it.
+ */
+function AnswerBar({ share, color, track }: { share: number; color: string; track: string }) {
+  const [grow] = useState(() => new Animated.Value(0));
+  useEffect(() => {
+    Animated.timing(grow, { toValue: share, duration: 320, useNativeDriver: false }).start();
+  }, [grow, share]);
+
+  return (
+    <View
+      style={{ height: 6, borderRadius: 3, backgroundColor: track, marginTop: 5, marginBottom: 1, overflow: 'hidden' }}
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+    >
+      <Animated.View
+        style={{
+          height: 6,
+          borderRadius: 3,
+          backgroundColor: color,
+          width: grow.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }),
+        }}
+      />
+    </View>
+  );
+}
 
 function makeStyles(colors: Colors) {
   return StyleSheet.create({

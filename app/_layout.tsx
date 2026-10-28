@@ -1,3 +1,5 @@
+import { AskPill } from '@/components/AskPill';
+import { SnackbarHost } from '@/components/SnackbarHost';
 import {
   IBMPlexMono_400Regular,
   IBMPlexMono_500Medium,
@@ -247,6 +249,8 @@ function ThemedApp() {
       <UpdateBanner />
       {/* The app's own popups, so a question about your record looks like the
           record rather than like Android. */}
+      <AskPill />
+      <SnackbarHost />
       <DialogHost />
       <ShareProcessingOverlay />
     </>

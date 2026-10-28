@@ -180,6 +180,28 @@ These were each the cause of a real wrong answer; do not undo them.
 6. **An answer is only `found` when it is traceable** to a cited source or to
    the expense block. Something merely being retrieved is not evidence.
 
+## Shared UI pieces — reuse, don't rebuild
+
+Everything below ships over the air: no gesture or animation library, only
+React Native's own `Animated`, `PanResponder`, `Modal` and `react-native-svg`.
+A new native dependency would need a full APK build, not an OTA.
+
+- **Charts** live in `src/components/charts/` on the root theme
+  (`@/ThemeContext`): `TrendBars` (previous-period ghost bars, touch to
+  inspect), `CalendarHeatmap`, `Waterfall`, `Sparkline`, `StatTile`,
+  `ProgressRing`, `CountUp`, `RankedCategories`. Their arithmetic is in
+  `src/charts/chartLogic.ts`, which is pure and tested in `test-logic.ts`.
+- **The heatmap's colour steps were validated** with the dataviz skill's
+  validator in `--ordinal` mode in both themes. Don't change `HEAT_ALPHAS`
+  without re-running it — the palest step must clear 2:1 against the card.
+- **Undo, not "are you sure?"**: `showSnackbar()` (`src/snackbarStore.ts`).
+  Work that's hard to reverse (expense delete) goes in `onCommit` and only
+  runs once the Undo window has passed.
+- **`BottomSheet` / `SheetAction`** for quick looks and menus; **`SwipeRow`**
+  for row actions (it also exposes them to screen readers).
+- **The Ask pill** shows only on screens that register what they're about with
+  `useProvideAskContext()`. Without context it would only cover a row's figure.
+
 ## What's Not Done
 
 1. **Testing** - `scripts/test-ai.ts` covers the single-source `askAI` only;

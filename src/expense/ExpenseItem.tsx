@@ -7,6 +7,8 @@ import { addDays, fromStr, prettyDate, todayStr } from './dates';
 import { fmtMoney, net } from './stats';
 import { useTheme } from './theme';
 import { ConfirmDialog, IconDot, Money, Row, T } from './ui';
+import { SwipeRow } from '../components/SwipeRow';
+import { showSnackbar } from '../snackbarStore';
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -70,8 +72,28 @@ export function ExpenseItem({ e, showDate = true, onDeleted, trip, last }: {
     onDeleted?.();
   }
 
+  // Swipe left to delete. Nothing is deleted until the Undo has gone: deleting
+  // an expense also moves an account balance and removes any refund entry it
+  // made, so holding the delete back is cleaner than reversing all of that.
+  const swipeDelete = {
+    label: 'Delete',
+    icon: 'trash-outline' as const,
+    tone: 'alert' as const,
+    removes: true,
+    onTrigger: ({ restore }: { restore: () => void }) => {
+      showSnackbar({
+        message: `Deleted ${e.note || e.cat_name}`,
+        onAction: restore,
+        onCommit: async () => {
+          await deleteExpense(e.id);
+          onDeleted?.();
+        },
+      });
+    },
+  };
+
   return (
-    <>
+    <SwipeRow right={swipeDelete}>
       <Pressable
         onPress={() => router.push({ pathname: '/expense/expense', params: { id: String(e.id) } })}
         onLongPress={onLongPress}
@@ -108,6 +130,6 @@ export function ExpenseItem({ e, showDate = true, onDeleted, trip, last }: {
         onConfirm={confirmDelete}
         onCancel={() => setConfirming(false)}
       />
-    </>
+    </SwipeRow>
   );
 }

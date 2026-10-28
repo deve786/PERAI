@@ -143,6 +143,18 @@ export default function More() {
             <IconTile icon="trending-up-outline" label="Your week" onPress={() => router.push('/review')} />
             <IconTile icon="pulse-outline" label="Activity" onPress={() => router.push('/logs')} />
           </View>
+          {/* Up here rather than in the settings list: the documents, sites and
+              channels Ask reads from are something you add to often. Also on a
+              long press of the Ask tab. */}
+          <View style={styles.tiles}>
+            <IconTile
+              wide
+              icon="documents-outline"
+              label="Data sources"
+              sub="Documents, websites and Telegram for Ask"
+              onPress={() => router.push('/data-sources' as any)}
+            />
+          </View>
         </View>
 
         <T size={16} weight="700" sub style={styles.heading}>Money</T>
@@ -161,7 +173,6 @@ export default function More() {
 
         <T size={16} weight="700" sub style={styles.heading}>App</T>
         <ListCard>
-          <ListRow icon="documents-outline" label="Data Sources" onPress={() => router.push('/data-sources' as any)} />
           <ListRow icon="settings-outline" label="Settings" onPress={() => router.push('/settings')} />
           <ListRow icon="cloud-outline" label="Backup" onPress={() => router.push('/account')} />
           <ListRow
