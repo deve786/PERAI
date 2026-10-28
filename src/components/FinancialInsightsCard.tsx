@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { StyleSheet, View, Text } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { fmtMoney } from '@/expense/stats';
+import { fmtMoney, net } from '@/expense/stats';
 import { FONTS } from '@/theme';
 import type { ExpenseRow, Recurring } from '@/expense/db';
 
@@ -31,10 +31,12 @@ export function FinancialInsightsCard({
     const prevWeekCats = new Map<string, number>();
 
     for (const exp of expenses) {
+      const expNet = net(exp);
+      if (expNet <= 0) continue;
       if (exp.date >= oneWeekAgo) {
-        thisWeekCats.set(exp.cat_name, (thisWeekCats.get(exp.cat_name) || 0) + exp.amount);
+        thisWeekCats.set(exp.cat_name, (thisWeekCats.get(exp.cat_name) || 0) + expNet);
       } else if (exp.date >= twoWeeksAgo && exp.date < oneWeekAgo) {
-        prevWeekCats.set(exp.cat_name, (prevWeekCats.get(exp.cat_name) || 0) + exp.amount);
+        prevWeekCats.set(exp.cat_name, (prevWeekCats.get(exp.cat_name) || 0) + expNet);
       }
     }
 
@@ -51,17 +53,13 @@ export function FinancialInsightsCard({
           maxSurgeCat = cat;
           maxSurgeAmount = amt;
         }
-      } else if (amt > 1000 && !maxSurgeCat) {
-        maxSurgeCat = cat;
-        maxSurgePct = 34;
-        maxSurgeAmount = amt;
       }
     }
 
     if (maxSurgeCat && maxSurgePct > 0) {
       return `${maxSurgeCat} surged +${maxSurgePct}% this week (${fmtMoney(maxSurgeAmount, symbol)})`;
     }
-    return `Food & Dining surged +34% this week (${fmtMoney(2180, symbol)})`;
+    return null;
   }, [expenses, symbol]);
 
   // 2. Upcoming bill countdown
@@ -77,22 +75,35 @@ export function FinancialInsightsCard({
       const nextBill = sorted[0];
       const daysUntil = nextBill.day >= currentDay ? nextBill.day - currentDay : 30 + nextBill.day - currentDay;
       const daysText = daysUntil === 0 ? 'today' : daysUntil === 1 ? 'in 1 day' : `in ${daysUntil} days`;
-      return `Upcoming bill: ${nextBill.note || 'Broadband'} ${fmtMoney(nextBill.amount, symbol)} due ${daysText}`;
+      return `Upcoming bill: ${nextBill.note || 'Subscription'} ${fmtMoney(nextBill.amount, symbol)} due ${daysText}`;
     }
-    return `Upcoming bill: Broadband ${fmtMoney(799, symbol)} due in 3 days`;
+    return null;
   }, [recurring, symbol]);
 
   // 3. Projected savings target
   const savingsInsight = useMemo(() => {
-    const effectiveBudget = budget > 0 ? budget : 25000;
-    const remaining = Math.max(0, effectiveBudget - totalSpent);
+    if (budget <= 0) return null;
+    const remaining = Math.max(0, budget - totalSpent);
     const now = new Date();
     const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
     const daysLeft = Math.max(1, daysInMonth - now.getDate());
     const dailyTarget = Math.round(remaining / daysLeft);
-    const estimatedSavings = Math.round(Math.max(1500, remaining * 0.48));
-    return `Save ~${fmtMoney(estimatedSavings, symbol)} if daily spend stays < ${fmtMoney(dailyTarget || 650, symbol)}`;
+    if (totalSpent > budget) {
+      return `Monthly budget exceeded by ${fmtMoney(totalSpent - budget, symbol)}. Reduce discretionary spend.`;
+    }
+    return `Save ~${fmtMoney(remaining, symbol)} if daily spend stays < ${fmtMoney(dailyTarget, symbol)}/day`;
   }, [budget, totalSpent, symbol]);
+
+  const items = useMemo(() => {
+    const list: string[] = [];
+    if (surgeInsight) list.push(surgeInsight);
+    else if (expenses.length > 0) list.push('Spending pace steady across all categories this week');
+    if (billInsight) list.push(billInsight);
+    if (savingsInsight) list.push(savingsInsight);
+    return list;
+  }, [surgeInsight, expenses.length, billInsight, savingsInsight]);
+
+  if (items.length === 0) return null;
 
   return (
     <View style={styles.cardContainer}>
@@ -102,20 +113,12 @@ export function FinancialInsightsCard({
       </View>
 
       <View style={styles.insightsList}>
-        <View style={styles.itemRow}>
-          <Text style={styles.bulletDot}>•</Text>
-          <Text style={styles.itemText} numberOfLines={2}>{surgeInsight}</Text>
-        </View>
-
-        <View style={styles.itemRow}>
-          <Text style={styles.bulletDot}>•</Text>
-          <Text style={styles.itemText} numberOfLines={2}>{billInsight}</Text>
-        </View>
-
-        <View style={styles.itemRow}>
-          <Text style={styles.bulletDot}>•</Text>
-          <Text style={styles.itemText} numberOfLines={2}>{savingsInsight}</Text>
-        </View>
+        {items.map((item, index) => (
+          <View key={index} style={styles.itemRow}>
+            <Text style={styles.bulletDot}>•</Text>
+            <Text style={styles.itemText} numberOfLines={2}>{item}</Text>
+          </View>
+        ))}
       </View>
     </View>
   );

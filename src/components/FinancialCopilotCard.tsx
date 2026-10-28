@@ -11,11 +11,31 @@ interface FinancialCopilotCardProps {
 }
 
 export function FinancialCopilotCard({ totalSpent, budget, symbol = '₹' }: FinancialCopilotCardProps) {
-  const effectiveBudget = budget > 0 ? budget : 25000;
-  const pct = Math.min(1, Math.max(0, totalSpent / effectiveBudget));
+  if (budget <= 0) {
+    return (
+      <View style={styles.cardContainer}>
+        <View style={styles.headerRow}>
+          <View style={styles.titleWrap}>
+            <Ionicons name="pulse" size={14} color="#10b981" />
+            <Text style={styles.title}>Monthly Spend</Text>
+          </View>
+          <Text style={[styles.percentBadge, { color: '#94a3b8' }]}>
+            No budget set
+          </Text>
+        </View>
+        <View style={styles.footerRow}>
+          <Text style={styles.amountSummary}>
+            Total spent: {fmtMoney(totalSpent, symbol)}
+          </Text>
+        </View>
+      </View>
+    );
+  }
+
+  const pct = totalSpent > 0 ? Math.max(0, totalSpent / budget) : 0;
   const spentPct = Math.round(pct * 100);
-  const remaining = Math.max(0, effectiveBudget - totalSpent);
-  const isOver = totalSpent > effectiveBudget;
+  const remaining = Math.max(0, budget - totalSpent);
+  const isOver = totalSpent > budget;
 
   const barColor = isOver ? '#ef4444' : pct > 0.85 ? '#f59e0b' : '#10b981';
 
@@ -36,7 +56,7 @@ export function FinancialCopilotCard({ totalSpent, budget, symbol = '₹' }: Fin
           style={[
             styles.progressBar,
             {
-              width: `${Math.max(2, Math.min(100, spentPct))}%`,
+              width: totalSpent <= 0 ? '0%' : `${Math.max(2, Math.min(100, spentPct))}%`,
               backgroundColor: barColor,
             },
           ]}
@@ -45,11 +65,11 @@ export function FinancialCopilotCard({ totalSpent, budget, symbol = '₹' }: Fin
 
       <View style={styles.footerRow}>
         <Text style={styles.amountSummary}>
-          {fmtMoney(totalSpent, symbol)} of {fmtMoney(effectiveBudget, symbol)}
+          {fmtMoney(totalSpent, symbol)} of {fmtMoney(budget, symbol)}
         </Text>
         <Text style={[styles.statusText, { color: isOver ? '#f87171' : '#10b981' }]}>
           {isOver
-            ? `${fmtMoney(totalSpent - effectiveBudget, symbol)} over`
+            ? `${fmtMoney(totalSpent - budget, symbol)} over`
             : `${fmtMoney(remaining, symbol)} left`}
         </Text>
       </View>

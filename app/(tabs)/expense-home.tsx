@@ -207,7 +207,7 @@ export default function Home() {
 
         {/* AI Financial Copilot: Monthly Spending Health (Design 2) */}
         {isCurrentMonth && (
-          <FinancialCopilotCard totalSpent={total > 0 ? total : 18450} budget={budget > 0 ? budget : 25000} symbol={symbol} />
+          <FinancialCopilotCard totalSpent={total} budget={budget} symbol={symbol} />
         )}
 
         {/* Smart AI Financial Insights */}
@@ -215,8 +215,8 @@ export default function Home() {
           <FinancialInsightsCard
             expenses={rows}
             recurring={recurring}
-            totalSpent={total > 0 ? total : 18450}
-            budget={budget > 0 ? budget : 25000}
+            totalSpent={total}
+            budget={budget}
             symbol={symbol}
             onRefresh={() => void load()}
           />

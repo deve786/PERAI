@@ -26,6 +26,7 @@ const METHOD_OPTIONS = METHODS.map((m): { key: string; label: string } => ({ key
 const METHOD_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
   Cash: 'cash-outline', UPI: 'phone-portrait-outline', Card: 'card-outline', Bank: 'business-outline',
 };
+const isBankLinkedMethod = (m: string) => m === 'UPI' || m === 'Bank' || m === 'Card';
 
 /** "Today, 22 Oct" / "Yesterday, 21 Oct" / "20 Oct". */
 function longDate(s: string) {
@@ -109,9 +110,7 @@ export default function IncomeForm() {
       note: note.trim(), notes: notes.trim(), method,
       user_tag: finalUserTag,
       place: (place || placeDraft).trim(),
-      // Only UPI income is tied to the bank it landed in — switching away
-      // from UPI drops the link rather than leaving a stale one behind.
-      account_id: method === 'UPI' ? accountId : null,
+      account_id: isBankLinkedMethod(method) ? accountId : null,
     });
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
     router.back();
@@ -130,7 +129,7 @@ export default function IncomeForm() {
       {
         icon: METHOD_ICONS[method] ?? 'wallet-outline',
         label: 'Received in',
-        value: method === 'UPI' && bankName(accountId) ? `${method} · ${bankName(accountId)}` : method,
+        value: isBankLinkedMethod(method) && bankName(accountId) ? `${method} · ${bankName(accountId)}` : method,
       },
     ];
     if (place.trim()) details.push({ icon: 'location-outline', label: 'Place', value: place });
@@ -247,7 +246,7 @@ export default function IncomeForm() {
 
           <Label style={{ marginTop: 20 }}>Received in</Label>
           <Segmented options={METHOD_OPTIONS} value={method} onChange={setMethod} />
-          {method === 'UPI' ? (
+          {isBankLinkedMethod(method) ? (
             <View style={{ marginTop: 12 }}>
               {bankAccounts.length > 0 ? (
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center' }}>
@@ -269,7 +268,7 @@ export default function IncomeForm() {
             </View>
           ) : null}
 
-          <ListCard style={{ marginTop: method === 'UPI' ? 8 : 16 }}>
+          <ListCard style={{ marginTop: isBankLinkedMethod(method) ? 8 : 16 }}>
             <ListRow icon="calendar-outline" iconColor={c.text} label={longDate(date)} onPress={() => setShowPicker((s) => !s)} />
             <ListRow
               icon={moreOpen ? 'remove' : 'add'}

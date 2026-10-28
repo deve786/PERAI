@@ -165,6 +165,7 @@ export default function BorrowLendScreen() {
   // Active + All, Owed to me, I owe; Requests; Settled.
   const filteredItems = items.filter((it) => {
     if (view === 'requests') return it.type === 'request' && it.status === 'active';
+    if (it.type === 'request') return false;
     const statusOk = view === 'settled' ? it.status === 'settled' : it.status === 'active';
     if (!statusOk) return false;
     if (who === 'all') return true;

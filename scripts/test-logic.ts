@@ -41,7 +41,7 @@ import {
   categoryBudgetStatus,
   crossedThreshold,
 } from '../src/expense/budgets';
-import { monthRange } from '../src/expense/dates';
+import { monthRange, nextYm } from '../src/expense/dates';
 import { byCategory, net, sum } from '../src/expense/stats';
 import { attachRunningBalances, computePassbookSummary, groupPassbookByDate, sourceBadge, type PassbookEntry } from '../src/expense/passbookLogic';
 import {
@@ -1165,6 +1165,18 @@ section('a trip and the spending during it');
     sum([{ amount: 500 }, { amount: 300 }]) === 800
   );
 
+  const reimbursedRows: LinkableExpense[] = [
+    { id: 'h', date: '2026-10-03', amount: 1000, cat_name: 'Hotel', refund_amount: 100, reimburse_amount: 300 },
+    { id: 'i', date: '2026-10-04', amount: 500, cat_name: 'Hotel', reimburse_amount: 200 },
+  ];
+  const reimbursedTotals = totalsByCurrency(reimbursedRows, '₹');
+  check('both refund and payback are deducted from trip spending', reimbursedTotals[0].total === 900, reimbursedTotals);
+  const reimbursedBreakdown = categoryBreakdown(reimbursedRows);
+  check('and out of trip category breakdown too', reimbursedBreakdown[0].total === 900, reimbursedBreakdown);
+
+  check('nextYm advances within same year', nextYm('2026-08') === '2026-09');
+  check('nextYm rolls over to next year in December', nextYm('2026-12') === '2027-01');
+
   check('a link id is derived from the pair', linkId('mem1', 'exp1') === 'mem1:exp1');
   check('so the same pair is always the same row', linkId('mem1', 'exp1') === linkId('mem1', 'exp1'));
 }
@@ -2200,8 +2212,8 @@ section('passbook and net worth transaction history');
 
   const summary = computePassbookSummary(sampleEntries);
   check('computes passbook total in', summary.totalIn === 50000);
-  check('computes passbook total out using net amounts', summary.totalOut === 1200);
-  check('computes net flow correctly', summary.netFlow === 48800);
+  check('computes passbook total out matching bank debits', summary.totalOut === 6469);
+  check('computes net flow correctly', summary.netFlow === 43531);
 
   const outBadge = sourceBadge(sampleEntries[1]);
   check('formats out source badge correctly', outBadge.label === 'From SBI Bank' && outBadge.isSource === true);
@@ -2211,7 +2223,7 @@ section('passbook and net worth transaction history');
 
   const groups = groupPassbookByDate(sampleEntries);
   check('groups entries by day', groups.length === 2);
-  check('today group has correct in and out', groups[0].dayIn === 50000 && groups[0].dayOut === 0);
+  check('today group has correct in and out', groups[0].dayIn === 50000 && groups[0].dayOut === 5269);
   check('yesterday group has correct out', groups[1].dayOut === 1200 && groups[1].dayIn === 0);
 
   const withBalances = attachRunningBalances(sampleEntries, 100000);

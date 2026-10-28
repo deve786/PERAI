@@ -1,7 +1,7 @@
 import * as SQLite from 'expo-sqlite';
 import { Platform } from 'react-native';
 import { linkId } from './tripSpending';
-import { todayStr, ymKey } from './dates';
+import { nextYm, todayStr, ymKey } from './dates';
 
 export type Category = { id: string; name: string; icon: string; color: string; monthly_budget: number | null };
 export type TaggedUser = { id: string; name: string };
@@ -546,22 +546,32 @@ async function init() {
   return db;
 }
 
-/** Create this month's entries for any recurring expense whose day has arrived. */
+/** Create entries for any recurring expense whose day has arrived, backfilling up to 12 missed months if unopened. */
 async function generateRecurring(db: SQLite.SQLiteDatabase) {
   const today = todayStr();
-  const ym = ymKey(today);
+  const currentYm = ymKey(today);
   const dayNow = Number(today.slice(8, 10));
-  const daysInMonth = new Date(Number(today.slice(0, 4)), Number(today.slice(5, 7)), 0).getDate();
-  const list = await db.getAllAsync<Recurring>("SELECT * FROM recurring WHERE last_ym != ? AND deleted = 0", ym);
+  const list = await db.getAllAsync<Recurring>("SELECT * FROM recurring WHERE last_ym != ? AND deleted = 0", currentYm);
   for (const r of list) {
-    const day = Math.min(r.day, daysInMonth);
-    if (dayNow >= day) {
-      const date = `${ym}-${String(day).padStart(2, '0')}`;
-      await db.runAsync(
-        'INSERT INTO expenses (id, amount, category_id, date, note, method, recurring_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        uuid(), r.amount, r.category_id, date, r.note, r.method, r.id, nowIso()
-      );
-      await db.runAsync('UPDATE recurring SET last_ym = ?, updated_at = ?, dirty = 1 WHERE id = ?', ym, nowIso(), r.id);
+    let ym = r.last_ym ? nextYm(r.last_ym) : currentYm;
+    let iterations = 0;
+    while (ym <= currentYm && iterations < 12) {
+      iterations++;
+      const [yearStr, monthStr] = ym.split('-');
+      const daysInTargetMonth = new Date(Number(yearStr), Number(monthStr), 0).getDate();
+      const day = Math.min(r.day, daysInTargetMonth);
+
+      if (ym < currentYm || dayNow >= day) {
+        const date = `${ym}-${String(day).padStart(2, '0')}`;
+        await db.runAsync(
+          'INSERT INTO expenses (id, amount, category_id, date, note, method, recurring_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+          uuid(), r.amount, r.category_id, date, r.note, r.method, r.id, nowIso()
+        );
+        await db.runAsync('UPDATE recurring SET last_ym = ?, updated_at = ?, dirty = 1 WHERE id = ?', ym, nowIso(), r.id);
+      } else {
+        break;
+      }
+      ym = nextYm(ym);
     }
   }
 }
@@ -645,9 +655,9 @@ export async function deleteCategory(id: string) {
 
 // ---------- Expenses ----------
 const EXPENSE_SELECT = `
-  SELECT e.*, c.name AS cat_name, c.icon AS cat_icon, c.color AS cat_color,
+  SELECT e.*, COALESCE(c.name, 'Other') AS cat_name, COALESCE(c.icon, 'pricetag-outline') AS cat_icon, COALESCE(c.color, '#64748b') AS cat_color,
     (SELECT COUNT(*) FROM expense_items WHERE expense_id = e.id AND deleted = 0) AS item_count
-  FROM expenses e JOIN categories c ON c.id = e.category_id
+  FROM expenses e LEFT JOIN categories c ON c.id = e.category_id
   WHERE e.deleted = 0`;
 
 export async function listExpenses(from?: string, to?: string) {
@@ -1066,8 +1076,8 @@ export async function findOrCreateIncomeCategory(name: string) {
 }
 
 const INCOME_SELECT = `
-  SELECT i.*, c.name AS cat_name, c.icon AS cat_icon, c.color AS cat_color
-  FROM income i JOIN income_categories c ON c.id = i.category_id
+  SELECT i.*, COALESCE(c.name, 'Other') AS cat_name, COALESCE(c.icon, 'pricetag-outline') AS cat_icon, COALESCE(c.color, '#64748b') AS cat_color
+  FROM income i LEFT JOIN income_categories c ON c.id = i.category_id
   WHERE i.deleted = 0`;
 
 export async function listIncome(from?: string, to?: string) {
@@ -1123,14 +1133,23 @@ export async function deleteIncome(id: string) {
   const db = await getDb();
   const existing = await getIncome(id);
   if (existing) await reconcileAccountBalance({ account_id: existing.account_id ?? null, amount: existing.amount }, { account_id: null, amount: 0 }, 1);
-  await db.runAsync('UPDATE income SET deleted = 1, updated_at = ?, dirty = 1 WHERE id = ?', nowIso(), id);
+  const now = nowIso();
+  await db.runAsync(
+    'UPDATE expenses SET cancelled = 0, refund_amount = NULL, refund_account_id = NULL, refund_income_id = NULL, refund_people_count = NULL, cancelled_at = NULL, updated_at = ?, dirty = 1 WHERE refund_income_id = ?',
+    now, id
+  );
+  await db.runAsync(
+    'UPDATE expenses SET reimbursed = 0, reimburse_amount = NULL, reimburse_account_id = NULL, reimburse_income_id = NULL, updated_at = ?, dirty = 1 WHERE reimburse_income_id = ?',
+    now, id
+  );
+  await db.runAsync('UPDATE income SET deleted = 1, updated_at = ?, dirty = 1 WHERE id = ?', now, id);
 }
 
 // ---------- Recurring ----------
 export async function listRecurring() {
   const db = await getDb();
   return db.getAllAsync<Recurring>(
-    `SELECT r.*, c.name AS cat_name FROM recurring r JOIN categories c ON c.id = r.category_id
+    `SELECT r.*, COALESCE(c.name, 'Other') AS cat_name FROM recurring r LEFT JOIN categories c ON c.id = r.category_id
      WHERE r.deleted = 0 ORDER BY r.day`
   );
 }

@@ -17,6 +17,8 @@ export interface LinkableExpense {
   currency?: string;
   /** Whatever's been refunded from this expense (e.g. a cancelled Ticket) — counted out of the total, not still spent. */
   refund_amount?: number | null;
+  /** Whatever's been paid back / reimbursed from someone else — counted out of personal spending. */
+  reimburse_amount?: number | null;
 }
 
 export interface DateSpan {
@@ -79,8 +81,9 @@ export interface CurrencyTotal {
  *
  * @param defaultCurrency what a row with no currency of its own is in
  */
-/** An expense's amount after subtracting whatever's been refunded from it. */
-const net = (expense: LinkableExpense) => expense.amount - (expense.refund_amount ?? 0);
+/** An expense's amount after subtracting whatever's been refunded or reimbursed from it. */
+const net = (expense: LinkableExpense) =>
+  Math.max(0, expense.amount - (expense.refund_amount ?? 0) - (expense.reimburse_amount ?? 0));
 
 export function totalsByCurrency(
   expenses: LinkableExpense[],

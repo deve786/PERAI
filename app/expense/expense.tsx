@@ -37,6 +37,7 @@ const METHOD_OPTIONS = METHODS.map((m): { key: string; label: string } => ({ key
 const METHOD_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
   Cash: 'cash-outline', UPI: 'phone-portrait-outline', Card: 'card-outline', Bank: 'business-outline',
 };
+const isBankLinkedMethod = (m: string) => m === 'UPI' || m === 'Bank' || m === 'Card';
 const YES_NO = [{ key: 'no', label: 'No' }, { key: 'yes', label: 'Yes' }] as const;
 const SAME_DIFFERENT = [{ key: 'same', label: 'Same amount' }, { key: 'different', label: 'Different amount' }] as const;
 
@@ -383,9 +384,7 @@ export default function ExpenseForm() {
       note: note.trim(), notes: notes.trim(), method,
       user_tag: finalUserTag,
       place: (place || placeDraft).trim(),
-      // Only a UPI payment is tied to the bank it drew from — switching away
-      // from UPI drops the link rather than leaving a stale one behind.
-      account_id: method === 'UPI' ? accountId : null,
+      account_id: isBankLinkedMethod(method) ? accountId : null,
       people_count: isTicket && parseAmt(peopleCount) > 0 ? Math.round(parseAmt(peopleCount)) : null,
       sub_category: finalSubCategory,
     });
@@ -399,6 +398,14 @@ export default function ExpenseForm() {
     // so there's nothing to set (or clear) on another category.
     if (isTicket) {
       const parsedRefund = round2(parseAmt(refundAmount) || 0);
+      if (refunded && parsedRefund > value) {
+        showDialog({
+          title: 'Invalid refund amount',
+          message: `The refund amount (${fmtMoney(parsedRefund, symbol)}) cannot be greater than the expense amount (${fmtMoney(value, symbol)}).`,
+        });
+        setSaving(false);
+        return;
+      }
       if (refunded && parsedRefund > 0) {
         await setExpenseRefund(newId, {
           amount: parsedRefund,
@@ -417,6 +424,14 @@ export default function ExpenseForm() {
     // category, not just a Ticket, so it's keyed off the tag, not isTicket.
     if (finalUserTag) {
       const parsedReimburse = round2((reimburseSame ? value : parseAmt(reimburseAmount)) || 0);
+      if (reimbursed && parsedReimburse > value) {
+        showDialog({
+          title: 'Invalid payback amount',
+          message: `The payback amount (${fmtMoney(parsedReimburse, symbol)}) cannot be greater than the expense amount (${fmtMoney(value, symbol)}).`,
+        });
+        setSaving(false);
+        return;
+      }
       await setExpenseReimbursement(
         newId,
         reimbursed && parsedReimburse > 0 ? { amount: parsedReimburse, accountId: reimburseAccountId } : null
@@ -559,7 +574,7 @@ export default function ExpenseForm() {
   if (mode === 'view') {
     const details: Detail[] = [
       { icon: 'calendar-outline', label: 'Date', value: longDate(date) },
-      { icon: METHOD_ICONS[method] ?? 'wallet-outline', label: 'Paid with', value: method === 'UPI' && bankName(accountId) ? `${method} · ${bankName(accountId)}` : method },
+      { icon: METHOD_ICONS[method] ?? 'wallet-outline', label: 'Paid with', value: isBankLinkedMethod(method) && bankName(accountId) ? `${method} · ${bankName(accountId)}` : method },
     ];
     if (place.trim()) details.push({ icon: 'location-outline', label: 'Place', value: place });
     if (userTag.trim()) details.push({ icon: 'person-outline', label: 'For', value: userTag });
@@ -833,13 +848,13 @@ export default function ExpenseForm() {
 
           <Label style={{ marginTop: 20 }}>Paid with</Label>
           <Segmented options={METHOD_OPTIONS} value={method} onChange={setMethod} />
-          {method === 'UPI' ? (
+          {isBankLinkedMethod(method) ? (
             <View style={{ marginTop: 12 }}>
               {bankChips(accountId, setAccountId, 'From')}
             </View>
           ) : null}
 
-          <ListCard style={{ marginTop: method === 'UPI' ? 8 : 16 }}>
+          <ListCard style={{ marginTop: isBankLinkedMethod(method) ? 8 : 16 }}>
             <ListRow icon="calendar-outline" iconColor={c.text} label={longDate(date)} onPress={() => setShowPicker((s) => !s)} />
             <ListRow
               icon={moreOpen ? 'remove' : 'add'}

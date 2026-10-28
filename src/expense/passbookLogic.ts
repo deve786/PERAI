@@ -56,7 +56,7 @@ export function computePassbookSummary(entries: PassbookEntry[]): PassbookSummar
     if (entry.type === 'in') {
       totalIn += entry.amount;
     } else {
-      totalOut += entry.netAmount;
+      totalOut += entry.amount;
     }
   }
 
@@ -99,7 +99,7 @@ export function groupPassbookByDate(entries: PassbookEntry[]): DayPassbookGroup[
       if (it.type === 'in') {
         dayIn += it.amount;
       } else {
-        dayOut += it.netAmount;
+        dayOut += it.amount;
       }
     }
 
