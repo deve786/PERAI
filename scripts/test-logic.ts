@@ -106,6 +106,7 @@ import {
 import { tripSpendQuestion } from '../src/tripQuestion';
 import { stockGain } from '../src/expense/accountsLogic';
 import { toSentence } from '../src/format';
+import { loanBalanceDelta, outstandingOf } from '../src/expense/loanLogic';
 import { itemSizeText, pricePerUnitText, sizeLabel } from '../src/expense/itemSize';
 import { refundReminderTimes } from '../src/expense/refundSchedule';
 import { monthsWithData, OVERALL, periodLabel, periodRange, previousMonth } from '../src/expense/period';
@@ -2671,6 +2672,18 @@ section('item size (weight)');
   check('price per kg from 250 g', pricePerUnitText(60, 250, 'g') === '₹240 per kg');
   check('price per litre from 500 ml', pricePerUnitText(40, 500, 'ml') === '₹80 per L');
   check('no price per unit without a size', pricePerUnitText(60, null, 'g') === '');
+}
+
+section('loans move account balances');
+{
+  check('lending takes money out of the account', loanBalanceDelta('lent', 1000) === -1000);
+  check('borrowing puts money into the account', loanBalanceDelta('borrowed', 1000) === 1000);
+  check('a request moves nothing', loanBalanceDelta('request', 1000) === 0);
+  // lend 1000, change it to 1500: the account ends 500 lower than before the edit
+  check('editing the amount nets out', loanBalanceDelta('lent', 1500) - loanBalanceDelta('lent', 1000) === -500);
+  check('what is still owed is the amount less what was paid back', outstandingOf(1000, 400) === 600);
+  check('never negative', outstandingOf(1000, 1500) === 0);
+  check('nothing paid back yet', outstandingOf(800, null) === 800);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

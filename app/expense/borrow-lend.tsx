@@ -64,11 +64,12 @@ export default function BorrowLendScreen() {
       const [list, sumData, accounts] = await Promise.all([
         listBorrowLend(),
         getBorrowLendSummary(),
-        listAccounts({ type: 'bank' }),
+        listAccounts(),
       ]);
       setItems(list);
       setSummary(sumData);
-      setBankAccounts(accounts);
+      // Repayments can go to or come from a bank or a cash account.
+      setBankAccounts(accounts.filter((a) => a.type === 'bank' || a.type === 'cash'));
     } catch (err) {
       console.warn('Could not load borrow/lend data:', err);
     }
@@ -97,7 +98,7 @@ export default function BorrowLendScreen() {
       await settleBorrowLend(item.id, {
         recordAsIncome: item.type === 'lent',
         recordAsExpense: item.type === 'borrowed',
-        method: accountId ? 'UPI' : 'Cash',
+        method: accountId && bankAccounts.find((a) => a.id === accountId)?.type !== 'cash' ? 'UPI' : 'Cash',
         accountId,
       });
       void loadData();
@@ -110,13 +111,16 @@ export default function BorrowLendScreen() {
       settleWithAccount(item, null);
       return;
     }
+    // The account the loan was made with comes first: that is where a
+    // repayment usually goes back to, or comes from.
+    const ordered = [...bankAccounts].sort((a, b) => Number(b.id === item.account_id) - Number(a.id === item.account_id));
     showDialog({
-      title: item.type === 'lent' ? 'Which bank did it land in?' : 'Which bank did you pay it from?',
+      title: item.type === 'lent' ? 'Where did it land?' : 'Where did you pay it from?',
       actions: [
         { label: 'Cancel', cancel: true },
-        { label: 'Not through a bank', onPress: () => settleWithAccount(item, null) },
-        ...bankAccounts.map((a) => ({
-          label: a.institution ? `${a.name} · ${a.institution}` : a.name,
+        { label: 'Not through an account', onPress: () => settleWithAccount(item, null) },
+        ...ordered.map((a) => ({
+          label: `${a.institution || a.name}${a.id === item.account_id ? ' (same as the loan)' : ''}`,
           onPress: () => settleWithAccount(item, a.id),
         })),
       ],

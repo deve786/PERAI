@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import {
-  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
@@ -9,6 +8,7 @@ import {
   View,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
+import { KeyboardLift } from '@/components/KeyboardLift';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { FONTS, useTheme } from '@/expense/theme';
 import { ActionBar, Chip, Field, Label, Segmented, T } from '@/expense/ui';
@@ -20,13 +20,17 @@ import {
   type BorrowLendType,
   type BorrowLendStatus,
 } from '@/expense/borrowLendDb';
-import { listTaggedUsers, type TaggedUser } from '@/expense/db';
+import { listTaggedUsers, METHODS, type TaggedUser } from '@/expense/db';
+import { listAccounts, type AccountItem } from '@/expense/accountsDb';
+import { fmtMoney } from '@/expense/stats';
 
 const TYPES: { key: BorrowLendType; label: string }[] = [
   { key: 'lent', label: 'I lent' },
   { key: 'request', label: 'Requested' },
   { key: 'borrowed', label: 'I borrowed' },
 ];
+
+const METHOD_OPTIONS = METHODS.map((m): { key: string; label: string } => ({ key: m, label: m }));
 
 const DUE_OPTIONS = [
   { key: 'none', label: 'No date' },
@@ -62,9 +66,15 @@ export function BorrowLendModal({
   const [status, setStatus] = useState<BorrowLendStatus>('active');
   const [knownUsers, setKnownUsers] = useState<TaggedUser[]>([]);
   const [saving, setSaving] = useState(false);
+  // How the money moved, and which account it left from / arrived in.
+  // accountChoice: null = not picked yet (a lone account is used), '' = picked "none".
+  const [method, setMethod] = useState('UPI');
+  const [accounts, setAccounts] = useState<AccountItem[]>([]);
+  const [accountChoice, setAccountChoice] = useState<string | null>(null);
 
   useEffect(() => {
     listTaggedUsers().then(setKnownUsers).catch(() => {});
+    listAccounts().then(setAccounts).catch(() => setAccounts([]));
   }, [visible]);
 
   useEffect(() => {
@@ -79,6 +89,8 @@ export function BorrowLendModal({
       setHasDueDate(Boolean(item.due_date));
       setNotes(item.notes);
       setStatus(item.status);
+      setMethod(item.method || 'UPI');
+      setAccountChoice(item.account_id ?? null);
     } else {
       setPersonName('');
       setBorrowType(initialType);
@@ -88,8 +100,25 @@ export function BorrowLendModal({
       setHasDueDate(false);
       setNotes('');
       setStatus('active');
+      setMethod('UPI');
+      setAccountChoice(null);
     }
   }, [item, initialType, visible]);
+
+  // Cash comes out of / goes into a cash account; UPI, Card and Bank a bank.
+  const sources = accounts.filter((a) => a.type === (method === 'Cash' ? 'cash' : 'bank'));
+  const chosen =
+    accountChoice === ''
+      ? null
+      : sources.find((a) => a.id === accountChoice) ?? (!item && sources.length === 1 ? sources[0] : null);
+  const tracksMoney = borrowType !== 'request';
+  const sourceLabel = (a: AccountItem) => {
+    const bank = (a.institution || '').trim();
+    if (!bank) return a.name;
+    const twins = sources.filter((o) => (o.institution || '').trim().toLowerCase() === bank.toLowerCase());
+    return twins.length > 1 ? `${bank} · ${a.name}` : bank;
+  };
+  const parsedAmount = parseFloat(amount.replace(/,/g, ''));
 
   const handleSave = async () => {
     const pName = personName.trim();
@@ -110,6 +139,8 @@ export function BorrowLendModal({
         status: item ? status : 'active',
         settled_amount: item?.settled_amount ?? 0,
         settled_at: item?.settled_at ?? null,
+        method: tracksMoney ? method : '',
+        account_id: tracksMoney ? chosen?.id ?? null : null,
       });
 
       onSaved();
@@ -144,10 +175,7 @@ export function BorrowLendModal({
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <KeyboardAvoidingView
-        style={styles.backdrop}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
+      <KeyboardLift style={styles.backdrop}>
         <Pressable style={[styles.sheet, { backgroundColor: c.bg, borderColor: c.line }]} onPress={(e) => e.stopPropagation()}>
           <ActionBar
             title={item ? 'Edit entry' : 'Record a loan'}
@@ -191,6 +219,57 @@ export function BorrowLendModal({
               keyboardType="decimal-pad"
               style={styles.money}
             />
+
+            {/* How the money moved, and from / into which account */}
+            {tracksMoney ? (
+              <View style={{ marginBottom: 16 }}>
+                <Label>{borrowType === 'lent' ? 'Paid with' : 'Received via'}</Label>
+                <Segmented
+                  options={METHOD_OPTIONS}
+                  value={method}
+                  onChange={(k) => {
+                    setMethod(k);
+                    setAccountChoice(null);
+                  }}
+                />
+                {sources.length > 0 ? (
+                  <>
+                    <Label style={{ marginTop: 14 }}>
+                      {borrowType === 'lent'
+                        ? method === 'Cash' ? 'From which cash account' : 'From which bank'
+                        : method === 'Cash' ? 'Into which cash account' : 'Into which bank'}
+                    </Label>
+                    <View style={styles.chipRow}>
+                      {sources.map((a) => (
+                        <Chip
+                          key={a.id}
+                          label={sourceLabel(a)}
+                          active={chosen?.id === a.id}
+                          onPress={() => setAccountChoice(chosen?.id === a.id ? '' : a.id)}
+                        />
+                      ))}
+                    </View>
+                  </>
+                ) : (
+                  <T size={13} sub style={{ marginTop: 10 }}>
+                    {method === 'Cash'
+                      ? 'No cash account saved. Add one in Net worth to track it.'
+                      : 'No bank account saved. Add one in Net worth to track it.'}
+                  </T>
+                )}
+                <T size={13} sub style={{ marginTop: 4, color: chosen ? c.accent : c.sub }}>
+                  {chosen
+                    ? !isNaN(parsedAmount) && parsedAmount > 0
+                      ? borrowType === 'lent'
+                        ? `${fmtMoney(parsedAmount, '₹')} will be taken from ${sourceLabel(chosen)}`
+                        : `${fmtMoney(parsedAmount, '₹')} will be added to ${sourceLabel(chosen)}`
+                      : borrowType === 'lent'
+                        ? `The amount will be taken from ${sourceLabel(chosen)}`
+                        : `The amount will be added to ${sourceLabel(chosen)}`
+                    : 'No account picked, so no balance will change.'}
+                </T>
+              </View>
+            ) : null}
 
             {/* When the money changed hands */}
             <View style={{ marginBottom: 12 }}>
@@ -305,7 +384,7 @@ export function BorrowLendModal({
             ) : null}
           </ScrollView>
         </Pressable>
-      </KeyboardAvoidingView>
+      </KeyboardLift>
     </Modal>
   );
 }
