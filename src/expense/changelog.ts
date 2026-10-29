@@ -10,6 +10,16 @@ export interface ChangelogEntry {
 /** Newest first. Add a new entry here with every release that changes user-visible behaviour. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.36.1',
+    build: 181,
+    type: 'ota',
+    date: '2026-10-29',
+    time: '10:00 AM',
+    highlights: [
+      'Fix cloud backup stuck on sample bills (invalid uuid error)',
+    ],
+  },
+  {
     version: '1.36.0',
     build: 180,
     type: 'ota',
