@@ -1,5 +1,5 @@
 import { getDb as getPeraiDb } from './client';
-import { getDb as getExpenseDb, findOrCreateCategory, findOrCreateIncomeCategory, saveExpense, saveExpenseItems, saveIncome, uuid } from '../expense/db';
+import { getDb as getExpenseDb, findOrCreateCategory, findOrCreateIncomeCategory, getSetting, saveExpense, saveExpenseItems, saveIncome, setSetting, uuid } from '../expense/db';
 import { saveAccount } from '../expense/accountsDb';
 import { saveBorrowLend } from '../expense/borrowLendDb';
 import { getSourcesDb } from '../sources/client';
@@ -8,17 +8,34 @@ import type { Memory } from '../types';
 
 const nowIso = () => new Date().toISOString();
 
+/** Set once sample data has been loaded or taken out; from then on it is never loaded by itself again. */
+export const SAMPLE_HANDLED_KEY = 'sample_data_handled';
+
 /**
- * Check if the app databases are empty.
+ * Whether this is a brand-new install that has never held anything.
+ *
+ * Deliberately strict. "No expenses and no notes right now" is also what a
+ * phone looks like after its sample data was removed, and loading the sample
+ * data again then would undo the removal. So any trace of earlier use, even a
+ * row deleted long ago or a saved place or person, or the marker left when
+ * sample data was loaded or removed, means it is not new.
  */
 export async function isDatabaseEmpty(): Promise<boolean> {
   try {
     const expenseDb = await getExpenseDb();
-    const expRow = await expenseDb.getFirstAsync<{ c: number }>('SELECT COUNT(*) as c FROM expenses WHERE deleted = 0');
-    if ((expRow?.c ?? 0) > 0) return false;
+    if (await getSetting(SAMPLE_HANDLED_KEY, '')) return false;
+
+    for (const table of ['expenses', 'income', 'accounts', 'borrow_lend', 'tagged_users', 'tagged_places']) {
+      try {
+        const row = await expenseDb.getFirstAsync<{ c: number }>(`SELECT COUNT(*) as c FROM ${table}`);
+        if ((row?.c ?? 0) > 0) return false;
+      } catch {
+        // A table that does not exist yet holds nothing.
+      }
+    }
 
     const peraiDb = getPeraiDb();
-    const memRow = await peraiDb.getFirstAsync<{ c: number }>('SELECT COUNT(*) as c FROM memories WHERE deleted = 0');
+    const memRow = await peraiDb.getFirstAsync<{ c: number }>('SELECT COUNT(*) as c FROM memories');
     if ((memRow?.c ?? 0) > 0) return false;
 
     return true;
@@ -48,6 +65,8 @@ export async function seedAllDummyData(force = false): Promise<void> {
     const empty = await isDatabaseEmpty();
     if (!empty) return;
   }
+  // Written first: even if loading is interrupted, it is not retried by itself.
+  await setSetting(SAMPLE_HANDLED_KEY, '1').catch(() => {});
 
   const today = todayStr();
   const now = nowIso();

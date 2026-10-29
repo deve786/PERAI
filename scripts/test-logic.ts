@@ -58,6 +58,8 @@ import {
   SAMPLE_INCOME,
   SAMPLE_LOANS,
   SAMPLE_MEMORIES,
+  SAMPLE_PEOPLE,
+  SAMPLE_PLACES,
   SAMPLE_RECURRING,
   SAMPLE_TELEGRAM_CHANNEL,
   SAMPLE_TELEGRAM_MESSAGE_ID,
@@ -472,6 +474,9 @@ section('sample data can be recognised exactly');
     );
   }
 
+  for (const name of SAMPLE_PLACES) check(`place "${name}" matches the seeder`, has(name));
+  for (const name of SAMPLE_PEOPLE) check(`person ${name} matches the seeder`, has(name));
+
   // The other direction: nothing the seeder writes is missed.
   const seededExpenses = (seed.match(/await saveExpense\(/g) ?? []).length;
   check('every seeded expense is fingerprinted', seededExpenses === SAMPLE_EXPENSES.length, `${seededExpenses} seeded`);
@@ -485,6 +490,10 @@ section('sample data can be recognised exactly');
   check('every seeded account is fingerprinted', seededAccounts === SAMPLE_ACCOUNTS.length, `${seededAccounts} seeded`);
   const seededBills = (seed.match(/INSERT OR REPLACE INTO recurring/g) ?? []).length;
   check('every seeded bill is fingerprinted', seededBills === SAMPLE_RECURRING.length, `${seededBills} seeded`);
+  const seededPlaces = (seed.match(/^\s*place: /gm) ?? []).length;
+  check('every seeded place is fingerprinted', seededPlaces === SAMPLE_PLACES.length, `${seededPlaces} seeded`);
+  const seededTags = [...seed.matchAll(/^\s*user_tag: '([^']+)'/gm)].map((m) => m[1]);
+  check('every seeded person is fingerprinted', seededTags.every((n) => SAMPLE_PEOPLE.includes(n)), seededTags.join(','));
   const seededBudgets = (seed.match(/SET monthly_budget = \?/g) ?? []).length;
   check('every seeded budget is fingerprinted', seededBudgets === SAMPLE_BUDGETS.length, `${seededBudgets} seeded`);
 }
