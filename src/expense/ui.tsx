@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, Pressable, StyleProp, StyleSheet, Text, TextInput, TextInputProps, View, ViewStyle, TextStyle } from 'react-native';
+import { Animated, Modal, Pressable, StyleProp, StyleSheet, Text, TextInput, TextInputProps, View, ViewStyle, TextStyle } from 'react-native';
 import { SafeAreaView, type Edge } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { FONTS, numerals, radius, useTheme } from './theme';
@@ -423,13 +423,30 @@ export function IconDot({ icon, color, size = 36 }: { icon: string; color: strin
   );
 }
 
-/** Horizontal proportional bar — the workhorse for ranked breakdowns. */
+/**
+ * Horizontal proportional bar — the workhorse for ranked breakdowns.
+ *
+ * Fills in from the left when it first appears and slides to a new length
+ * when its value changes, so a budget filling up is seen to move rather than
+ * jump. A quarter of a second: enough to be seen, never long enough to wait on.
+ */
 export function Meter({ fraction, tone, height = 6 }: { fraction: number; tone?: string; height?: number }) {
   const { c } = useTheme();
-  const w = Math.max(0, Math.min(fraction, 1)) * 100;
+  const w = Math.max(0, Math.min(fraction, 1));
+  const [fill] = React.useState(() => new Animated.Value(0));
+  React.useEffect(() => {
+    Animated.timing(fill, { toValue: w, duration: 260, useNativeDriver: false }).start();
+  }, [fill, w]);
   return (
     <View style={{ height, backgroundColor: c.well, overflow: 'hidden', borderRadius: height / 2 }}>
-      <View style={{ width: `${w}%`, height, backgroundColor: tone ?? c.accent, borderRadius: height / 2 }} />
+      <Animated.View
+        style={{
+          width: fill.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }),
+          height,
+          backgroundColor: tone ?? c.accent,
+          borderRadius: height / 2,
+        }}
+      />
     </View>
   );
 }

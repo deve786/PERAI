@@ -44,10 +44,28 @@ export function useShareIntentCapture() {
     if (!image && !text) return;
 
     setShareProcessing(true, 'Reading the shared payment…');
-    // An image takes priority: GPay's share sometimes tags on caption text
-    // ("Shared via Google Pay") alongside the payment card itself, which
-    // would be the wrong thing to read literally.
-    const work = image ? handleImage(image) : handleText(text as string);
+    // An image takes priority when online: GPay's share sometimes tags on caption text
+    // ("Shared via Google Pay") alongside the payment card itself.
+    // If the image fails (e.g. offline), fall back to extracting from text if available.
+    const work = (async () => {
+      if (image) {
+        try {
+          return await handleImage(image);
+        } catch (imgErr) {
+          if (text) {
+            try {
+              const fromText = await handleText(text);
+              if (fromText.amount > 0) return fromText;
+            } catch {
+              // fall through to throw original imgErr
+            }
+          }
+          throw imgErr;
+        }
+      }
+      return handleText(text as string);
+    })();
+
     work.then(finish).catch(fail);
   }, [hasShareIntent, shareIntent.text, shareIntent.files, resetShareIntent]);
 }
@@ -78,7 +96,7 @@ async function handleImage(file: ShareIntentFile): Promise<ScannedPayment> {
   return withTimeout(
     (async () => {
       const [base64, names] = await Promise.all([new File(file.path).base64(), categoryNames()]);
-      return scanPaymentWithAI(base64, file.mimeType, names);
+      return scanPaymentWithAI(base64, file.mimeType, names, file.path);
     })(),
     READ_TIMEOUT_MS,
     'Reading the payment image took too long. Check your connection and try sharing it again.'
@@ -117,8 +135,18 @@ async function finish(scanned: ScannedPayment) {
 
 function fail(err: unknown) {
   setShareProcessing(false);
+  const errMsg = describeError(err);
+  const isNetwork = /network|offline|fetch|ENOTFOUND|ECONNREFUSED|connect|too long/i.test(errMsg);
   void settle().then(() => {
-    showDialog({ title: 'Could not read that payment', message: describeError(err) });
+    if (isNetwork) {
+      showDialog({
+        title: 'Offline: Image Needs Internet',
+        message:
+          'Reading payment screenshot images uses online AI vision. To record offline, please share or paste the payment SMS or transaction text instead.',
+      });
+    } else {
+      showDialog({ title: 'Could not read that payment', message: errMsg });
+    }
   });
-  logFail('Could not file a shared payment', describeError(err));
+  logFail('Could not file a shared payment', errMsg);
 }

@@ -7,9 +7,13 @@ import { fromStr, monthName } from '@/expense/dates';
 import { useTheme } from '@/expense/theme';
 import { Card, ListCard, Row, Screen, T, TopBar } from '@/expense/ui';
 
-function formatDate(s: string) {
-  const d = fromStr(s);
-  return `${d.getDate()} ${monthName(d.getMonth())} ${d.getFullYear()}`;
+function formatDateTime(dateStr: string, timeStr?: string) {
+  const d = fromStr(dateStr.split('T')[0]);
+  const formatted = `${d.getDate()} ${monthName(d.getMonth())} ${d.getFullYear()}`;
+  if (timeStr) {
+    return `${formatted} · ${timeStr}`;
+  }
+  return formatted;
 }
 
 type Kind = 'new' | 'fixed';
@@ -60,13 +64,30 @@ export default function WhatsNew() {
       <ScrollView contentContainerStyle={{ padding: 20, paddingTop: 16, paddingBottom: 40 }}>
         {latest ? (
           <Card style={{ gap: 4 }}>
-            <Row style={{ justifyContent: 'space-between', gap: 10 }}>
-              <T size={20} weight="700" style={{ flex: 1 }}>Version {latest.version}</T>
-              <View style={[styles.badge, { backgroundColor: c.accentSoft }]}>
-                <T size={13} weight="600" style={{ color: c.accent }}>Latest</T>
-              </View>
+            <Row style={{ justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+              <Row style={{ alignItems: 'baseline', gap: 6, flex: 1, flexWrap: 'wrap' }}>
+                <T size={20} weight="700">v{latest.version}</T>
+                {latest.build ? (
+                  <T size={14} weight="600" style={{ color: c.accent }}>Build {latest.build}</T>
+                ) : null}
+              </Row>
+              <Row style={{ gap: 6, alignItems: 'center' }}>
+                {latest.type ? (
+                  <View style={[styles.badge, { backgroundColor: latest.type === 'ota' ? `${c.good}20` : `${c.accent}20` }]}>
+                    <T size={12} weight="700" style={{ color: latest.type === 'ota' ? c.good : c.accent }}>
+                      {latest.type === 'ota' ? 'OTA Update' : 'New Build'}
+                    </T>
+                  </View>
+                ) : null}
+                <View style={[styles.badge, { backgroundColor: c.accentSoft }]}>
+                  <T size={13} weight="600" style={{ color: c.accent }}>Latest</T>
+                </View>
+              </Row>
             </Row>
-            <T size={14} sub style={{ marginBottom: 12 }}>{formatDate(latest.date)}</T>
+            <Row style={{ alignItems: 'center', gap: 6, marginBottom: 12 }}>
+              <Ionicons name="time-outline" size={14} color={c.sub} />
+              <T size={13} sub>{formatDateTime(latest.date, latest.time)}</T>
+            </Row>
             <Items highlights={latest.highlights} />
           </Card>
         ) : null}
@@ -76,24 +97,38 @@ export default function WhatsNew() {
             <T size={14} weight="600" sub style={{ marginTop: 24, marginBottom: 6 }}>Earlier</T>
             <ListCard>
               {older.map((entry, i) => {
-                const expanded = open === entry.version;
+                const key = `${entry.version}-${entry.build ?? i}`;
+                const expanded = open === key;
                 const last = i === older.length - 1;
                 return (
                   <View
-                    key={entry.version}
+                    key={key}
                     style={{ borderBottomWidth: last ? 0 : StyleSheet.hairlineWidth, borderBottomColor: c.line }}
                   >
                     <Pressable
-                      onPress={() => setOpen(expanded ? null : entry.version)}
+                      onPress={() => setOpen(expanded ? null : key)}
                       accessibilityRole="button"
                       accessibilityState={{ expanded }}
-                      accessibilityLabel={`Version ${entry.version}`}
+                      accessibilityLabel={`Version ${entry.version}${entry.build ? ` build ${entry.build}` : ''}`}
                       style={({ pressed }) => [styles.olderRow, { opacity: pressed ? 0.6 : 1 }]}
                     >
                       <View style={{ flex: 1 }}>
-                        <Row style={{ gap: 8 }}>
-                          <T size={16} weight="700" tabular>{entry.version}</T>
-                          <T size={13} sub>{formatDate(entry.date)}</T>
+                        <Row style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                          <T size={16} weight="700" tabular>v{entry.version}</T>
+                          {entry.build ? (
+                            <T size={13} weight="600" style={{ color: c.accent }}>Build {entry.build}</T>
+                          ) : null}
+                          {entry.type ? (
+                            <View style={[styles.badge, { paddingVertical: 1, paddingHorizontal: 7, backgroundColor: entry.type === 'ota' ? `${c.good}15` : `${c.accent}15` }]}>
+                              <T size={11} weight="600" style={{ color: entry.type === 'ota' ? c.good : c.accent }}>
+                                {entry.type === 'ota' ? 'OTA' : 'Build'}
+                              </T>
+                            </View>
+                          ) : null}
+                          <Row style={{ alignItems: 'center', gap: 4 }}>
+                            <Ionicons name="time-outline" size={12} color={c.sub} />
+                            <T size={12} sub>{formatDateTime(entry.date, entry.time)}</T>
+                          </Row>
                         </Row>
                         {!expanded && entry.highlights[0] ? (
                           <T size={14} sub numberOfLines={1} style={{ marginTop: 2 }}>

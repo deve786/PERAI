@@ -42,3 +42,14 @@ export function prettyRange(from: string, to: string) {
   const b = fromStr(to);
   return `${a.getDate()} ${MONTHS[a.getMonth()]} ${a.getFullYear()} – ${b.getDate()} ${MONTHS[b.getMonth()]} ${b.getFullYear()}`;
 }
+
+export function nextYm(ym: string) {
+  const [yStr, mStr] = ym.split('-');
+  let y = Number(yStr);
+  let m = Number(mStr) + 1;
+  if (m > 12) {
+    m = 1;
+    y += 1;
+  }
+  return `${y}-${pad(m)}`;
+}

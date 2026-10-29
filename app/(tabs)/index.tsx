@@ -1,6 +1,6 @@
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -14,6 +14,8 @@ import {
 import { describeError, hasApiKey } from '@/ai/client';
 import { ComposeButton, type ComposeMode } from '@/components/ComposeButton';
 import { MemoryRow } from '@/components/MemoryRow';
+import { SwipeableMemoryRow } from '@/components/SwipeableMemoryRow';
+import { EntrySheet } from '@/components/EntrySheet';
 import { Section } from '@/components/Section';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { VoiceWaveform } from '@/components/VoiceWaveform';
@@ -67,6 +69,11 @@ export default function CaptureScreen() {
   const styles = makeStyles(colors);
 
   const router = useRouter();
+  // Set by a long press on the Record tab: start talking, or start typing.
+  const { start } = useLocalSearchParams<{ start?: string }>();
+  const input = useRef<TextInput>(null);
+  /** The entry open in the quick-look sheet, if any. */
+  const [openEntry, setOpenEntry] = useState<Memory | null>(null);
   const [text, setText] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -86,14 +93,14 @@ export default function CaptureScreen() {
     return memories.filter((m) => types.includes(m.type)).map((m) => m.title);
   }, [memories]);
 
-  const pending = usePendingNotes({ people, listTitles }, configured);
+  const pending = usePendingNotes({ people, listTitles }, true);
   // Names of new games, films and products are checked against a web search
   // after saving, so adding never waits on it.
   const titles = useTitleChecks(configured);
 
   async function save(raw: string) {
     const note = raw.trim();
-    if (!note || saving || !configured) return;
+    if (!note || saving) return;
 
     setSaving(true);
     setError(null);
@@ -139,6 +146,17 @@ export default function CaptureScreen() {
   const voice = useVoiceInput((spoken) => void save(spoken), {
     contextualStrings: [...people, ...listTitles],
   });
+
+  // Arrived from a long press on the Record tab: do what was picked, once,
+  // then clear it so coming back to the tab later does not do it again.
+  useEffect(() => {
+    if (!start) return;
+    if (start === 'voice' && configured && voice.stage === 'idle') void voice.toggle();
+    if (start === 'type') setTimeout(() => input.current?.focus(), 250);
+    router.setParams({ start: undefined });
+    // Only a new request should act; the voice state changing must not.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [start]);
 
   // A name corrected by the search belongs on the card that announced it.
   useEffect(() => {
@@ -283,6 +301,7 @@ export default function CaptureScreen() {
             </View>
 
             <TextInput
+              ref={input}
               value={displayText}
               onChangeText={(value) => {
                 setText(value);
@@ -532,7 +551,14 @@ export default function CaptureScreen() {
           {upcoming.length > 0 ? (
             <Section label="Coming up">
               {upcoming.map((memory) => (
-                <MemoryRow key={memory.id} memory={memory} gutter="date" showAdded={false} struck={isStruck(memory)} />
+                <SwipeableMemoryRow
+                  key={memory.id}
+                  memory={memory}
+                  gutter="date"
+                  showAdded={false}
+                  struck={isStruck(memory)}
+                  onPress={() => setOpenEntry(memory)}
+                />
               ))}
             </Section>
           ) : null}
@@ -543,7 +569,13 @@ export default function CaptureScreen() {
               action={{ label: 'See all', onPress: () => router.push('/timeline') }}
             >
               {recent.map((memory) => (
-                <MemoryRow key={memory.id} memory={memory} gutter="date" struck={isStruck(memory)} />
+                <SwipeableMemoryRow
+                  key={memory.id}
+                  memory={memory}
+                  gutter="date"
+                  struck={isStruck(memory)}
+                  onPress={() => setOpenEntry(memory)}
+                />
               ))}
             </Section>
           ) : null}
@@ -557,6 +589,7 @@ export default function CaptureScreen() {
           ) : null}
         </ScrollView>
       </KeyboardAvoidingView>
+      <EntrySheet memory={openEntry} onClose={() => setOpenEntry(null)} />
     </Screen>
   );
 }

@@ -3,7 +3,7 @@ import { CURRENCY_SYMBOLS } from '../constants';
 import { localTimestamp } from '../format';
 import { answerFromList, listQuestion } from '../listQuestion';
 import { needsTranslation, normalizeQuery } from '../manglish';
-import { ASK_MODEL, requestJson, requestText } from './client';
+import { ASK_MODEL, getEffectiveAskModel, requestJson, requestText } from './client';
 import { MAX_CONTEXT_MEMORIES, selectRelevantMemories } from './retrieval';
 
 /** One exchange already in this conversation, oldest first. */
@@ -198,7 +198,7 @@ async function translateToKeywords(question: string): Promise<string> {
   }
 }
 
-function looseJsonParse(raw: string): unknown {
+export function looseJsonParse(raw: string): unknown {
   const text = raw.trim();
   const candidates: string[] = [text];
 
@@ -331,7 +331,7 @@ export async function askAI(
         : `These are the ${memories.length} most relevant of ${all.length} recorded memories.`;
 
   const body = await requestJson({
-    model: ASK_MODEL,
+    model: getEffectiveAskModel(),
     system: SYSTEM_PROMPT,
     user: [
       `Current local time: ${localTimestamp(nowISO)} (${weekday})`,

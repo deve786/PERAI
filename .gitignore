@@ -47,3 +47,10 @@ yarn-error.*
 dist/
 dist-ios/
 dist-web/
+
+# python & bridge
+__pycache__/
+*.py[cod]
+*$py.class
+*.session
+bridge/.env

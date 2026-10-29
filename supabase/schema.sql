@@ -190,3 +190,83 @@ create table if not exists public.income (
 alter table public.income enable row level security;
 drop policy if exists "income are private" on public.income;
 create policy "income are private" on public.income for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- -----------------------------------------------------------------------------
+-- MULTI-SOURCE DATA SCHEMA (Documents, Chunks, Websites, Telegram)
+-- -----------------------------------------------------------------------------
+
+create table if not exists public.documents (
+  id text primary key not null,
+  user_id uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  filename text not null,
+  file_type text not null,
+  file_size bigint not null,
+  file_uri text,
+  uploaded_at timestamptz not null default now(),
+  chunk_count int default 0,
+  deleted boolean not null default false,
+  updated_at timestamptz not null default now()
+);
+alter table public.documents enable row level security;
+drop policy if exists "documents are private" on public.documents;
+create policy "documents are private" on public.documents for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+create table if not exists public.document_chunks (
+  id text primary key not null,
+  user_id uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  document_id text not null references public.documents (id) on delete cascade,
+  chunk_index int not null,
+  content text not null,
+  page_number int,
+  created_at timestamptz not null default now()
+);
+alter table public.document_chunks enable row level security;
+drop policy if exists "chunks are private" on public.document_chunks;
+create policy "chunks are private" on public.document_chunks for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+create table if not exists public.website_data (
+  id text primary key not null,
+  user_id uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  url text not null,
+  title text,
+  content text not null,
+  scraped_at timestamptz not null default now(),
+  last_updated timestamptz not null default now(),
+  deleted boolean not null default false,
+  updated_at timestamptz not null default now()
+);
+alter table public.website_data enable row level security;
+drop policy if exists "websites are private" on public.website_data;
+create policy "websites are private" on public.website_data for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+create table if not exists public.telegram_channels (
+  id text primary key not null,
+  user_id uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  channel_username text not null,
+  channel_name text,
+  last_message_id bigint,
+  last_synced_at timestamptz,
+  created_at timestamptz not null default now()
+);
+alter table public.telegram_channels enable row level security;
+drop policy if exists "channels are private" on public.telegram_channels;
+create policy "channels are private" on public.telegram_channels for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+create table if not exists public.telegram_messages (
+  id text primary key not null,
+  user_id uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  channel_id text not null,
+  channel_name text,
+  message_id bigint not null,
+  message_text text,
+  message_date timestamptz not null,
+  sender_name text,
+  deleted boolean not null default false,
+  synced_at timestamptz not null default now()
+);
+alter table public.telegram_messages enable row level security;
+drop policy if exists "messages are private" on public.telegram_messages;
+create policy "messages are private" on public.telegram_messages for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+notify pgrst, 'reload schema';
+

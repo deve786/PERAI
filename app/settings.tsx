@@ -19,9 +19,17 @@ import {
   setVoiceLanguage,
   TITLE_LANGUAGES,
   VOICE_LANGUAGES,
+  AI_MODELS,
+  getSelectedAiModel,
+  setSelectedAiModel,
+  getGroqApiKey,
+  setGroqApiKey,
+  getTelegramAutoSyncInterval,
   type TitleLanguage,
   type VoiceLanguage,
+  type AiModelChoice,
 } from '@/settings';
+import { setSelectedModelInMemory, EXTRACT_MODEL, setGroqApiKeyInMemory } from '@/ai/client';
 import { APP_BUILD, APP_VERSION } from '@/appVersion';
 import { KeyboardLift } from '@/components/KeyboardLift';
 
@@ -59,10 +67,26 @@ export default function Settings() {
   /** null means the recognizer follows the phone, which is how it shipped. */
   const [voice, setVoice] = useState<VoiceLanguage | null>(null);
   const [titles, setTitles] = useState<TitleLanguage>('english');
+  const [selectedAskModel, setSelectedAskModel] = useState<AiModelChoice>('gemini-3.5-flash-lite');
+  const [choosingModel, setChoosingModel] = useState(false);
+  const [groqKey, setGroqKey] = useState('');
+  const [editingGroqKey, setEditingGroqKey] = useState(false);
+  const [groqKeyText, setGroqKeyText] = useState('');
+  const [telegramInterval, setTelegramInterval] = useState(5);
 
   useEffect(() => {
     void getVoiceLanguage().then(setVoice);
     void getTitleLanguage().then(setTitles);
+    void getTelegramAutoSyncInterval().then(setTelegramInterval);
+    void getSelectedAiModel().then((m) => {
+      setSelectedAskModel(m);
+      setSelectedModelInMemory(m);
+    });
+    void getGroqApiKey().then((k) => {
+      setGroqKey(k);
+      setGroqKeyText(k);
+      setGroqApiKeyInMemory(k);
+    });
   }, []);
 
   async function chooseVoice(language: VoiceLanguage | null) {
@@ -73,6 +97,39 @@ export default function Settings() {
   async function chooseTitles(language: TitleLanguage) {
     setTitles(language);
     await setTitleLanguage(language);
+  }
+
+  async function saveGroqKey() {
+    const clean = groqKeyText.trim();
+    setGroqKey(clean);
+    setGroqApiKeyInMemory(clean);
+    await setGroqApiKey(clean);
+    setEditingGroqKey(false);
+    showDialog({
+      title: 'Groq Key Saved',
+      message: clean
+        ? 'Groq API key configured. Llama 3.3 70B & 8B are ready to use!'
+        : 'Groq API key cleared.',
+    });
+  }
+
+  async function chooseAskModel(model: AiModelChoice) {
+    const chosen = AI_MODELS.find((m) => m.value === model);
+    if (chosen?.provider === 'groq' && !groqKey) {
+      setEditingGroqKey(true);
+      showDialog({
+        title: 'Groq Key Required',
+        message: 'To use Llama on Groq (~1s responses), please paste your free API key from console.groq.com/keys below.',
+      });
+      return;
+    }
+    setSelectedAskModel(model);
+    setSelectedModelInMemory(model);
+    await setSelectedAiModel(model);
+    showDialog({
+      title: 'AI Model Updated',
+      message: `Ask model set to ${chosen?.label ?? model}.`,
+    });
   }
 
   useEffect(() => {
@@ -263,6 +320,18 @@ export default function Settings() {
               icon="download-outline"
               label="Export expenses (CSV)"
               onPress={() => void exportExpenses()}
+            />
+            <ListRow
+              icon="documents-outline"
+              label="Data sources"
+              value="Docs · Sites · Telegram"
+              onPress={() => router.push('/data-sources' as any)}
+            />
+            <ListRow
+              icon="paper-plane-outline"
+              label="Telegram auto-update"
+              value={telegramInterval > 0 ? `Every ${telegramInterval}m (incremental)` : 'Off'}
+              onPress={() => router.push('/data-sources' as any)}
               last
             />
           </ListCard>
@@ -297,7 +366,84 @@ export default function Settings() {
                 </Row>
               }
             />
-            <ListRow label="Model" right={<T size={14} sub tabular>{ASK_MODEL}</T>} />
+            <ListRow
+              label="Groq API Key"
+              value={groqKey ? 'Key configured' : 'Not set'}
+              onPress={() => setEditingGroqKey((v) => !v)}
+              chevron={false}
+              right={chevron(editingGroqKey)}
+            />
+            {editingGroqKey ? (
+              <View style={{ paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: c.line }}>
+                <T size={13} sub style={{ marginBottom: 10, lineHeight: 18 }}>
+                  Enables ultra-fast Llama 3.3 70B & 8B (~1s response time). Get a free key at console.groq.com/keys.
+                </T>
+                <Row style={{ gap: 10, alignItems: 'flex-start' }}>
+                  <Field
+                    value={groqKeyText}
+                    onChangeText={setGroqKeyText}
+                    placeholder="gsk_..."
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    secureTextEntry
+                    containerStyle={{ flex: 1, marginBottom: 0 }}
+                  />
+                  <Button title="Save" onPress={() => void saveGroqKey()} />
+                </Row>
+              </View>
+            ) : null}
+            <ListRow
+              label="Ask Model"
+              value={AI_MODELS.find((m) => m.value === selectedAskModel)?.label ?? selectedAskModel}
+              onPress={() => setChoosingModel((v) => !v)}
+              chevron={false}
+              right={chevron(choosingModel)}
+            />
+            {choosingModel ? (
+              <View style={{ paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: c.line }}>
+                {AI_MODELS.map((opt) => {
+                  const on = selectedAskModel === opt.value;
+                  return (
+                    <Pressable
+                      key={opt.value}
+                      onPress={() => void chooseAskModel(opt.value)}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: on }}
+                      style={({ pressed }) => ({
+                        paddingVertical: 10,
+                        paddingHorizontal: 4,
+                        flexDirection: 'row',
+                        alignItems: 'flex-start',
+                        gap: 12,
+                        opacity: pressed ? 0.6 : 1,
+                      })}
+                    >
+                      <Ionicons
+                        name={on ? 'radio-button-on' : 'radio-button-off'}
+                        size={20}
+                        color={on ? c.accent : c.faint}
+                        style={{ marginTop: 2 }}
+                      />
+                      <View style={{ flex: 1, gap: 2 }}>
+                        <Row style={{ alignItems: 'center', justifyContent: 'space-between' }}>
+                          <T size={15} weight={on ? '700' : '500'} style={{ color: on ? c.accent : c.text }}>
+                            {opt.label}
+                          </T>
+                          <T size={12} weight="600" style={{ color: on ? c.good : c.sub }}>
+                            {opt.speed}
+                          </T>
+                        </Row>
+                        <T size={13} sub style={{ lineHeight: 18 }}>{opt.desc}</T>
+                      </View>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            ) : null}
+            <ListRow
+              label="Extract Model"
+              right={<T size={14} sub tabular>{EXTRACT_MODEL}</T>}
+            />
             <ListRow
               icon="sparkles-outline"
               label={testingAi ? 'Testing…' : 'Test AI connection'}

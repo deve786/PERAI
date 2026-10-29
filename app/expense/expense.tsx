@@ -39,6 +39,7 @@ const METHOD_OPTIONS = METHODS.map((m): { key: string; label: string } => ({ key
 const METHOD_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
   Cash: 'cash-outline', UPI: 'phone-portrait-outline', Card: 'card-outline', Bank: 'business-outline',
 };
+const isBankLinkedMethod = (m: string) => m === 'UPI' || m === 'Bank' || m === 'Card';
 const YES_NO = [{ key: 'no', label: 'No' }, { key: 'yes', label: 'Yes' }] as const;
 const SAME_DIFFERENT = [{ key: 'same', label: 'Same amount' }, { key: 'different', label: 'Different amount' }] as const;
 
@@ -388,9 +389,7 @@ export default function ExpenseForm() {
       note: note.trim(), notes: notes.trim(), method,
       user_tag: finalUserTag,
       place: (place || placeDraft).trim(),
-      // Only a UPI payment is tied to the bank it drew from — switching away
-      // from UPI drops the link rather than leaving a stale one behind.
-      account_id: method === 'UPI' ? accountId : null,
+      account_id: isBankLinkedMethod(method) ? accountId : null,
       people_count: isTicket && parseAmt(peopleCount) > 0 ? Math.round(parseAmt(peopleCount)) : null,
       sub_category: finalSubCategory,
     });
@@ -407,6 +406,14 @@ export default function ExpenseForm() {
     // so there's nothing to set (or clear) on another category.
     if (isTicket) {
       const parsedRefund = round2(parseAmt(refundAmount) || 0);
+      if (refunded && parsedRefund > value) {
+        showDialog({
+          title: 'Invalid refund amount',
+          message: `The refund amount (${fmtMoney(parsedRefund, symbol)}) cannot be greater than the expense amount (${fmtMoney(value, symbol)}).`,
+        });
+        setSaving(false);
+        return;
+      }
       if (refunded && parsedRefund > 0) {
         await setExpenseRefund(newId, {
           amount: parsedRefund,
@@ -423,12 +430,23 @@ export default function ExpenseForm() {
     }
     // Whoever this was tagged "for user" can pay back what it cost — any
     // category, not just a Ticket, so it's keyed off the tag, not isTicket.
+    // They may pay back the exact amount, a partial amount, or more (e.g. rounded up, tip/extra).
     if (finalUserTag) {
       const parsedReimburse = round2((reimburseSame ? value : parseAmt(reimburseAmount)) || 0);
+      if (reimbursed && !reimburseSame && parsedReimburse <= 0) {
+        showDialog({
+          title: 'Invalid payback amount',
+          message: 'Please enter a valid amount they paid back.',
+        });
+        setSaving(false);
+        return;
+      }
       await setExpenseReimbursement(
         newId,
         reimbursed && parsedReimburse > 0 ? { amount: parsedReimburse, accountId: reimburseAccountId } : null
       );
+    } else if (editId) {
+      await setExpenseReimbursement(newId, null);
     }
     // Shown on Home, since this screen closes itself below.
     await noteBudgetCrossing(finalCatId, round2(value), symbol);
@@ -569,7 +587,7 @@ export default function ExpenseForm() {
   if (mode === 'view') {
     const details: Detail[] = [
       { icon: 'calendar-outline', label: 'Date', value: longDate(date) },
-      { icon: METHOD_ICONS[method] ?? 'wallet-outline', label: 'Paid with', value: method === 'UPI' && bankName(accountId) ? `${method} · ${bankName(accountId)}` : method },
+      { icon: METHOD_ICONS[method] ?? 'wallet-outline', label: 'Paid with', value: isBankLinkedMethod(method) && bankName(accountId) ? `${method} · ${bankName(accountId)}` : method },
     ];
     if (place.trim()) details.push({ icon: 'location-outline', label: 'Place', value: place });
     if (userTag.trim()) details.push({ icon: 'person-outline', label: 'For', value: userTag });
@@ -587,10 +605,11 @@ export default function ExpenseForm() {
         value: `${fmtMoney(parseAmt(refundAmount) || 0, symbol)}${refundPeopleCount.trim() ? ` (${refundPeopleCount} of ${peopleCount})` : ''}${refundAccountId ? ` · ${bankName(refundAccountId)}` : ''}`,
       });
     }
-    if (reimbursed && reimburseAmount.trim()) {
+    const effectiveReimburse = round2((reimburseSame ? value : parseAmt(reimburseAmount)) || 0);
+    if (reimbursed && effectiveReimburse > 0) {
       details.push({
         icon: 'checkmark-circle-outline', label: `Paid back by ${userTag || 'them'}`, tone: c.good,
-        value: `${fmtMoney(parseAmt(reimburseAmount) || 0, symbol)}${reimburseAccountId ? ` · ${bankName(reimburseAccountId)}` : ''}`,
+        value: `${fmtMoney(effectiveReimburse, symbol)}${reimburseAccountId ? ` · ${bankName(reimburseAccountId)}` : ''}`,
       });
     }
     if (notes.trim()) details.push({ icon: 'document-text-outline', label: 'Notes', value: notes, block: true });
@@ -911,13 +930,13 @@ export default function ExpenseForm() {
 
           <Label style={{ marginTop: 20 }}>Paid with</Label>
           <Segmented options={METHOD_OPTIONS} value={method} onChange={setMethod} />
-          {method === 'UPI' ? (
+          {isBankLinkedMethod(method) ? (
             <View style={{ marginTop: 12 }}>
               {bankChips(accountId, setAccountId, 'From')}
             </View>
           ) : null}
 
-          <ListCard style={{ marginTop: method === 'UPI' ? 8 : 16 }}>
+          <ListCard style={{ marginTop: isBankLinkedMethod(method) ? 8 : 16 }}>
             <ListRow icon="calendar-outline" iconColor={c.text} label={longDate(date)} onPress={() => setShowPicker((s) => !s)} />
             <ListRow
               icon={moreOpen ? 'remove' : 'add'}

@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { FlatList, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { SectionList, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { expenseTripLabels, listCategories, listExpenses, listIncome, listIncomeCategories, type Category, type ExpenseRow, type IncomeRow } from '@/expense/db';
@@ -173,23 +173,87 @@ export default function History() {
 
   return (
     <Screen>
-      <TopBar title="History" onBack={() => router.back()} />
-      <FlatList
-        data={groups}
+      <TopBar
+        title="History"
+        onBack={() => router.back()}
+        right={
+          <Pressable
+            onPress={() => router.push('/expense/passbook' as any)}
+            accessibilityRole="button"
+            accessibilityLabel="Open bank passbook and net worth history"
+            style={({ pressed }) => ({
+              paddingHorizontal: 12,
+              paddingVertical: 6,
+              borderRadius: radius.pill,
+              backgroundColor: c.accentSoft,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 4,
+              opacity: pressed ? 0.7 : 1,
+            })}
+          >
+            <Ionicons name="receipt-outline" size={15} color={c.accent} />
+            <T size={13} weight="600" style={{ color: c.accent }}>Passbook</T>
+          </Pressable>
+        }
+      />
+      {/* Each day's heading and totals stay pinned while its entries scroll
+          under them, so a long day never leaves you guessing which it was. */}
+      <SectionList
+        sections={groups.map((g) => ({ key: g.date, data: [g] }))}
         keyExtractor={(g) => g.date}
+        stickySectionHeadersEnabled
         ListHeaderComponent={header}
         contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 40 }}
+        renderSectionHeader={({ section }) => {
+          const g = section.data[0];
+          const dayExpenses = g.items.filter((e) => e.kind === 'expense').map((e) => e.row);
+          const dayIncomes = g.items.filter((e) => e.kind === 'income').map((e) => e.row);
+          const daySpent = sum(dayExpenses);
+          const dayEarned = sum(dayIncomes);
+
+          return (
+            <View style={{ paddingTop: 16, paddingBottom: 6, backgroundColor: c.bg }}>
+              <Row style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
+                <T size={14} weight="600" sub>{dayHeading(g.date)}</T>
+                {kind === 'expense' ? (
+                  daySpent > 0 ? (
+                    <T size={13} weight="600" tabular style={{ color: c.sub }}>
+                      {fmtMoney(daySpent, symbol)}
+                    </T>
+                  ) : null
+                ) : kind === 'income' ? (
+                  dayEarned > 0 ? (
+                    <T size={13} weight="600" tabular style={{ color: c.good }}>
+                      +{fmtMoney(dayEarned, symbol)}
+                    </T>
+                  ) : null
+                ) : (
+                  <Row style={{ gap: 8 }}>
+                    {daySpent > 0 ? (
+                      <T size={13} weight="600" tabular style={{ color: c.sub }}>
+                        {fmtMoney(daySpent, symbol)}
+                      </T>
+                    ) : null}
+                    {dayEarned > 0 ? (
+                      <T size={13} weight="600" tabular style={{ color: c.good }}>
+                        +{fmtMoney(dayEarned, symbol)}
+                      </T>
+                    ) : null}
+                  </Row>
+                )}
+              </Row>
+            </View>
+          );
+        }}
         renderItem={({ item: g }) => (
-          <View style={{ marginTop: 16 }}>
-            <T size={14} weight="600" sub style={{ marginBottom: 6 }}>{dayHeading(g.date)}</T>
-            <ListCard>
-              {g.items.map((e, i) =>
-                e.kind === 'expense'
-                  ? <ExpenseItem key={`e${e.row.id}`} e={e.row} showDate={false} onDeleted={load} trip={tripFor.get(e.row.id)} last={i === g.items.length - 1} />
-                  : <IncomeItem key={`i${e.row.id}`} e={e.row} showDate={false} onDeleted={load} last={i === g.items.length - 1} />
-              )}
-            </ListCard>
-          </View>
+          <ListCard>
+            {g.items.map((e, i) =>
+              e.kind === 'expense'
+                ? <ExpenseItem key={`e${e.row.id}`} e={e.row} showDate={false} onDeleted={load} trip={tripFor.get(e.row.id)} last={i === g.items.length - 1} />
+                : <IncomeItem key={`i${e.row.id}`} e={e.row} showDate={false} onDeleted={load} last={i === g.items.length - 1} />
+            )}
+          </ListCard>
         )}
         ListEmptyComponent={
           <Empty

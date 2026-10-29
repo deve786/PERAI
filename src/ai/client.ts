@@ -71,7 +71,21 @@ export const EXTRACT_MODEL =
 export const ASK_MODEL =
   process.env.EXPO_PUBLIC_GEMINI_ASK_MODEL || 'gemini-3.5-flash-lite';
 
-/** Gemini's free tier is capped per minute; it tells us how long to wait. */
+let userSelectedModel: string | null = null;
+
+export function setSelectedModelInMemory(model: string): void {
+  userSelectedModel = model;
+}
+
+export function getEffectiveAskModel(): string {
+  return (
+    userSelectedModel ||
+    process.env.EXPO_PUBLIC_GEMINI_ASK_MODEL ||
+    'gemini-3.5-flash-lite'
+  );
+}
+
+/** Free tier quota / rate limits tell us how long to wait. */
 function retryDelayMs(err: unknown): number | null {
   const status = (err as { status?: number })?.status;
   const message = err instanceof Error ? err.message : String(err);
@@ -79,10 +93,10 @@ function retryDelayMs(err: unknown): number | null {
     return null;
   }
 
-  const suggested = message.match(/retry in ([\d.]+)s/i);
-  const seconds = suggested ? Number(suggested[1]) : 20;
-  // Cap it: a user staring at a spinner will not wait a full minute.
-  return Math.min(Math.ceil(seconds) + 1, 30) * 1000;
+  const suggested = message.match(/(?:retry|try again) in ([\d.]+)s/i);
+  const seconds = suggested ? Number(suggested[1]) : 5;
+  // Cap it: wait at least 1s and at most 15s so the UI remains responsive
+  return Math.max(1, Math.min(Math.ceil(seconds) + 1, 15)) * 1000;
 }
 
 const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
@@ -189,7 +203,115 @@ export async function requestText(options: {
   }
 }
 
+/**
+ * A fixed seed, so the same question over the same records gives the same
+ * answer twice.
+ *
+ * Asking "how much were the tickets in Minicoy" twice used to return two
+ * different totals, which is worse than either being wrong: there was no way
+ * to tell which one to believe. Sampling is still not strictly deterministic,
+ * but it no longer wanders between runs for no reason. Extraction and
+ * answering both want the predictable end of the range, never the creative one.
+ */
+const DECODE_SEED = 7;
+
+let groqApiKeyInMemory: string | null = null;
+
+export function setGroqApiKeyInMemory(key: string): void {
+  groqApiKeyInMemory = key;
+}
+
+export function getGroqApiKey(): string {
+  if (groqApiKeyInMemory && groqApiKeyInMemory.trim().length > 0) {
+    return groqApiKeyInMemory.trim();
+  }
+  return process.env.EXPO_PUBLIC_GROQ_API_KEY || process.env.GROQ_API_KEY || '';
+}
+
+export function isGroqModel(model: string): boolean {
+  return (
+    model.startsWith('llama-') ||
+    model.startsWith('mixtral-') ||
+    model.startsWith('deepseek-') ||
+    model.startsWith('qwen') ||
+    model.startsWith('openai/') ||
+    model.includes('gpt-oss') ||
+    model.includes('orpheus')
+  );
+}
+
+async function sendGroqOnce(options: {
+  model: string;
+  system: string;
+  user: string;
+  schema: object;
+}): Promise<string> {
+  const key = getGroqApiKey();
+  if (!key) {
+    throw new Error('Groq API key is not configured. Add EXPO_PUBLIC_GROQ_API_KEY in .env or set it in Settings.');
+  }
+
+  const promptWithSchema = `${options.user}\n\nIMPORTANT: You must output ONLY a valid JSON object matching this schema:\n${JSON.stringify(options.schema, null, 2)}`;
+
+  const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${key}`,
+    },
+    body: JSON.stringify({
+      model: options.model,
+      messages: [
+        { role: 'system', content: options.system },
+        { role: 'user', content: promptWithSchema },
+      ],
+      response_format: { type: 'json_object' },
+      temperature: 0.1,
+      seed: DECODE_SEED,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Groq API error (${response.status}): ${errorText}`);
+  }
+
+  const data = (await response.json()) as {
+    choices?: Array<{ message?: { content?: string } }>;
+  };
+  return data.choices?.[0]?.message?.content ?? '{}';
+}
+
 async function sendOnce(options: {
+  model: string;
+  system: string;
+  user: string;
+  schema: object;
+}): Promise<string> {
+  if (isGroqModel(options.model)) {
+    try {
+      return await sendGroqOnce(options);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`Groq model ${options.model} call failed:`, msg);
+      if (options.model !== 'qwen/qwen3.8-27b') {
+        try {
+          return await sendGroqOnce({ ...options, model: 'qwen/qwen3.8-27b' });
+        } catch {}
+      }
+      if (hasApiKey()) {
+        try {
+          return await sendGeminiOnce({ ...options, model: ASK_MODEL });
+        } catch {}
+      }
+      throw err;
+    }
+  }
+
+  return sendGeminiOnce(options);
+}
+
+async function sendGeminiOnce(options: {
   model: string;
   system: string;
   user: string;
@@ -199,6 +321,7 @@ async function sendOnce(options: {
     model: options.model,
     system_instruction: options.system,
     input: options.user,
+    generation_config: { seed: DECODE_SEED },
     response_format: {
       type: 'text',
       mime_type: 'application/json',
@@ -225,12 +348,22 @@ export function describeError(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err);
   const status = (err as { status?: number })?.status;
 
+  if (/Groq API error/i.test(message) || /groq/i.test(message)) {
+    if (/401|invalid_api_key/i.test(message)) {
+      return 'Groq API key was rejected. Please check your key in Settings.';
+    }
+    if (/429|rate_limit/i.test(message)) {
+      return 'Groq rate limit reached. Please wait a moment and try again.';
+    }
+    return message;
+  }
+
   if (status === 401 || status === 403 || /API key/i.test(message)) {
     return 'That API key was rejected. Check EXPO_PUBLIC_GEMINI_API_KEY.';
   }
   if (status === 429 || isQuotaError(message)) return quotaMessage(message);
   if (/fetch|network|ENOTFOUND|ECONNREFUSED/i.test(message)) {
-    return 'Could not reach Gemini. Check your network connection.';
+    return 'Could not reach AI provider. Check your network connection.';
   }
   return message || 'Something went wrong.';
 }

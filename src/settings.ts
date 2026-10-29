@@ -26,7 +26,66 @@ export type VoiceLanguage = 'en-IN' | 'ml-IN' | 'mixed';
 /** What titles and tags are written in. The raw note is never translated. */
 export type TitleLanguage = 'english' | 'original';
 
+export type AiModelChoice =
+  | 'openai/gpt-oss-120b'
+  | 'qwen/qwen3.8-27b'
+  | 'openai/gpt-oss-20b'
+  | 'gemini-3.5-flash-lite'
+  | 'gemini-3.8-flash'
+  | 'llama-3.3-70b-versatile';
+
+export const AI_MODELS: {
+  value: AiModelChoice;
+  label: string;
+  desc: string;
+  speed: string;
+  provider: 'gemini' | 'groq';
+  icon: string;
+}[] = [
+  {
+    value: 'openai/gpt-oss-120b',
+    label: 'GPT OSS 120B (Groq)',
+    desc: 'Flagship 120B open model. Top RAG reasoning and accurate synthesis.',
+    speed: '~1s',
+    provider: 'groq',
+    icon: 'rocket-outline',
+  },
+  {
+    value: 'qwen/qwen3.8-27b',
+    label: 'Qwen 3.8 27B (Groq)',
+    desc: 'Superior multilingual model. Great for Malayalam, Manglish & tables.',
+    speed: '~0.8s',
+    provider: 'groq',
+    icon: 'flash-outline',
+  },
+  {
+    value: 'openai/gpt-oss-20b',
+    label: 'GPT OSS 20B (Groq)',
+    desc: 'Ultra-fast inference (<0.6s). Instant answers to everyday queries.',
+    speed: '<0.6s',
+    provider: 'groq',
+    icon: 'flash-outline',
+  },
+  {
+    value: 'gemini-3.5-flash-lite',
+    label: 'Gemini 3.5 Flash Lite',
+    desc: 'Fast (2–4s), generous free quota. Default Gemini ask model.',
+    speed: '~2–4s',
+    provider: 'gemini',
+    icon: 'flash-outline',
+  },
+  {
+    value: 'gemini-3.8-flash',
+    label: 'Gemini 3.8 Flash',
+    desc: 'Deep reasoning model. Slower on mobile (~30–45s).',
+    speed: '~35–45s',
+    provider: 'gemini',
+    icon: 'hardware-chip-outline',
+  },
+];
+
 const TITLE_LANGUAGE_KEY = 'titles.language';
+const AI_MODEL_KEY = 'ai.ask_model';
 
 export const VOICE_LANGUAGES: { value: VoiceLanguage; label: string; hint: string }[] = [
   { value: 'en-IN', label: 'English (India)', hint: 'Malayalam comes back written in English letters' },
@@ -64,8 +123,77 @@ export async function setTitleLanguage(language: TitleLanguage): Promise<void> {
   await setSetting(TITLE_LANGUAGE_KEY, language);
 }
 
+const GROQ_API_KEY = 'ai.groq_api_key';
+
+export async function getGroqApiKey(): Promise<string> {
+  const stored = await getSetting(GROQ_API_KEY);
+  if (stored && stored.trim().length > 0) return stored.trim();
+  return process.env.EXPO_PUBLIC_GROQ_API_KEY || '';
+}
+
+export async function setGroqApiKey(key: string): Promise<void> {
+  await setSetting(GROQ_API_KEY, key.trim());
+}
+
+export async function getSelectedAiModel(): Promise<AiModelChoice> {
+  const stored = await getSetting(AI_MODEL_KEY);
+  if (
+    stored === 'openai/gpt-oss-120b' ||
+    stored === 'qwen/qwen3.8-27b' ||
+    stored === 'openai/gpt-oss-20b' ||
+    stored === 'gemini-3.5-flash-lite' ||
+    stored === 'gemini-3.8-flash' ||
+    stored === 'llama-3.3-70b-versatile'
+  ) {
+    return stored;
+  }
+  return (process.env.EXPO_PUBLIC_GEMINI_ASK_MODEL as AiModelChoice) || 'gemini-3.5-flash-lite';
+}
+
+export async function setSelectedAiModel(model: AiModelChoice): Promise<void> {
+  await setSetting(AI_MODEL_KEY, model);
+}
+
+export const TELEGRAM_AUTO_SYNC_INTERVAL_KEY = 'sources.telegram_auto_sync_interval';
+
+/**
+ * Auto sync interval in minutes for Telegram channels.
+ * 0 = Off
+ * Default = 5 (every 5 minutes)
+ */
+export async function getTelegramAutoSyncInterval(): Promise<number> {
+  const val = await getSetting(TELEGRAM_AUTO_SYNC_INTERVAL_KEY);
+  if (val !== null && val !== undefined) {
+    const parsed = parseInt(val, 10);
+    if (!isNaN(parsed) && parsed >= 0) return parsed;
+  }
+  return 5; // Default: 5 minutes
+}
+
+export async function setTelegramAutoSyncInterval(minutes: number): Promise<void> {
+  await setSetting(TELEGRAM_AUTO_SYNC_INTERVAL_KEY, String(minutes));
+}
+
+export const TELEGRAM_BRIDGE_URL_KEY = 'sources.telegram_bridge_url';
+export const DEFAULT_TELEGRAM_BRIDGE_URL = 'https://perai-zeq7.onrender.com';
+
+/**
+ * URL for self-hosted or cloud Telegram Media Bridge service.
+ * Allows downloading attached PDF documents from public channels.
+ */
+export async function getTelegramBridgeUrl(): Promise<string> {
+  const val = await getSetting(TELEGRAM_BRIDGE_URL_KEY);
+  if (val && val.trim()) return val.trim();
+  return DEFAULT_TELEGRAM_BRIDGE_URL;
+}
+
+export async function setTelegramBridgeUrl(url: string): Promise<void> {
+  await setSetting(TELEGRAM_BRIDGE_URL_KEY, url.trim());
+}
+
 /** Read at startup, so a saved choice survives a restart. */
 export async function applySavedVoiceLanguage(): Promise<void> {
   const language = await getVoiceLanguage();
   setSpeechLanguage(language === null ? null : localeFor(language));
 }
+

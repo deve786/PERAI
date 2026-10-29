@@ -4,8 +4,11 @@ import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { deleteExpense, type ExpenseRow } from './db';
 import { addDays, fromStr, prettyDate, todayStr } from './dates';
+import { fmtMoney, net } from './stats';
 import { useTheme } from './theme';
 import { ConfirmDialog, IconDot, Money, Row, T } from './ui';
+import { SwipeRow } from '../components/SwipeRow';
+import { showSnackbar } from '../snackbarStore';
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -35,14 +38,19 @@ export function ExpenseItem({ e, showDate = true, onDeleted, trip, last }: {
   /** Last row in its card — no hairline under it. */
   last?: boolean;
 }) {
-  const { c } = useTheme();
+  const { c, symbol } = useTheme();
   const router = useRouter();
   const [confirming, setConfirming] = useState(false);
+  const netAmount = net(e);
+  const hasDeductions = (e.refund_amount != null && e.refund_amount > 0) || (e.reimburse_amount != null && e.reimburse_amount > 0);
+
   const meta = [
     // The category is already the title when there's no note.
     e.note ? e.cat_name : null,
     e.sub_category || null,
     e.user_tag ? `@${e.user_tag}` : null,
+    e.reimburse_amount ? `Paid back ${fmtMoney(e.reimburse_amount, symbol)}` : null,
+    e.refund_amount ? `Refunded ${fmtMoney(e.refund_amount, symbol)}` : null,
     e.place || null,
     e.method,
     showDate ? prettyDate(e.date) : null,
@@ -64,8 +72,28 @@ export function ExpenseItem({ e, showDate = true, onDeleted, trip, last }: {
     onDeleted?.();
   }
 
+  // Swipe left to delete. Nothing is deleted until the Undo has gone: deleting
+  // an expense also moves an account balance and removes any refund entry it
+  // made, so holding the delete back is cleaner than reversing all of that.
+  const swipeDelete = {
+    label: 'Delete',
+    icon: 'trash-outline' as const,
+    tone: 'alert' as const,
+    removes: true,
+    onTrigger: ({ restore }: { restore: () => void }) => {
+      showSnackbar({
+        message: `Deleted ${e.note || e.cat_name}`,
+        onAction: restore,
+        onCommit: async () => {
+          await deleteExpense(e.id);
+          onDeleted?.();
+        },
+      });
+    },
+  };
+
   return (
-    <>
+    <SwipeRow right={swipeDelete}>
       <Pressable
         onPress={() => router.push({ pathname: '/expense/expense', params: { id: String(e.id) } })}
         onLongPress={onLongPress}
@@ -85,7 +113,14 @@ export function ExpenseItem({ e, showDate = true, onDeleted, trip, last }: {
             <T size={15} weight="500" numberOfLines={1}>{e.note || e.cat_name}</T>
             {meta ? <T size={13} sub numberOfLines={1} style={{ marginTop: 1 }}>{meta}</T> : null}
           </View>
-          <Money value={e.amount} size={15} weight="500" />
+          <View style={{ alignItems: 'flex-end', justifyContent: 'center' }}>
+            <Money value={netAmount} size={15} weight="500" />
+            {hasDeductions ? (
+              <T size={11} sub tabular style={{ textDecorationLine: 'line-through', opacity: 0.6, marginTop: 1 }}>
+                {fmtMoney(e.amount, symbol)}
+              </T>
+            ) : null}
+          </View>
         </Row>
       </Pressable>
       <ConfirmDialog
@@ -95,6 +130,6 @@ export function ExpenseItem({ e, showDate = true, onDeleted, trip, last }: {
         onConfirm={confirmDelete}
         onCancel={() => setConfirming(false)}
       />
-    </>
+    </SwipeRow>
   );
 }

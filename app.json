@@ -2,7 +2,7 @@
   "expo": {
     "name": "PERAI",
     "slug": "PERAI",
-    "version": "1.20.0",
+    "version": "1.32.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "perai",
@@ -131,7 +131,7 @@
       "typedRoutes": true
     },
     "extra": {
-      "otaBuild": 1,
+      "otaBuild": 2,
       "eas": {
         "projectId": "fb4c44a8-9650-45ba-a00a-f26929a1b5f0"
       }
@@ -142,8 +142,6 @@
       "checkAutomatically": "ON_LOAD",
       "fallbackToCacheTimeout": 0
     },
-    "runtimeVersion": {
-      "policy": "fingerprint"
-    }
+    "runtimeVersion": "f2fe69f1e03aa27a54a6eb291ff5a3d32c8c58d6"
   }
 }

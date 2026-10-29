@@ -206,8 +206,31 @@ export default function NetWorthScreen() {
         <T size={16} weight="700" numberOfLines={1}>{title}</T>
         {sub ? <T size={13} sub numberOfLines={1}>{sub}</T> : null}
       </View>
-      <View style={{ alignItems: 'flex-end' }}>
+      <View style={{ alignItems: 'flex-end', gap: 2 }}>
         <T size={15} weight="600" tabular>{fmtMoney(acc.balance, '₹')}</T>
+        <Pressable
+          onPress={(ev) => {
+            ev.stopPropagation();
+            router.push({ pathname: '/expense/passbook' as any, params: { accountId: acc.id } });
+          }}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel={`View statement for ${title}`}
+          style={({ pressed }) => ({
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 3,
+            paddingHorizontal: 8,
+            paddingVertical: 2,
+            borderRadius: radius.pill,
+            backgroundColor: c.well,
+            opacity: pressed ? 0.6 : 1,
+            marginTop: 2,
+          })}
+        >
+          <Ionicons name="receipt-outline" size={11} color={c.accent} />
+          <T size={11} weight="600" style={{ color: c.accent }}>Statement</T>
+        </Pressable>
         {extra}
       </View>
     </Pressable>
@@ -237,7 +260,29 @@ export default function NetWorthScreen() {
       <TopBar
         title="Net worth"
         onBack={() => router.back()}
-        right={<PillButton label="+ Add" tone={c.accent} onPress={() => openNew('bank')} />}
+        right={
+          <Row style={{ gap: 8 }}>
+            <Pressable
+              onPress={() => router.push('/expense/passbook' as any)}
+              accessibilityRole="button"
+              accessibilityLabel="View Passbook and transaction history"
+              style={({ pressed }) => ({
+                paddingHorizontal: 10,
+                paddingVertical: 6,
+                borderRadius: radius.pill,
+                backgroundColor: c.accentSoft,
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 4,
+                opacity: pressed ? 0.7 : 1,
+              })}
+            >
+              <Ionicons name="receipt-outline" size={14} color={c.accent} />
+              <T size={13} weight="600" style={{ color: c.accent }}>Passbook</T>
+            </Pressable>
+            <PillButton label="+ Add" tone={c.accent} onPress={() => openNew('bank')} />
+          </Row>
+        }
       />
       <ScrollView contentContainerStyle={styles.content}>
         {/* Total and what goes into it */}
@@ -320,6 +365,32 @@ export default function NetWorthScreen() {
             value={activePreset}
             onChange={selectPreset}
           />
+
+          <Pressable
+            onPress={() => router.push('/expense/passbook' as any)}
+            accessibilityRole="button"
+            accessibilityLabel="View Net Worth Transaction History"
+            style={({ pressed }) => ({
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              paddingVertical: 10,
+              paddingHorizontal: 12,
+              borderRadius: radius.sm,
+              backgroundColor: c.well,
+              opacity: pressed ? 0.7 : 1,
+              marginTop: 4,
+            })}
+          >
+            <Row style={{ gap: 8, alignItems: 'center' }}>
+              <Ionicons name="swap-horizontal-outline" size={16} color={c.accent} />
+              <T size={13} weight="600">Net Worth Transaction History</T>
+            </Row>
+            <Row style={{ gap: 4, alignItems: 'center' }}>
+              <T size={12} sub>Money in & out</T>
+              <Ionicons name="chevron-forward" size={14} color={c.sub} />
+            </Row>
+          </Pressable>
         </View>
 
         {/* Bank accounts */}

@@ -30,7 +30,50 @@ import {
 import { isFreshPartial, joinSpelledLetters, knownPeople, restatesEarlier } from '../src/speechText';
 import { listSections } from '../src/lists';
 import { answerFromList, listQuestion } from '../src/listQuestion';
+import { readFileSync } from 'node:fs';
+import {
+  answerBarShares,
+  blend,
+  bucketName,
+  bucketTick,
+  budgetPace,
+  delta,
+  heatLevels,
+  heatRamp,
+  heatWeeks,
+  monthlyTotals,
+  parseMoney,
+  sparkPoints,
+  waterfallDomain,
+  waterfallSteps,
+} from '../src/charts/chartLogic';
+import { describeStage } from '../src/ai/stageText';
+import { join } from 'node:path';
 import { conversationQuery } from '../src/ai/ask';
+import {
+  SAMPLE_ACCOUNTS,
+  SAMPLE_BUDGETS,
+  SAMPLE_DOCUMENTS,
+  SAMPLE_EXPENSES,
+  SAMPLE_INCOME,
+  SAMPLE_LOANS,
+  SAMPLE_MEMORIES,
+  SAMPLE_PEOPLE,
+  SAMPLE_PLACES,
+  SAMPLE_RECURRING,
+  SAMPLE_TELEGRAM_CHANNEL,
+  SAMPLE_TELEGRAM_MESSAGE_ID,
+  SAMPLE_WEBSITE,
+} from '../src/db/sampleDataFingerprint';
+import {
+  composeRowText,
+  groupAnswerRows,
+  hasSections,
+  parseAnswerRow,
+  toAnswerRows,
+  trimRedundantDetail,
+  type AnswerRow,
+} from '../src/ai/answerRows';
 import { hasPassed, isStruck, overdueToClose, sinkStruck } from '../src/strike';
 import { nextOccurrence } from '../src/repeat';
 import { planDay } from '../src/today';
@@ -41,8 +84,9 @@ import {
   categoryBudgetStatus,
   crossedThreshold,
 } from '../src/expense/budgets';
-import { monthRange } from '../src/expense/dates';
-import { sum } from '../src/expense/stats';
+import { monthRange, nextYm } from '../src/expense/dates';
+import { byCategory, net, sum } from '../src/expense/stats';
+import { attachRunningBalances, computePassbookSummary, groupPassbookByDate, sourceBadge, type PassbookEntry } from '../src/expense/passbookLogic';
 import {
   categoryFromHistory,
   knownCategoryName,
@@ -65,6 +109,26 @@ import { toSentence } from '../src/format';
 import { itemSizeText, pricePerUnitText, sizeLabel } from '../src/expense/itemSize';
 import { refundReminderTimes } from '../src/expense/refundSchedule';
 import { monthsWithData, OVERALL, periodLabel, periodRange, previousMonth } from '../src/expense/period';
+import { stitchChunkContents, groupAndStitchDocumentChunks, verifyItemGrounding } from '../src/sources/chunkLogic';
+import {
+  extractLinksFromHtml,
+  extractTitle,
+  extractTextFromHtml,
+  normalizeWebsiteUrl,
+  buildAggregatedWebsiteContent,
+  extractRelevantWebsiteSnippets,
+  extractScrapedPages,
+  extractSpaPages,
+  COMMON_SPA_PROBE_PATHS,
+  type ScrapedPage,
+} from '../src/sources/websiteLogic';
+import {
+  filterIncrementalTelegramPosts,
+  isAutoSyncDue,
+  formatAutoSyncInterval,
+  type RawTelegramPost,
+} from '../src/sources/telegramLogic';
+import type { DocumentChunk } from '../src/sources/types';
 import { needsTranslation, normalizeMoney, normalizeQuery } from '../src/manglish';
 import {
   changeLabel,
@@ -98,6 +162,8 @@ import { lookupSpelling, spellingHints, spellingKey } from '../src/dictionary';
 import { backoffFor, nextDue, shouldRetry, MAX_ATTEMPTS, type PendingNote } from '../src/pendingNotes';
 import { widgetItems } from '../src/widget/widgetItems';
 import { computeNetWorth } from '../src/expense/accountsLogic';
+import { extractMemoriesOffline } from '../src/ai/extractOffline';
+import { extractPaymentFromTextOffline } from '../src/expense/paymentTextOffline';
 
 let passed = 0;
 let failed = 0;
@@ -210,6 +276,381 @@ check('returns null with no period', guessDateRange('when did I last cut my hair
     range.from.getMonth() === 7 && range.to.getMonth() === 7,
     `${range.from.toDateString()} -> ${range.to.toDateString()}`
   );
+}
+
+section('chart arithmetic: colour');
+{
+  check('blending at full strength is the colour itself', blend('#2F5D45', '#FFFFFF', 1) === '#2f5d45', blend('#2F5D45', '#FFFFFF', 1));
+  check('blending at nothing is the background', blend('#2F5D45', '#FFFFFF', 0) === '#ffffff');
+  check('blending halfway sits between', blend('#000000', '#FFFFFF', 0.5) === '#808080', blend('#000000', '#FFFFFF', 0.5));
+  const ramp = heatRamp('#2F5D45', '#FFFFFF');
+  check('the heat ramp has four steps', ramp.length === 4);
+  check('the heat ramp ends on the accent itself', ramp[3] === '#2f5d45');
+  // The validated values: these exact steps passed every ordinal check.
+  check('the light-mode ramp is the one that was validated', ramp.join(',') === '#a1b6ab,#7c998a,#547a66,#2f5d45', ramp.join(','));
+}
+
+section('chart arithmetic: calendar heatmap');
+{
+  const levels = heatLevels([0, 10, 20, 30, 40, 0, 1000]);
+  check('a day with nothing is level 0', levels[0] === 0 && levels[5] === 0);
+  check('the largest day is the darkest step', levels[6] === 4);
+  check('steps rise with the amount', levels[1] <= levels[2] && levels[2] <= levels[3] && levels[3] <= levels[4]);
+  // One huge day must not wash every ordinary day out to the palest step.
+  const spiky = heatLevels([10, 12, 14, 16, 10000]);
+  check('one huge day does not flatten the rest', new Set(spiky.slice(0, 4)).size >= 3, spiky);
+  check('no activity at all is all zeros', heatLevels([0, 0, 0]).every((l) => l === 0));
+
+  // October 2026 starts on a Thursday and ends on a Saturday.
+  const totals = new Map([['2026-10-16', { value: 3273, count: 5 }]]);
+  const weeks = heatWeeks('2026-10-01', '2026-10-31', totals);
+  check('every week has seven days', weeks.every((week) => week.length === 7));
+  check('the grid starts on the Monday before the 1st', weeks[0][0].date === '2026-09-28', weeks[0][0].date);
+  check('days before the period are marked outside', weeks[0][0].outside && weeks[0][2].outside && !weeks[0][3].outside);
+  check('the 1st falls on Thursday', weeks[0][3].date === '2026-10-01');
+  check('the grid ends on the Sunday after the 31st', weeks[weeks.length - 1][6].date === '2026-11-01');
+  check('the day after the period is outside', weeks[weeks.length - 1][6].outside);
+  const sixteenth = weeks.flat().find((cell) => cell.date === '2026-10-16');
+  check('a day carries its total and count', sixteenth?.value === 3273 && sixteenth.count === 5);
+  check('the only active day is the darkest', sixteenth?.level === 4);
+  check('a period running backwards is empty', heatWeeks('2026-10-31', '2026-10-01', totals).length === 0);
+}
+
+section('chart arithmetic: waterfall');
+{
+  const steps = waterfallSteps(10000, [
+    { name: 'Food', total: 3000 },
+    { name: 'Travel', total: 4000 },
+  ]);
+  check('it starts at income', steps[0].kind === 'start' && steps[0].to === 10000);
+  check('the largest category comes off first', steps[1].label === 'Travel' && steps[1].from === 10000 && steps[1].to === 6000);
+  check('each step starts where the last ended', steps[2].from === 6000 && steps[2].to === 3000);
+  check('it ends on what was left', steps[3].kind === 'end' && steps[3].to === 3000 && steps[3].label === 'Left over');
+
+  const over = waterfallSteps(1000, [{ name: 'Rent', total: 1500 }]);
+  check('spending past income ends as overspent', over[over.length - 1].label === 'Overspent' && over[over.length - 1].to === -500);
+  const [low, high] = waterfallDomain(over);
+  check('the axis reaches below zero when money ran out', low === -500 && high === 1000, [low, high]);
+
+  const many = waterfallSteps(
+    100000,
+    Array.from({ length: 9 }, (_, i) => ({ name: `C${i}`, total: 1000 * (9 - i) }))
+  );
+  check('beyond six categories the rest fold into one step', many.some((s) => s.label === 'Everything else'));
+  check('folding loses no money', many[many.length - 1].to === 100000 - 45000, many[many.length - 1].to);
+  check('a category with nothing in it gets no step', !waterfallSteps(100, [{ name: 'Zero', total: 0 }]).some((s) => s.label === 'Zero'));
+}
+
+section('chart arithmetic: comparisons');
+{
+  const spendingUp = delta(1200, 1000, false);
+  check('spending up 20% is reported as 20%', spendingUp.pct === 20 && spendingUp.direction === 'up');
+  check('spending going up is not good news', spendingUp.good === false);
+  check('income going up is good news', delta(1200, 1000, true).good === true);
+  check('income going down is not', delta(800, 1000, true).good === false);
+  check('no change is neither good nor bad', delta(1000, 1000, true).good === null);
+  check('nothing to compare with gives no percentage', delta(500, 0, true).pct === null);
+  // A net that went from -1000 to -500 improved, even though both are negative.
+  check('a negative figure that rises is an improvement', delta(-500, -1000, true).direction === 'up' && delta(-500, -1000, true).good === true);
+}
+
+section('chart arithmetic: budget pace');
+{
+  const early = budgetPace(6800, 10000, 10, 31);
+  check('68% used on the 10th is ahead of pace', early.aheadBy > 0, early);
+  check('days left counts the rest of the month', early.daysLeft === 21);
+  check('what is left per day keeps you on budget', Math.abs(early.perDayLeft - 3200 / 21) < 0.01, early.perDayLeft);
+  const late = budgetPace(6800, 10000, 25, 31);
+  check('68% used on the 25th is under pace', late.aheadBy < 0, late);
+  const over = budgetPace(12000, 10000, 20, 30);
+  check('over budget leaves nothing per day', over.perDayLeft === 0);
+  check('no budget means nothing used', budgetPace(500, 0, 10, 30).used === 0);
+}
+
+section('chart arithmetic: sparklines');
+{
+  const months = monthlyTotals(
+    [
+      { date: '2026-10-05', value: 100 },
+      { date: '2026-10-20', value: 50 },
+      { date: '2026-08-01', value: 30 },
+      { date: '2025-01-01', value: 999 },
+    ],
+    '2026-10-28',
+    6
+  );
+  check('six months, oldest first', months.length === 6, months);
+  check('the last value is this month', months[5] === 150, months);
+  check('a quiet month is a zero, not a gap', months[4] === 0, months);
+  check('a month out of range is left out', !months.includes(999));
+  const points = sparkPoints([0, 10, 5], 50, 20);
+  check('a sparkline has a point per value', points.length === 3);
+  check('the highest value sits highest', points[1][1] < points[0][1] && points[1][1] < points[2][1]);
+  check('the line spans the width', points[0][0] === 3 && points[2][0] === 47);
+}
+
+section('chart arithmetic: bars inside an answer');
+{
+  check('rupees with commas and paise are read', parseMoney('₹1,825.00') === 1825);
+  check('a bare figure is read', parseMoney('4300') === 4300);
+  check('a duration is not money', parseMoney('3 days') === null);
+  check('nothing is not money', parseMoney(null) === null);
+  const shares = answerBarShares(['₹2,904.90', '₹1,825.00', null, '3 days']);
+  check('the largest figure fills the bar', shares?.[0] === 1);
+  check('a smaller figure is its share of the largest', Math.abs((shares?.[1] ?? 0) - 1825 / 2904.9) < 0.0001);
+  check('a row with no money gets no bar', shares?.[2] === null && shares?.[3] === null);
+  check('a single money figure draws no bars at all', answerBarShares(['₹500', 'note']) === null);
+}
+
+section('chart arithmetic: naming buckets');
+{
+  check('a day bucket reads as its date', bucketTick({ date: '2026-10-16', label: '16' }) === '16 Oct');
+  check('a month bucket reads as month and year', bucketTick({ date: '2026-10-01', label: '10' }) === 'Oct 2026');
+  check('a day is named with its weekday', bucketName({ date: '2026-10-16', label: '16' }) === 'Fri 16 Oct', bucketName({ date: '2026-10-16', label: '16' }));
+  check('a week is named by its first day', bucketName({ date: '2026-10-05', label: 'W2' }) === 'Week of 5 Oct');
+  check('a month is named as month and year', bucketName({ date: '2026-10-01', label: '10' }) === 'Oct 2026');
+}
+
+section('what the waiting answer says');
+{
+  check('it starts by searching', describeStage(null) === 'Searching your record…');
+  check(
+    'it names what it found',
+    describeStage({ step: 'reading', found: { memories: 0, documents: 3, websites: 0, messages: 12, expenses: true } }) ===
+      'Reading 3 documents, 12 messages and your expenses…',
+    describeStage({ step: 'reading', found: { memories: 0, documents: 3, websites: 0, messages: 12, expenses: true } })
+  );
+  check(
+    'one of a thing is singular',
+    describeStage({ step: 'reading', found: { memories: 1, documents: 0, websites: 0, messages: 0, expenses: false } }) === 'Reading 1 note…'
+  );
+  check(
+    'finding nothing says so',
+    describeStage({ step: 'reading', found: { memories: 0, documents: 0, websites: 0, messages: 0, expenses: false } }).startsWith('Nothing')
+  );
+  check('then it writes', describeStage({ step: 'writing' }) === 'Writing the answer…');
+}
+
+section('sample data can be recognised exactly');
+{
+  // Every row the remover looks for must be one the seeder actually writes,
+  // word for word and figure for figure. If the seeder changes and this does
+  // not, sample rows would sit in someone's real data with nothing to take
+  // them out.
+  const seed = readFileSync(join(__dirname, '..', 'src', 'db', 'seedData.ts'), 'utf8');
+  const has = (text: string) => seed.includes(`'${text.replace(/'/g, "\\'")}'`) || seed.includes(`"${text}"`);
+  const hasAmount = (amount: number) => new RegExp(`amount: ${amount},`).test(seed);
+
+  for (const row of SAMPLE_EXPENSES) {
+    check(`expense "${row.note}" matches the seeder`, has(row.note) && has(row.notes) && hasAmount(row.amount));
+  }
+  for (const row of SAMPLE_INCOME) {
+    check(`income "${row.note}" matches the seeder`, has(row.note) && has(row.notes) && hasAmount(row.amount));
+  }
+  for (const row of SAMPLE_LOANS) {
+    check(`loan to ${row.person} matches the seeder`, has(row.person) && has(row.notes) && hasAmount(row.amount));
+  }
+  for (const row of SAMPLE_MEMORIES) {
+    check(`entry "${row.title}" matches the seeder`, has(row.title) && has(row.rawInput));
+  }
+  for (const row of SAMPLE_ACCOUNTS) {
+    check(`account ${row.id} matches the seeder`, has(row.id) && has(row.name));
+  }
+  for (const row of SAMPLE_RECURRING) {
+    check(`bill ${row.id} matches the seeder`, has(row.id) && has(row.note));
+  }
+  for (const row of SAMPLE_DOCUMENTS) {
+    check(`document ${row.id} matches the seeder`, seed.includes(`'${row.id}'`) && has(row.filename));
+  }
+  check('the sample website matches the seeder', has(SAMPLE_WEBSITE.id) && has(SAMPLE_WEBSITE.url));
+  check(
+    'the sample Telegram channel matches the seeder',
+    has(SAMPLE_TELEGRAM_CHANNEL.id) && has(SAMPLE_TELEGRAM_CHANNEL.username) && has(SAMPLE_TELEGRAM_MESSAGE_ID)
+  );
+  for (const row of SAMPLE_BUDGETS) {
+    check(
+      `budget on ${row.category} matches the seeder`,
+      has(row.category) && new RegExp(`monthly_budget = \\?[^\\n]*${row.amount}`).test(seed)
+    );
+  }
+
+  for (const name of SAMPLE_PLACES) check(`place "${name}" matches the seeder`, has(name));
+  for (const name of SAMPLE_PEOPLE) check(`person ${name} matches the seeder`, has(name));
+
+  // The other direction: nothing the seeder writes is missed.
+  const seededExpenses = (seed.match(/await saveExpense\(/g) ?? []).length;
+  check('every seeded expense is fingerprinted', seededExpenses === SAMPLE_EXPENSES.length, `${seededExpenses} seeded`);
+  const seededIncome = (seed.match(/await saveIncome\(/g) ?? []).length;
+  check('every seeded income is fingerprinted', seededIncome === SAMPLE_INCOME.length, `${seededIncome} seeded`);
+  const seededLoans = (seed.match(/await saveBorrowLend\(/g) ?? []).length;
+  check('every seeded loan is fingerprinted', seededLoans === SAMPLE_LOANS.length, `${seededLoans} seeded`);
+  const seededEntries = (seed.match(/rawInput: '/g) ?? []).length;
+  check('every seeded entry is fingerprinted', seededEntries === SAMPLE_MEMORIES.length, `${seededEntries} seeded`);
+  const seededAccounts = (seed.match(/await saveAccount\(/g) ?? []).length;
+  check('every seeded account is fingerprinted', seededAccounts === SAMPLE_ACCOUNTS.length, `${seededAccounts} seeded`);
+  const seededBills = (seed.match(/INSERT OR REPLACE INTO recurring/g) ?? []).length;
+  check('every seeded bill is fingerprinted', seededBills === SAMPLE_RECURRING.length, `${seededBills} seeded`);
+  const seededPlaces = (seed.match(/^\s*place: /gm) ?? []).length;
+  check('every seeded place is fingerprinted', seededPlaces === SAMPLE_PLACES.length, `${seededPlaces} seeded`);
+  const seededTags = [...seed.matchAll(/^\s*user_tag: '([^']+)'/gm)].map((m) => m[1]);
+  check('every seeded person is fingerprinted', seededTags.every((n) => SAMPLE_PEOPLE.includes(n)), seededTags.join(','));
+  const seededBudgets = (seed.match(/SET monthly_budget = \?/g) ?? []).length;
+  check('every seeded budget is fingerprinted', seededBudgets === SAMPLE_BUDGETS.length, `${seededBudgets} seeded`);
+}
+
+section('answer lines are read back into their parts');
+{
+  const row = parseAnswerRow('2026-10-28 · Ship (Zeesh) · Ticket · ₹1,456 · [Paid back in full]');
+  check('the date goes to the gutter', row.date === '2026-10-28', row.date);
+  check('the title is what the thing is', row.title === 'Ship (Zeesh)', row.title);
+  check('the amount is kept apart', row.amount === '₹1,456', row.amount);
+  check('what is left becomes the detail', row.detail === 'Ticket', row.detail);
+  check('a bracketed aside becomes a note', row.note === 'Paid back in full', row.note);
+
+  const dated = parseAnswerRow('Thursday, 1 October 2026 · Elden Ring');
+  check('a weekday prefix is still a date', dated.date === 'Thursday, 1 October 2026', dated.date);
+  check('a line with no figure has no amount', dated.amount === null, dated.amount);
+
+  const plain = parseAnswerRow('Nothing was recorded that week');
+  check('a sentence stays a sentence', plain.title === 'Nothing was recorded that week' && plain.date === null);
+
+  const ship = parseAnswerRow('27/10/26 · MV LAGOONS · KOCHI Dept.1430');
+  check('a short date is recognised', ship.date === '27/10/26', ship.date);
+  check('the vessel is the title', ship.title === 'MV LAGOONS', ship.title);
+  check('the ports are the detail', ship.detail === 'KOCHI Dept.1430', ship.detail);
+
+  check(
+    'a parsed line composes back to itself',
+    composeRowText(parseAnswerRow('2026-10-16 · Ship (Thoo) · 2nd class · ₹1,180')) ===
+      '2026-10-16 · Ship (Thoo) · 2nd class · ₹1,180',
+    composeRowText(parseAnswerRow('2026-10-16 · Ship (Thoo) · 2nd class · ₹1,180'))
+  );
+}
+
+section('answer lines are grouped for the screen');
+{
+  const row = (group: string | null, title: string): AnswerRow => ({
+    group, date: null, title, detail: null, amount: null, note: null,
+  });
+
+  const grouped = groupAnswerRows([
+    row('Minicoy', 'Ticket'),
+    row('Minicoy', 'Food'),
+    row('Agatti', 'Ticket'),
+  ]);
+  check('rows sharing a heading stay together', grouped.length === 2, grouped.length);
+  check('the first section is Minicoy with two rows', grouped[0].heading === 'Minicoy' && grouped[0].rows.length === 2);
+  check('the second section is Agatti', grouped[1].heading === 'Agatti' && grouped[1].rows.length === 1);
+  check('two named sections are drawn as sections', hasSections(grouped));
+
+  const flat = groupAnswerRows([row(null, 'One'), row(null, 'Two')]);
+  check('an ungrouped list is one section', flat.length === 1 && flat[0].heading === null);
+  check('one unnamed section is not drawn as sections', !hasSections(flat));
+
+  const partly = groupAnswerRows([row('Minicoy', 'Ticket'), row(null, 'Something else')]);
+  check('a half-grouped list is not drawn as sections', !hasSections(partly));
+
+  check('structured rows win over the flat strings', toAnswerRows(['ignored'], [row('A', 'Kept')])[0].title === 'Kept');
+  check('flat strings are used when there are no rows', toAnswerRows(['3 Oct · Taxi · ₹300'])[0].title === 'Taxi');
+}
+
+section('a detail that only repeats the row is dropped');
+{
+  check(
+    'a detail restating the title and heading is dropped',
+    trimRedundantDetail('Minicoy expense category', 'Ticket', 'Minicoy') === null
+  );
+  check(
+    'a detail restating only the title is dropped',
+    trimRedundantDetail('Ticket category', 'Ticket', null) === null
+  );
+  check(
+    'a detail made only of filler is dropped',
+    trimRedundantDetail('Total spending', 'Food', 'Agatti') === null
+  );
+  check(
+    'a detail that adds a fact is kept',
+    trimRedundantDetail('Paid by UPI from SBI', 'Ticket', 'Minicoy') === 'Paid by UPI from SBI'
+  );
+  check(
+    'a detail naming a document is kept',
+    trimRedundantDetail('From lakport.pdf', 'MV LAGOONS', null) === 'From lakport.pdf'
+  );
+  check('no detail stays no detail', trimRedundantDetail(null, 'Ticket', 'Minicoy') === null);
+}
+
+section('guessDateRange: a week is a week, not a fortnight');
+{
+  // A fixed Wednesday, so the week boundaries are checkable by hand.
+  const wednesday = new Date(2026, 9, 28, 10, 0, 0);
+  const last = guessDateRange('what did I spend last week', wednesday)!;
+  check(
+    'last week starts on the previous Monday',
+    last.from.getDate() === 19 && last.from.getMonth() === 9,
+    last.from.toDateString()
+  );
+  check(
+    'last week ends on the Sunday before this one',
+    last.to.getDate() === 25 && last.to.getMonth() === 9,
+    last.to.toDateString()
+  );
+  check('last week does not reach into this week', last.to.getTime() < wednesday.getTime());
+
+  const current = guessDateRange('what did I spend this week', wednesday)!;
+  check('this week starts on Monday', current.from.getDate() === 26, current.from.toDateString());
+  check('this week runs to today', current.to.getDate() === 28, current.to.toDateString());
+
+  // Sunday belongs to the week that began on the Monday before it.
+  const sunday = new Date(2026, 10, 1, 10, 0, 0);
+  const sundayWeek = guessDateRange('this week', sunday)!;
+  check(
+    'Sunday still belongs to the week that began on Monday',
+    sundayWeek.from.getMonth() === 9 && sundayWeek.from.getDate() === 26,
+    sundayWeek.from.toDateString()
+  );
+}
+
+section('guessDateRange: an amount is not a year');
+{
+  const now = new Date(2026, 9, 28, 10, 0, 0);
+  check(
+    'a spent amount is not read as a year',
+    guessDateRange('did I spend 2000 on anything last month', now)?.label === 'last month',
+    guessDateRange('did I spend 2000 on anything last month', now)
+  );
+  check(
+    'an amount followed by a currency word is not a year',
+    guessDateRange('did I pay the 1999 rupees bill', now) === null
+  );
+  check(
+    'a four digit number beyond the plausible range is not a year',
+    guessDateRange('show me the 2050 transaction', now) === null
+  );
+  check('a year introduced as one is still a year', guessDateRange('what happened in 2024', now)?.label === '2024');
+  check('a bare year on its own is a year', guessDateRange('2024?', now)?.label === '2024');
+}
+
+section('guessDateRange: named months');
+{
+  const now = new Date(2026, 9, 28, 10, 0, 0); // October 2026
+  const march = guessDateRange('how much in March', now)!;
+  check('a bare month name is recognised', march?.label === 'March 2026', march?.label);
+  check(
+    'the month spans only that month',
+    march.from.getMonth() === 2 && march.to.getMonth() === 2 && march.to.getDate() === 31,
+    `${march.from.toDateString()} -> ${march.to.toDateString()}`
+  );
+
+  const withYear = guessDateRange('how much in March 2026', now)!;
+  check('a month with a year is the month, not the year', withYear?.label === 'March 2026', withYear?.label);
+
+  // Asked in October, "December" can only mean the December that has been.
+  const december = guessDateRange('what did I spend in December', now)!;
+  check('a month still to come means last year', december?.label === 'December 2025', december?.label);
+
+  check('February is matched from its short form', guessDateRange('spending in Feb', now)?.label === 'February 2026');
+  check('"may" alone is not treated as a month', guessDateRange('how much may I spend', now) === null);
+  check('"in May" is treated as a month', guessDateRange('what did I spend in May', now)?.label === 'May 2026');
 }
 
 section('selectRelevantMemories');
@@ -1143,6 +1584,18 @@ section('a trip and the spending during it');
     sum([{ amount: 500 }, { amount: 300 }]) === 800
   );
 
+  const reimbursedRows: LinkableExpense[] = [
+    { id: 'h', date: '2026-10-03', amount: 1000, cat_name: 'Hotel', refund_amount: 100, reimburse_amount: 300 },
+    { id: 'i', date: '2026-10-04', amount: 500, cat_name: 'Hotel', reimburse_amount: 200 },
+  ];
+  const reimbursedTotals = totalsByCurrency(reimbursedRows, '₹');
+  check('both refund and payback are deducted from trip spending', reimbursedTotals[0].total === 900, reimbursedTotals);
+  const reimbursedBreakdown = categoryBreakdown(reimbursedRows);
+  check('and out of trip category breakdown too', reimbursedBreakdown[0].total === 900, reimbursedBreakdown);
+
+  check('nextYm advances within same year', nextYm('2026-08') === '2026-09');
+  check('nextYm rolls over to next year in December', nextYm('2026-12') === '2027-01');
+
   check('a link id is derived from the pair', linkId('mem1', 'exp1') === 'mem1:exp1');
   check('so the same pair is always the same row', linkId('mem1', 'exp1') === linkId('mem1', 'exp1'));
 }
@@ -1817,6 +2270,394 @@ section('refund reminders every 2 days');
   check('a bad date gives nothing', refundReminderTimes('not a date', now, 3).length === 0);
 }
 
+section('document chunk stitching and grouping');
+{
+  const chunkA: DocumentChunk = {
+    id: 'c1',
+    documentId: 'doc1',
+    chunkIndex: 0,
+    content: 'Line 1: Schedule starts\nLine 2: 23/10/26 MV LAGOONS KLT CHT BTR\nLine 3: 29/10/26 MV L/SEA',
+    pageNumber: 1,
+    createdAt: '2026-10-24T18:02:00Z',
+    filename: 'Schedule.pdf',
+  };
+  const chunkB: DocumentChunk = {
+    id: 'c2',
+    documentId: 'doc1',
+    chunkIndex: 1,
+    content: '29/10/26 MV L/SEA BTR CHT KLT\nLine 4: 06/11/26 MV LAGOONS BTR CHT KLT',
+    pageNumber: 2,
+    createdAt: '2026-10-24T18:02:00Z',
+    filename: 'Schedule.pdf',
+  };
+
+  const stitched = stitchChunkContents([chunkA, chunkB]);
+  check('stitches overlapping lines without repeating duplicate header', stitched.includes('23/10/26') && stitched.includes('06/11/26'));
+
+  const grouped = groupAndStitchDocumentChunks([chunkA, chunkB]);
+  check('groups chunks into a single document entry', grouped.length === 1);
+  check('grouped entry has refId D0', grouped[0].refId === 'D0');
+  check('pages are aggregated', grouped[0].pages.length === 2 && grouped[0].pages[0] === 1 && grouped[0].pages[1] === 2);
+  check('stitched content has all 3 voyages', (grouped[0].content.match(/BTR/g) || []).length === 3);
+}
+
+section('hallucination detection & grounding verification');
+{
+  const scheduleTable = `
+| 23/10/26 | FRI | KVT AND KLP | KOCHI Dept.1430 | KLT CHT BTR 0800-1100 | KOCHI Dept.1800 |
+| 24/10/26 | SAT | KOCHI Arr.0700 | MCY 0800-1300 | AMN KDM KLP 0800-1100 | AND KLP 0800-1100 |
+| 29/10/26 | THU | MCY 0800-1300 | BTR CHT KLT 0800-1100 | KOCHI Dept.1800 | KOCHI Dept.1430 |
+| 06/11/26 | FRI | KOCHI Arr.0700 | KOCHI Arr.0700 | BTR CHT KLT 0800-1100 | KOCHI Arr.0700 |
+`;
+
+  check('verifies authentic entry on 23/10/26', verifyItemGrounding('23/10/26 · MV LAGOONS · KLT CHT BTR', scheduleTable).verified === true);
+  check('verifies authentic entry on 29/10/26', verifyItemGrounding('29/10/26 · MV L/SEA · BTR CHT KLT', scheduleTable).verified === true);
+  check('verifies authentic entry on 06/11/26', verifyItemGrounding('06/11/26 · MV LAGOONS · BTR CHT KLT', scheduleTable).verified === true);
+  check('detects hallucinated entry on 24/10/26', verifyItemGrounding('24/10/26 · MV LAGOONS · KLT CHT BTR', scheduleTable).verified === false);
+  check('detects non-existent date', verifyItemGrounding('31/10/26 · MV LAGOONS · BTR CHT KLT', scheduleTable).verified === false);
+  check('verifies correct details for 24/10/26', verifyItemGrounding('24/10/26 · MV LAGOONS · AMN KDM KLP', scheduleTable).verified === true);
+
+  const fullPdfSchedule = `
+Page 1
+| DATE | DAY | MV A/SEA | M V / L SEA | MV LAGOONS | MV CORALS |
+|---|---|---|---|---|---|
+| 16/10/26 | FRI | KOCHI Arr.0700 | KOCHI Dept.1430 | KVT AGT AMN | LAY UP |
+| 19/10/26 | MON | MCY 0800-1300 | LAY UP | KOCHI Dept.1430 | KOCHI Arr.0700 |
+| 20/10/26 | TUE | KOCHI Arr.0700 | LAY UP | KDM AMN | KOCHI Dept.1430 |
+| 21/10/26 | WED | KOCHI (LSG) Dept.1800 | LAY UP | KOCHI Arr.0700 | KVT AGT |
+| 22/10/26 | THU | KLP AND | LAY UP | KOCHI (LSG) Dept.1430 | KOCHI Arr.0700 |
+| 26/10/26 | MON | KLT CHT | KOCHI Arr.0700 | KOCHI Dept.1430 | KOCHI Dept.1230 |
+| 27/10/26 | TUE | KOCHI Arr.0700 | KOCHI Dept.1430 | KVT AGT 0800-1100. 1400-1600 | KDM AMN |
+| 28/10/26 | WED | KOCHI Dept.1430 | KLT CHT | KOCHI Arr.0700 | KOCHI Arr.0700 |
+| 29/10/26 | THU | MCY | BTR CHT KLT | KOCHI Dept.1800 | KOCHI Dept.1430 |
+
+Page 2
+| DATE | DAY | MV A/SEA | M V / L SEA | MV LAGOONS | MV CORALS |
+|---|---|---|---|---|---|
+| 30/10/26 | FRI | KOCHI Arr.0700 | KOCHI Arr.0700 | AND KLP | KVT AGT |
+| 01/11/26 | SUN | AGT KVT 0800-1100. 1400- 1600 | AMN KDM | KOCHI Dept.1230 | KOCHI Dept.1430 |
+| 05/11/26 | THU | KVT AGT | MCY | KLP KDM AMN | AGT KVT 0800-1100. 1400- 1600 |
+`;
+
+  // Lay up verification across multiple days
+  check('verifies lay up on 19/10/26', verifyItemGrounding('19/10/26 · M V / L SEA · LAY UP', fullPdfSchedule).verified === true);
+  check('verifies lay up on 20/10/26', verifyItemGrounding('20/10/26 · M V / L SEA · LAY UP', fullPdfSchedule).verified === true);
+  check('verifies lay up on 21/10/26', verifyItemGrounding('21/10/26 · M V / L SEA · LAY UP', fullPdfSchedule).verified === true);
+  check('verifies lay up on 22/10/26', verifyItemGrounding('22/10/26 · M V / L SEA · LAY UP', fullPdfSchedule).verified === true);
+  check('rejects false lay up on 26/10/26', verifyItemGrounding('26/10/26 · M V / L SEA · LAY UP', fullPdfSchedule).verified === false);
+
+  // Kochi departures & complete voyage legs
+  check('verifies Kochi departure for MV Lagoons on 26/10/26', verifyItemGrounding('26/10/26 · MV LAGOONS · KOCHI Dept.1430', fullPdfSchedule).verified === true);
+  check('verifies intermediate voyage stop on 27/10/26', verifyItemGrounding('27/10/26 · MV LAGOONS · KVT AGT', fullPdfSchedule).verified === true);
+  check('verifies Kochi return arrival on 30/10/26', verifyItemGrounding('30/10/26 · M V / L SEA · KOCHI Arr.0700', fullPdfSchedule).verified === true);
+
+  // Return voyages across multiple tables
+  check('verifies forward leg KVT to AGT on 27/10/26', verifyItemGrounding('27/10/26 · MV LAGOONS · KVT AGT', fullPdfSchedule).verified === true);
+  check('verifies return leg AGT to KVT on 01/11/26 on Page 2', verifyItemGrounding('01/11/26 · MV A/SEA · AGT KVT', fullPdfSchedule).verified === true);
+  check('verifies return leg AGT to KVT on 05/11/26 on Page 2', verifyItemGrounding('05/11/26 · MV CORALS · AGT KVT', fullPdfSchedule).verified === true);
+
+  // Catching hallucinations
+  check('rejects hallucinated ports for MV Lagoons on 26/10/26', verifyItemGrounding('26/10/26 · MV LAGOONS · AGT MCY', fullPdfSchedule).verified === false);
+}
+
+section('website multi-page crawling & content aggregation');
+{
+  const html = `
+    <!DOCTYPE html>
+    <html>
+      <head><title>Lakshadweep Port</title></head>
+      <body>
+        <h1>Official Port Department</h1>
+        <p>Main shipping office and ferry operations.</p>
+        <a href="/schedule">Ferry Schedule</a>
+        <a href="https://port.gov/fares.html?ref=nav#top">Passenger Fares</a>
+        <a href="downloads/notice.pdf">PDF Notice</a>
+        <a href="https://external-news.com/today">External</a>
+        <a href="javascript:alert(1)">JS</a>
+        <a href="mailto:info@port.gov">Email</a>
+      </body>
+    </html>
+  `;
+
+  const links = extractLinksFromHtml(html, 'https://port.gov/');
+  check('extracts relative links under same website', links.includes('https://port.gov/schedule'));
+  check('extracts absolute links on same domain and cleans tracking params', links.includes('https://port.gov/fares.html'));
+  check('excludes PDF and binary assets from link extraction', !links.some(l => l.endsWith('.pdf')));
+  check('excludes external domains', !links.some(l => l.includes('external-news.com')));
+  check('excludes javascript, mailto, and fragment links', !links.some(l => l.startsWith('javascript:') || l.startsWith('mailto:')));
+
+  check('normalizes URLs without protocol to https', normalizeWebsiteUrl('port.gov') === 'https://port.gov');
+  check('normalizes telegram channel URLs', normalizeWebsiteUrl('t.me/lakport') === 'https://t.me/s/lakport');
+
+  const pages: ScrapedPage[] = [
+    { url: 'https://port.gov', title: 'Port Home', content: 'Welcome to Port Dept.', depth: 0 },
+    { url: 'https://port.gov/schedule', title: 'Voyage Schedule', content: 'MV KAVARATTI departs Kochi on 25 Oct.', depth: 1 },
+    { url: 'https://port.gov/fares', title: 'Passenger Fares', content: 'Bunk ticket is 350 INR.', depth: 1 },
+  ];
+
+  const aggregated = buildAggregatedWebsiteContent('https://port.gov', pages);
+  check('aggregates all pages into title with count', aggregated.title === 'Port Home (3 pages)');
+  check('aggregated content contains overview block', aggregated.content.includes('=== WEBSITE OVERVIEW ==='));
+  check('aggregated content includes page 1 and page 2', aggregated.content.includes('PAGE 1: Port Home') && aggregated.content.includes('PAGE 2: Voyage Schedule'));
+
+  const snippet = extractRelevantWebsiteSnippets(aggregated.content, 'What is the fare for a ticket?', 5000);
+  check('extracts relevant subpage based on query keywords', snippet.includes('Bunk ticket is 350 INR.'));
+
+  const parsedPages = extractScrapedPages(aggregated.content, 'https://port.gov');
+  check('extracts all 3 parsed pages from aggregated content', parsedPages.length === 3);
+  check('first parsed page matches homepage URL and title', parsedPages[0].url === 'https://port.gov' && parsedPages[0].title === 'Port Home');
+  check('second parsed page has correct URL, title and content', parsedPages[1].url === 'https://port.gov/schedule' && parsedPages[1].title === 'Voyage Schedule' && parsedPages[1].content.includes('MV KAVARATTI departs'));
+  check('parsed pages calculate char and word counts', parsedPages[0].charCount > 0 && parsedPages[0].wordCount > 0);
+
+  const fallbackParsed = extractScrapedPages('Just some legacy scraped text here.', 'https://single.com');
+  check('extracts single fallback page for legacy/unmarked content', fallbackParsed.length === 1 && fallbackParsed[0].url === 'https://single.com' && fallbackParsed[0].content === 'Just some legacy scraped text here.');
+
+  // SPA link discovery
+  const spaHtml = `
+    <!DOCTYPE html><html><head><link rel="canonical" href="https://spa.org/canonical"/></head>
+    <body>
+      <div routerLink="/portal">Portal</div>
+      <button data-href="/contact-support">Contact</button>
+      <script>
+        const nav = ['/faq', '/cancellation-policy'];
+      </script>
+    </body></html>
+  `;
+  const spaLinks = extractLinksFromHtml(spaHtml, 'https://spa.org');
+  check('discovers canonical links', spaLinks.includes('https://spa.org/canonical'));
+  check('discovers routerLink attribute', spaLinks.includes('https://spa.org/portal'));
+  check('discovers data-href attribute', spaLinks.includes('https://spa.org/contact-support'));
+  check('discovers script router paths', spaLinks.includes('https://spa.org/faq') && spaLinks.includes('https://spa.org/cancellation-policy'));
+  check('common SPA probe paths include faq and cancellation', COMMON_SPA_PROBE_PATHS.includes('/faq') && COMMON_SPA_PROBE_PATHS.includes('/cancellation-policy'));
+
+  // Test extractSpaPages async logic
+  const mockSpaHtml = `<html><head><title>Portal</title><script src="https://spa.org/_next/static/chunks/data.js"></script></head><body><div hidden=""></div></body></html>`;
+  const mockChunk = `(globalThis.TURBOPACK||[]).push(["data.js",1,(e,t)=>{t.exports=JSON.parse('{\\"en\\":{\\"faq\\":{\\"questions\\":[{\\"question\\":\\"How to book?\\",\\"answer\\":\\"Online.\\"}]},\\"cancellationPolicy\\":{\\"tenPercentDeduction\\":\\"10% deduction more than 48 hours\\"},\\"aboutLakshadweep\\":{\\"intro\\":\\"36 islands\\"},\\"boardingSteps\\":{\\"step1\\":\\"Bring ID proof\\"}}})}')]);`;
+  const mockAlertJson = JSON.stringify({ status: 'success', data: { alertList: [{ title: 'Special HSC Schedule', description: 'KVT-AGT' }] } });
+
+  void extractSpaPages(mockSpaHtml, 'https://spa.org', async (url) => {
+    if (url.includes('data.js')) return mockChunk;
+    if (url.includes('/api/v1/alert')) return mockAlertJson;
+    return '';
+  }).then((spaExtracted) => {
+    check('extracts multiple distinct SPA subpages', spaExtracted.length >= 4);
+    check('extracts FAQ page with questions', spaExtracted.some(p => p.url === 'https://spa.org/faq' && p.content.includes('How to book?')));
+    check('extracts Cancellation Policy page', spaExtracted.some(p => p.url === 'https://spa.org/cancellation-policy' && p.content.includes('10% deduction')));
+    check('extracts live Alerts page', spaExtracted.some(p => p.url === 'https://spa.org/alert-announcements' && p.content.includes('Special HSC Schedule')));
+  });
+}
+
+section('telegram incremental sync & auto-sync intervals');
+{
+  const posts: RawTelegramPost[] = [
+    { postPath: 'ch/100', messageId: 100, date: '2026-10-25T01:00:00Z', text: 'Old message', mediaType: 'none', mediaPath: null, photos: [], docInfo: null },
+    { postPath: 'ch/101', messageId: 101, date: '2026-10-25T02:00:00Z', text: 'Old message 2', mediaType: 'none', mediaPath: null, photos: [], docInfo: null },
+    { postPath: 'ch/102', messageId: 102, date: '2026-10-25T03:00:00Z', text: 'New post A', mediaType: 'none', mediaPath: null, photos: [], docInfo: null },
+    { postPath: 'ch/103', messageId: 103, date: '2026-10-25T04:00:00Z', text: 'New post B', mediaType: 'none', mediaPath: null, photos: [], docInfo: null },
+  ];
+
+  // 1. Initial sync (no lastMessageId)
+  const initial = filterIncrementalTelegramPosts(posts, null);
+  check('returns all posts when lastMessageId is not set', initial.newPosts.length === 4);
+  check('signals reachedKnown=false on initial sync', initial.reachedKnown === false);
+
+  // 2. Incremental sync with lastMessageId = 101
+  const incremental = filterIncrementalTelegramPosts(posts, 101);
+  check('only returns posts newer than lastMessageId', incremental.newPosts.length === 2);
+  check('retains post 102 and 103', incremental.newPosts[0].messageId === 102 && incremental.newPosts[1].messageId === 103);
+  check('signals reachedKnown=true when older messages found on page', incremental.reachedKnown === true);
+
+  // 3. Up to date check with lastMessageId = 103
+  const upToDate = filterIncrementalTelegramPosts(posts, 103);
+  check('returns 0 new posts when already up to date', upToDate.newPosts.length === 0);
+  check('signals reachedKnown=true to stop crawling immediately', upToDate.reachedKnown === true);
+
+  // 4. Auto sync intervals
+  const baseTime = new Date('2026-10-25T08:00:00Z').getTime();
+  const fiveMinAgo = new Date('2026-10-25T07:55:00Z').toISOString();
+  const fourMinAgo = new Date('2026-10-25T07:56:00Z').toISOString();
+
+  check('auto sync is due after 5 minutes', isAutoSyncDue(fiveMinAgo, 5, baseTime) === true);
+  check('auto sync is not due before 5 minutes', isAutoSyncDue(fourMinAgo, 5, baseTime) === false);
+  check('auto sync is not due when interval is 0 (off)', isAutoSyncDue(fiveMinAgo, 0, baseTime) === false);
+  check('auto sync is due when lastSyncedAt is null', isAutoSyncDue(null, 5, baseTime) === true);
+
+  check('formats 5m label correctly', formatAutoSyncInterval(5) === 'Every 5 minutes');
+  check('formats 0m label as Off', formatAutoSyncInterval(0) === 'Off');
+  check('formats 60m label as 1 hour', formatAutoSyncInterval(60) === 'Every 1 hour');
+}
+
+section('offline memory extractor');
+{
+  const now = '2026-10-27T10:00:00.000Z';
+
+  // 1. Simple task (like the user's "Clean home")
+  const t1 = extractMemoriesOffline('Clean home', now);
+  check('extracts simple task title', t1.length === 1 && t1[0].title === 'Clean home');
+  check('simple task type is task', t1[0].type === 'task');
+  check('simple task is active', t1[0].status === 'active');
+  check('simple task has a valid eventDate', typeof t1[0].eventDate === 'string');
+
+  // 2. Task with date and time
+  const t2 = extractMemoriesOffline('Buy milk tomorrow at 9am', now);
+  check('extracts title without date words', t2[0].title === 'Buy milk');
+  check('extracts tomorrow date expression', t2[0].dateExpression?.includes('tomorrow') === true);
+  check('sets 9am on tomorrow', new Date(t2[0].eventDate).getUTCHours() === 3 || t2[0].eventDate.includes('2026-10-28'));
+
+  // 3. Purchase note with amount
+  const p1 = extractMemoriesOffline('Bought groceries for 450 rupees', now);
+  check('recognizes purchase type', p1[0].type === 'purchase');
+  check('extracts purchase amount', p1[0].amount === 450);
+  check('categorizes groceries as Shopping', p1[0].category === 'Shopping');
+
+  // 4. Reminder
+  const r1 = extractMemoriesOffline('Remind me to call mom tonight', now);
+  check('recognizes reminder type', r1[0].type === 'reminder');
+  check('strips remind prefix', r1[0].title === 'Call mom');
+
+  // 5. Checklist with group
+  const g1 = extractMemoriesOffline('Kozhikode trip: book tickets, pack bags, get cash', now);
+  check('splits into 3 tasks', g1.length === 3);
+  check('assigns group name to all', g1.every((t) => t.groupName?.toLowerCase().includes('kozhikode')));
+}
+
+section('offline payment text extractor');
+{
+  // 1. Google Pay share text
+  const gpay = extractPaymentFromTextOffline(
+    'Paid ₹500 to Ramesh Kumar using Google Pay on 20 Oct 2026',
+    ['Food', 'Shopping']
+  );
+  check('extracts GPay amount', gpay.amount === 500);
+  check('extracts GPay payee', gpay.payee === 'Ramesh Kumar');
+  check('extracts date', gpay.date === '2026-10-20');
+
+  // 2. Bank SMS
+  const sms = extractPaymentFromTextOffline(
+    'Dear SBI User, your A/c ending 1234 debited by Rs 1,450.00 on 24-Oct-26 by transfer to SWIGGY',
+    ['Food', 'Shopping']
+  );
+  check('extracts SMS amount with decimal and commas', sms.amount === 1450);
+  check('extracts payee SWIGGY', sms.payee === 'SWIGGY');
+  check('extracts SBI bank with last four digits', sms.bank?.toLowerCase().includes('sbi') === true && sms.bank?.includes('1234') === true);
+  check('extracts date from SMS', sms.date === '2026-10-24');
+  check('categorizes food merchant', sms.category === 'Food');
+
+  // 3. PhonePe / Paytm text
+  const phonepe = extractPaymentFromTextOffline('Transaction Successful! Paid ₹350 to Auto Driver using PhonePe from HDFC Bank A/c XX5678');
+  check('extracts PhonePe amount', phonepe.amount === 350);
+  check('extracts payee Auto Driver', phonepe.payee === 'Auto Driver');
+  check('extracts HDFC Bank with last four', phonepe.bank?.toLowerCase().includes('hdfc') === true && phonepe.bank?.includes('5678') === true);
+}
+
+section('payback and reimbursement spend deduction');
+{
+  const expenseWithoutPayback = { amount: 5000, refund_amount: null, reimburse_amount: null };
+  const expenseWithPayback = { amount: 5269, refund_amount: null, reimburse_amount: 5269 };
+  const expenseWithPartialPayback = { amount: 5269, refund_amount: 731, reimburse_amount: 2000 };
+  const expenseOverPayback = { amount: 1000, refund_amount: null, reimburse_amount: 1500 };
+
+  check('expense without payback retains full amount', net(expenseWithoutPayback) === 5000);
+  check('full payback reduces net expense to 0', net(expenseWithPayback) === 0);
+  check('partial payback and refund both reduce net expense', net(expenseWithPartialPayback) === 2538);
+  check('net expense never goes negative when overpaid', net(expenseOverPayback) === 0);
+
+  const rows = [
+    { id: '1', date: '2026-10-28', note: 'Ticket 1', notes: '', method: 'UPI', recurring_id: null, category_id: 'c1', cat_name: 'Ticket', cat_icon: 'airplane', cat_color: '#333', item_count: 1, amount: 5000, refund_amount: null, reimburse_amount: 5000 },
+    { id: '2', date: '2026-10-28', note: 'Ticket 2', notes: '', method: 'UPI', recurring_id: null, category_id: 'c1', cat_name: 'Ticket', cat_icon: 'airplane', cat_color: '#333', item_count: 1, amount: 2000, refund_amount: null, reimburse_amount: 500 },
+    { id: '3', date: '2026-10-28', note: 'Dinner', notes: '', method: 'Cash', recurring_id: null, category_id: 'c2', cat_name: 'Food', cat_icon: 'restaurant', cat_color: '#444', item_count: 1, amount: 450, refund_amount: null, reimburse_amount: null },
+  ];
+
+  const catTotals = byCategory(rows);
+  const ticketCat = catTotals.find((c) => c.name === 'Ticket');
+  const foodCat = catTotals.find((c) => c.name === 'Food');
+
+  check('category total reflects payback reduction', ticketCat?.total === 1500);
+  check('unaffected category total remains intact', foodCat?.total === 450);
+  check('total sum across all rows reflects paybacks', sum(rows) === 1950);
+
+  const rowsWithOverPayback = [
+    { id: '4', date: '2026-10-28', note: 'Paid for friend lunch', notes: '', method: 'UPI', recurring_id: null, category_id: 'c2', cat_name: 'Food', cat_icon: 'restaurant', cat_color: '#444', item_count: 1, amount: 450, refund_amount: null, reimburse_amount: 500 },
+  ];
+  const overTotals = byCategory(rowsWithOverPayback);
+  check('over-payback sets category total to 0 without going negative', overTotals[0]?.total === 0);
+  check('over-payback sum is 0', sum(rowsWithOverPayback) === 0);
+}
+
+section('passbook and net worth transaction history');
+{
+  const sampleEntries: PassbookEntry[] = [
+    {
+      id: 'inc-1',
+      date: '2026-10-28',
+      type: 'in',
+      amount: 50000,
+      netAmount: 50000,
+      title: 'Salary Oct',
+      subtitle: 'Salary',
+      category: 'Salary',
+      categoryIcon: 'wallet-outline',
+      categoryColor: '#2E9465',
+      method: 'Bank Transfer',
+      accountId: 'acc-hdfc',
+      accountName: 'HDFC Bank',
+    },
+    {
+      id: 'exp-1',
+      date: '2026-10-28',
+      type: 'out',
+      amount: 5269,
+      netAmount: 0,
+      reimburseAmount: 5269,
+      title: 'Flight Ticket',
+      subtitle: 'Ticket · @Rahul',
+      category: 'Ticket',
+      categoryIcon: 'airplane-outline',
+      categoryColor: '#C8553D',
+      method: 'UPI',
+      accountId: 'acc-sbi',
+      accountName: 'SBI Bank',
+      userTag: 'Rahul',
+    },
+    {
+      id: 'exp-2',
+      date: '2026-10-27',
+      type: 'out',
+      amount: 1200,
+      netAmount: 1200,
+      title: 'Groceries',
+      subtitle: 'Food · Supermarket',
+      category: 'Food',
+      categoryIcon: 'cart-outline',
+      categoryColor: '#2E7DB8',
+      method: 'UPI',
+      accountId: 'acc-hdfc',
+      accountName: 'HDFC Bank',
+    },
+  ];
+
+  const summary = computePassbookSummary(sampleEntries);
+  check('computes passbook total in', summary.totalIn === 50000);
+  check('computes passbook total out matching bank debits', summary.totalOut === 6469);
+  check('computes net flow correctly', summary.netFlow === 43531);
+
+  const outBadge = sourceBadge(sampleEntries[1]);
+  check('formats out source badge correctly', outBadge.label === 'From SBI Bank' && outBadge.isSource === true);
+
+  const inBadge = sourceBadge(sampleEntries[0]);
+  check('formats in source badge correctly', inBadge.label === 'Into HDFC Bank' && inBadge.isSource === false);
+
+  const groups = groupPassbookByDate(sampleEntries);
+  check('groups entries by day', groups.length === 2);
+  check('today group has correct in and out', groups[0].dayIn === 50000 && groups[0].dayOut === 5269);
+  check('yesterday group has correct out', groups[1].dayOut === 1200 && groups[1].dayIn === 0);
+
+  const withBalances = attachRunningBalances(sampleEntries, 100000);
+  check('attaches current balance to latest entry', withBalances[0].runningBalance === 100000);
+  check('rolls backwards correctly across expense', withBalances[1].runningBalance === 50000);
+  check('rolls backwards correctly to oldest entry', withBalances[2].runningBalance === 55269);
+}
+
 section('item size (weight)');
 {
   check('one pack reads plainly', itemSizeText(1, 1, 'kg') === '1 kg');
@@ -1834,3 +2675,4 @@ section('item size (weight)');
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
+

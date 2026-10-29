@@ -5,6 +5,9 @@ const expoConfig = require("eslint-config-expo/flat");
 module.exports = defineConfig([
   expoConfig,
   {
-    ignores: ["dist/*"],
+    // Built output is not source. Without dist-web here, `npm run lint`
+    // reported ten thousand problems in bundled code and buried the handful
+    // that are actually in this project.
+    ignores: ["dist/*", "dist-web/*"],
   }
 ]);

@@ -1,9 +1,8 @@
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { FlatList, Modal, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { Modal, Pressable, ScrollView, SectionList, StyleSheet, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { MemoryRow } from '@/components/MemoryRow';
-import { Section } from '@/components/Section';
+import { SwipeableMemoryRow } from '@/components/SwipeableMemoryRow';
 import { groupByDay } from '@/format';
 import { completeMemory, reopenMemory } from '@/complete';
 import { FONTS, radius, useTheme } from '@/expense/theme';
@@ -133,31 +132,40 @@ export default function TimelineScreen() {
     <Screen>
       <TopBar title="Timeline" onBack={() => router.back()} />
 
-      <FlatList
-        data={sections}
-        keyExtractor={(section) => section.key}
+      {/* One section per day, its heading pinned to the top while you scroll
+          through it, so you always know which day you are in. The day's rows
+          stay together in one card. */}
+      <SectionList
+        sections={sections.map((section) => ({ ...section, rows: section.data, data: [section.data] }))}
+        keyExtractor={(rows, index) => rows[0]?.id ?? String(index)}
+        stickySectionHeadersEnabled
         keyboardShouldPersistTaps="handled"
         ListHeaderComponent={header}
         contentContainerStyle={sections.length === 0 ? styles.emptyContent : styles.listContent}
-        ItemSeparatorComponent={DayGap}
-        renderItem={({ item: section }) => (
-          <View style={styles.day}>
+        SectionSeparatorComponent={DayGap}
+        renderSectionHeader={({ section }) => (
+          <View style={[styles.stickyHead, { backgroundColor: c.bg }]}>
             {/* Stated once, above the first scheduled day. */}
             {section.startsFuture ? (
               <T size={13} weight="700" style={[styles.ahead, { color: c.accent }]}>Still to come</T>
             ) : null}
-            <Section label={section.title} tone={section.isFuture ? 'ahead' : undefined}>
-              {section.data.map((item) => (
-                <MemoryRow
-                  key={item.id}
-                  memory={item}
-                  gutter="time"
-                  struck={isStruck(item, now)}
-                  onPress={() => toggle(item)}
-                  onLongPress={() => router.push(`/entry/${item.id}`)}
-                />
-              ))}
-            </Section>
+            <T size={16} weight="600" style={section.isFuture ? { color: c.accent } : undefined}>
+              {section.title}
+            </T>
+          </View>
+        )}
+        renderItem={({ item: rows }) => (
+          <View style={[styles.dayCard, { backgroundColor: c.card, borderColor: c.line }]}>
+            {rows.map((item) => (
+              <SwipeableMemoryRow
+                key={item.id}
+                memory={item}
+                gutter="time"
+                struck={isStruck(item, now)}
+                onPress={() => toggle(item)}
+                onLongPress={() => router.push(`/entry/${item.id}`)}
+              />
+            ))}
           </View>
         )}
         ListEmptyComponent={
@@ -244,7 +252,10 @@ const styles = StyleSheet.create({
   listContent: { paddingHorizontal: 20, paddingTop: 14, paddingBottom: 40 },
   emptyContent: { flexGrow: 1, paddingHorizontal: 20, paddingTop: 14 },
   gap: { height: 18 },
-  day: { gap: 6 },
+  // Pinned while its day scrolls under it; the page colour behind it keeps
+  // the rows from showing through.
+  stickyHead: { paddingTop: 6, paddingBottom: 8, gap: 2 },
+  dayCard: { borderRadius: 16, borderWidth: 1, paddingHorizontal: 14, overflow: 'hidden' },
   ahead: { marginBottom: 2 },
   backdrop: {
     flex: 1,

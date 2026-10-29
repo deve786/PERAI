@@ -1,11 +1,508 @@
 export interface ChangelogEntry {
   version: string;
+  build?: number;
+  type?: 'build' | 'ota';
   date: string; // YYYY-MM-DD
+  time?: string; // e.g. "09:23 AM"
   highlights: string[];
 }
 
 /** Newest first. Add a new entry here with every release that changes user-visible behaviour. */
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '1.35.0',
+    build: 179,
+    type: 'ota',
+    date: '2026-10-29',
+    time: '05:47 AM',
+    highlights: [
+      'Split into items under the amount, weight per item; sample data removal also removes places and people, deletes for real',
+    ],
+  },
+  {
+    version: '1.34.0',
+    build: 178,
+    type: 'ota',
+    date: '2026-10-28',
+    time: '09:32 PM',
+    highlights: [
+      'New look: comparison charts, calendar heatmap, money waterfall, budget pace ring, swipe rows with Undo, entry sheet, smarter Ask loading, long-press tab shortcuts',
+    ],
+  },
+  {
+    version: '1.33.6',
+    build: 177,
+    type: 'ota',
+    date: '2026-10-28',
+    time: '08:54 PM',
+    highlights: [
+      'Remove sample data: More > Remove sample data finds and removes only the sample rows. Loading sample data now asks first.',
+    ],
+  },
+  {
+    version: '1.33.5',
+    build: 176,
+    type: 'ota',
+    date: '2026-10-28',
+    time: '08:34 PM',
+    highlights: [
+      'Answers now laid out as a table: dates in a gutter, amounts in a column, each place under its own heading, with totals broken down into their parts',
+    ],
+  },
+  {
+    version: '1.33.4',
+    build: 175,
+    type: 'ota',
+    date: '2026-10-28',
+    time: '07:57 PM',
+    highlights: [
+      'Ask answers now come from your records, not from prompt examples: correct net totals, right documents cited, accurate dates',
+    ],
+  },
+  {
+    version: '1.33.3',
+    build: 174,
+    type: 'ota',
+    date: '2026-10-28',
+    time: '01:23 PM',
+    highlights: [
+      'allow payback amount greater than expense',
+    ],
+  },
+  {
+    version: '1.33.2',
+    build: 173,
+    type: 'ota',
+    date: '2026-10-28',
+    time: '11:39 AM',
+    highlights: [
+      'Fix calculation edge cases, bank linkages, trip paybacks, and insights',
+    ],
+  },
+  {
+    version: '1.33.1',
+    build: 172,
+    type: 'ota',
+    date: '2026-10-28',
+    time: '10:14 AM',
+    highlights: [
+      'Add running balance to bank passbook, fix refund alert banner, remove morning briefing',
+    ],
+  },
+  {
+    version: '1.33.0',
+    build: 171,
+    type: 'ota',
+    date: '2026-10-28',
+    time: '09:55 AM',
+    highlights: [
+      'Payback reduces spend, day expense totals, bank statements and net worth passbook',
+    ],
+  },
+  {
+    version: '1.32.0',
+    build: 170,
+    type: 'build',
+    date: '2026-10-27',
+    time: '09:26 PM',
+    highlights: [
+      'Fix Kotlin lifecycle in expo-text-extractor and build APK',
+    ],
+  },
+  {
+    version: '1.31.0',
+    build: 169,
+    type: 'build',
+    date: '2026-10-27',
+    time: '08:19 PM',
+    highlights: [
+      'Add on-device Google ML Kit offline OCR for payment screenshots',
+    ],
+  },
+  {
+    version: '1.30.65',
+    build: 168,
+    type: 'ota',
+    date: '2026-10-27',
+    time: '07:56 PM',
+    highlights: [
+      'Deploy offline models and UPI parser enhancements',
+    ],
+  },
+  {
+    version: '1.30.64',
+    build: 167,
+    type: 'ota',
+    date: '2026-10-27',
+    time: '07:53 PM',
+    highlights: [
+      'Support seamless offline models for record filing and UPI payments',
+    ],
+  },
+  {
+    version: '1.30.63',
+    build: 166,
+    type: 'ota',
+    date: '2026-10-27',
+    time: '06:53 PM',
+    highlights: [
+      'Revert to stable FIN-OS release',
+    ],
+  },
+  {
+    version: '1.30.62',
+    build: 165,
+    type: 'ota',
+    date: '2026-10-27',
+    time: '08:24 AM',
+    highlights: [
+      'Remove Auto-Import Ticket PDF and streamline refund alert, spend health, and smart insights into compact cards',
+    ],
+  },
+  {
+    version: '1.30.61',
+    build: 164,
+    type: 'ota',
+    date: '2026-10-26',
+    time: '11:26 PM',
+    highlights: [
+      'Remove trip pack modal and sea weather banner',
+    ],
+  },
+  {
+    version: '1.30.60',
+    build: 163,
+    type: 'ota',
+    date: '2026-10-26',
+    time: '11:03 PM',
+    highlights: [
+      'Sea state alerts, trip pack generator, island hop circuit, and smart financial insights',
+    ],
+  },
+  {
+    version: '1.30.59',
+    build: 162,
+    type: 'ota',
+    date: '2026-10-26',
+    time: '10:29 PM',
+    highlights: [
+      'Fix log expense button width, future milestone reminder scheduling, and circuit timeline display',
+    ],
+  },
+  {
+    version: '1.30.58',
+    build: 161,
+    type: 'ota',
+    date: '2026-10-26',
+    time: '09:59 PM',
+    highlights: [
+      'Fix false MV Kavaratti ship detection and render timeline card for voyage schedules',
+    ],
+  },
+  {
+    version: '1.30.57',
+    build: 160,
+    type: 'ota',
+    date: '2026-10-26',
+    time: '09:21 PM',
+    highlights: [
+      'Fix header overlap, OCR text cleanup, timeline parsing, and expense navigation',
+    ],
+  },
+  {
+    version: '1.30.56',
+    build: 159,
+    type: 'ota',
+    date: '2026-10-26',
+    time: '08:53 PM',
+    highlights: [
+      'Island travel copilot, timetable timeline cards, financial health & refund watchdog',
+    ],
+  },
+  {
+    version: '1.30.55',
+    build: 158,
+    type: 'ota',
+    date: '2026-10-26',
+    time: '10:41 AM',
+    highlights: [
+      'Fix Telegram public channel sync and add live bridge channel verification',
+    ],
+  },
+  {
+    version: '1.30.54',
+    build: 157,
+    type: 'ota',
+    date: '2026-10-26',
+    time: '10:24 AM',
+    highlights: [
+      'Telegram live bridge message sync and media extractor',
+    ],
+  },
+  {
+    version: '1.30.53',
+    build: 156,
+    type: 'ota',
+    date: '2026-10-26',
+    time: '10:04 AM',
+    highlights: [
+      'Add bridge fallback, fix channel sync, and recover missing messages',
+    ],
+  },
+  {
+    version: '1.30.52',
+    build: 155,
+    type: 'ota',
+    date: '2026-10-26',
+    time: '09:33 AM',
+    highlights: [
+      'Fix Telegram sync channel ID mismatch and recover all new posts',
+    ],
+  },
+  {
+    version: '1.30.51',
+    build: 154,
+    type: 'ota',
+    date: '2026-10-25',
+    time: '09:45 PM',
+    highlights: [
+      'Support Telegram Media Bridge on base runtime',
+    ],
+  },
+  {
+    version: '1.30.50',
+    build: 153,
+    type: 'ota',
+    date: '2026-10-25',
+    time: '09:38 PM',
+    highlights: [
+      'Add Telegram Media Bridge PDF automatic table extraction',
+    ],
+  },
+  {
+    version: '1.30.49',
+    build: 152,
+    type: 'ota',
+    date: '2026-10-25',
+    time: '08:51 PM',
+    highlights: [
+      'Fix voyage start date lay up parsing and add document detail guidance',
+    ],
+  },
+  {
+    version: '1.30.48',
+    build: 151,
+    type: 'ota',
+    date: '2026-10-25',
+    time: '08:48 PM',
+    highlights: [
+      'Fix voyage start date for #### idle days and document attachment answers',
+    ],
+  },
+  {
+    version: '1.30.47',
+    build: 150,
+    type: 'ota',
+    date: '2026-10-25',
+    time: '08:08 PM',
+    highlights: [
+      'Telegram media extraction & direct document attachments with PDF link',
+    ],
+  },
+  {
+    version: '1.30.46',
+    build: 149,
+    type: 'ota',
+    date: '2026-10-25',
+    time: '08:06 PM',
+    highlights: [
+      'Extract full photo OCR and document abstracts with Telegram PDF links',
+    ],
+  },
+  {
+    version: '1.30.45',
+    build: 148,
+    type: 'ota',
+    date: '2026-10-25',
+    time: '07:50 PM',
+    highlights: [
+      'Show extracted photo OCR text and on-demand AI scan',
+    ],
+  },
+  {
+    version: '1.30.44',
+    build: 147,
+    type: 'ota',
+    date: '2026-10-25',
+    time: '07:39 PM',
+    highlights: [
+      'Fix Telegram channel deletion sync with Supabase',
+    ],
+  },
+  {
+    version: '1.30.43',
+    build: 146,
+    type: 'ota',
+    date: '2026-10-25',
+    time: '07:32 PM',
+    highlights: [
+      'Telegram media counts and extracted photo OCR & document viewer',
+    ],
+  },
+  {
+    version: '1.30.42',
+    build: 145,
+    type: 'ota',
+    date: '2026-10-25',
+    time: '06:27 PM',
+    highlights: [
+      'Support automated Telegram document & photo downloading with Gemini cargo extraction',
+    ],
+  },
+  {
+    version: '1.30.41',
+    build: 144,
+    type: 'ota',
+    date: '2026-10-25',
+    time: '04:24 PM',
+    highlights: [
+      'Fix RegExp parenthesis error, number voyages per entry, and fix current ship location reasoning',
+    ],
+  },
+  {
+    version: '1.30.40',
+    build: 143,
+    type: 'ota',
+    date: '2026-10-25',
+    time: '03:11 PM',
+    highlights: [
+      'Support per-vessel extracted timelines, direct & indirect voyages, and complete Kochi-to-Kochi circuits',
+    ],
+  },
+  {
+    version: '1.30.39',
+    build: 142,
+    type: 'ota',
+    date: '2026-10-25',
+    time: '02:01 PM',
+    highlights: [
+      'Fix ship schedule voyage tracing, return legs, lay up dates, and duration calculations',
+    ],
+  },
+  {
+    version: '1.30.38',
+    build: 141,
+    type: 'ota',
+    date: '2026-10-25',
+    time: '09:34 AM',
+    highlights: [
+      'Show all scraped pages with URLs and per-page data view for websites',
+    ],
+  },
+  {
+    version: '1.30.37',
+    build: 140,
+    type: 'ota',
+    date: '2026-10-25',
+    time: '09:25 AM',
+    highlights: [
+      'Display release date and time for each build and update in What\'s new',
+    ],
+  },
+  {
+    version: '1.30.36',
+    build: 139,
+    type: 'ota',
+    date: '2026-10-25',
+    time: '09:23 AM',
+    highlights: [
+      'Permanently clear and delete documents in cloud and local',
+    ],
+  },
+  {
+    version: '1.30.35',
+    build: 138,
+    type: 'ota',
+    date: '2026-10-25',
+    time: '09:16 AM',
+    highlights: [
+      'Fix document deletion touch handling and remove indexed chunks',
+    ],
+  },
+  {
+    version: '1.30.34',
+    build: 137,
+    type: 'ota',
+    date: '2026-10-25',
+    time: '09:05 AM',
+    highlights: [
+      'Display build numbers and release types (OTA Update vs New Build) in What\'s new screen',
+    ],
+  },
+  {
+    version: '1.30.33',
+    build: 136,
+    type: 'ota',
+    date: '2026-10-25',
+    time: '08:50 AM',
+    highlights: [
+      'Telegram auto-update: automatically checks for updates in background every 5 minutes (customizable to 5m, 15m, 30m, 1h, or Off in Data Sources)',
+      'Incremental Telegram sync: only checks and downloads brand-new messages since your last sync, taking ~0.2s when up to date and saving battery and mobile data',
+    ],
+  },
+  {
+    version: '1.30.32',
+    build: 135,
+    type: 'ota',
+    date: '2026-10-25',
+    highlights: [
+      'Deep multi-page website crawler: automatically crawls and extracts all subpages under a website instead of just the landing page',
+      'Intelligent subpage retrieval: feeds up to 8,000 characters of relevant subpage content and tables directly into Ask RAG prompts',
+      'Live crawling progress indicator showing page count during scraping in Data Sources',
+    ],
+  },
+  {
+    version: '1.30.31',
+    build: 134,
+    type: 'ota',
+    date: '2026-10-25',
+    highlights: [
+      'Draft message while generating: text field remains active so you can type your next question in advance while an answer is generating',
+      'Response time badge: displays precise duration (⚡ e.g. 1.2s) on completed answers in Ask tab',
+      'Hallucination tag: automatically detects ungrounded or fabricated details and flags them with an inline ⚠️ Unverified tag',
+    ],
+  },
+  {
+    version: '1.30.30',
+    build: 133,
+    type: 'ota',
+    date: '2026-10-25',
+    highlights: [
+      'Cohesive document chunk stitching: ensures markdown schedules and voyage tables across page breaks stay intact',
+      'Model grounding improvements to eliminate date hallucinations in travel schedules',
+    ],
+  },
+  {
+    version: '1.30.28',
+    build: 131,
+    type: 'ota',
+    date: '2026-10-25',
+    highlights: [
+      'Groq multi-model support: switch between GPT OSS 120B, Qwen 3.8 27B, and Gemini Flash Lite in Settings',
+      'Faster RAG generation with top open-source reasoning models',
+    ],
+  },
+  {
+    version: '1.30.0',
+    build: 100,
+    type: 'build',
+    date: '2026-10-24',
+    highlights: [
+      'Multi-Source Data Hub: search across uploaded Documents (PDF, Word, TXT, Images), Websites, and Telegram channels',
+      'Gemini Vision OCR: automatic OCR extraction for posters, timetables, and schedules in English & Malayalam',
+      'Unified search in Ask tab with source citations and evidence badges',
+    ],
+  },
   {
     version: '1.18.0',
     date: '2026-10-19',

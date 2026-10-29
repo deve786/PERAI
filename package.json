@@ -9,11 +9,14 @@
     "@google/genai": "^2.22.0",
     "@react-native-community/datetimepicker": "9.1.0",
     "@supabase/supabase-js": "^2.116.0",
+    "@zhanziyang/expo-text-extractor": "^1.0.2",
+    "claude-token-optimizer": "^2.3.20",
     "expo": "~57.0.23",
     "expo-asset": "~57.0.17",
     "expo-audio": "~57.0.5",
     "expo-build-properties": "~57.0.20",
     "expo-constants": "~57.0.18",
+    "expo-document-picker": "~57.0.3",
     "expo-file-system": "~57.0.7",
     "expo-font": "~57.0.4",
     "expo-haptics": "~57.0.3",
@@ -40,6 +43,7 @@
     "@types/react": "~19.2.2",
     "eslint": "^9.0.0",
     "eslint-config-expo": "~57.0.2",
+    "patch-package": "^8.0.1",
     "tsx": "^4.23.13",
     "typescript": "~6.0.3"
   },
@@ -56,6 +60,7 @@
     "web:export": "expo export --platform web --output-dir dist-web",
     "build:android": "node scripts/release.mjs build",
     "update": "node scripts/release.mjs update",
+    "postinstall": "patch-package",
     "lint": "expo lint"
   },
   "private": true
