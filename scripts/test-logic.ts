@@ -4,6 +4,7 @@
  *
  *   npm run test:logic
  */
+import { isCloudId } from '../src/expense/sync/cloudId';
 import {
   guessDateRange,
   selectRelevantMemories,
@@ -2684,6 +2685,13 @@ section('loans move account balances');
   check('what is still owed is the amount less what was paid back', outstandingOf(1000, 400) === 600);
   check('never negative', outstandingOf(1000, 1500) === 0);
   check('nothing paid back yet', outstandingOf(800, null) === 800);
+}
+
+section('ids the backup can hold');
+{
+  check('a real uuid can be backed up', isCloudId('3f2b8c1e-9d4a-4e6b-8a1c-0b5d7e9f1a2c'));
+  check('sample data ids stay on the phone', !isCloudId('rec-netflix'));
+  check('empty and missing ids are not backed up', !isCloudId('') && !isCloudId(null));
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

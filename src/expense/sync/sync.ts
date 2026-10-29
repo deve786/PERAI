@@ -1,6 +1,7 @@
 import type * as SQLite from 'expo-sqlite';
 import { getDb, getSetting, setSetting } from '../db';
 import { currentUserId, getSupabase, isConfigured } from './client';
+import { isCloudId } from './cloudId';
 import { TABLES, type TableDef } from './tables';
 
 const LAST_SYNC_KEY = 'sync.lastAt';
@@ -62,7 +63,25 @@ async function pushTable(db: SQLite.SQLiteDatabase, userId: string, def: TableDe
     );
     if (rows.length === 0) return sent;
 
-    const payload = rows.map((row) => {
+    // Rows whose id the server cannot hold (sample data's fixed ids) are not
+    // backed up: a deleted one is gone for good, a live one just stops
+    // counting as waiting. Without this one such row fails the whole batch.
+    const local = rows.filter((row) => !isCloudId(row.id));
+    if (local.length > 0) {
+      for (const row of local) {
+        await db.runAsync(
+          row.deleted === 1 ? `DELETE FROM ${def.name} WHERE id = ?` : `UPDATE ${def.name} SET dirty = 0 WHERE id = ?`,
+          [row.id as string]
+        );
+      }
+      if (local.length === rows.length) {
+        if (rows.length < PUSH_BATCH) return sent;
+        continue;
+      }
+    }
+    const sendable = rows.filter((row) => isCloudId(row.id));
+
+    const payload = sendable.map((row) => {
       const out: Record<string, unknown> = {
         id: row.id,
         user_id: userId,
@@ -76,15 +95,15 @@ async function pushTable(db: SQLite.SQLiteDatabase, userId: string, def: TableDe
     if (error) throw new Error(`${def.name}: ${error.message}`);
 
     // Only clear the flag on rows that have not changed again while in flight.
-    const ids = rows.map((row) => row.id as string);
+    const ids = sendable.map((row) => row.id as string);
     const placeholders = ids.map(() => '?').join(',');
-    const lastUpdatedAt = rows[rows.length - 1].updated_at as string;
+    const lastUpdatedAt = sendable[sendable.length - 1].updated_at as string;
     await db.runAsync(
       `UPDATE ${def.name} SET dirty = 0 WHERE id IN (${placeholders}) AND updated_at <= ?`,
       [...ids, lastUpdatedAt]
     );
 
-    sent += rows.length;
+    sent += sendable.length;
     if (rows.length < PUSH_BATCH) return sent;
   }
 }
@@ -231,11 +250,23 @@ export function syncNow(): Promise<SyncOutcome | null> {
 
     const db = await getDb();
     await reconcileNamedDuplicates(db, userId);
+    // One table failing must not hold back the rest: every table is tried,
+    // then the first failure is reported.
+    let firstError: unknown = null;
+    const attempt = async (job: () => Promise<number>): Promise<number> => {
+      try {
+        return await job();
+      } catch (err) {
+        firstError ??= err;
+        return 0;
+      }
+    };
     let pushed = 0;
-    for (const def of TABLES) pushed += await pushTable(db, userId, def);
+    for (const def of TABLES) pushed += await attempt(() => pushTable(db, userId, def));
     let pulled = 0;
-    for (const def of TABLES) pulled += await pullTable(db, def);
+    for (const def of TABLES) pulled += await attempt(() => pullTable(db, def));
     await purgeTombstones(db);
+    if (firstError) throw firstError;
     await setSetting(LAST_SYNC_KEY, new Date().toISOString());
     return { pushed, pulled };
   })().finally(() => {

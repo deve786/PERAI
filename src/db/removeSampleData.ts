@@ -20,6 +20,7 @@
  * copy cannot be deleted right now (offline, signed out) its rows stay hidden
  * instead, so the removal still reaches the backup later.
  */
+import { isCloudId } from '../expense/sync/cloudId';
 import { deleteMemories } from './queries';
 import { getDb as getPeraiDb } from './client';
 import { deleteExpense, deleteIncome, deleteRecurring, deleteTaggedPlace, deleteTaggedUser, getDb as getExpenseDb, setSetting } from '../expense/db';
@@ -457,11 +458,14 @@ async function purgeForGood(all: SampleDataFound): Promise<{ failed: number }> {
     if (step.ids.length === 0) continue;
     try {
       if (step.cloud === 'blocked') continue; // signed out: keep them hidden until the deletion can sync
-      if (step.cloud && step.cloud !== 'none' && step.cloudTable) {
+      // Fixed sample ids (rec-netflix…) were never in the backup, and the
+      // server would refuse them as malformed uuids.
+      const cloudIds = step.ids.filter(isCloudId);
+      if (step.cloud && step.cloud !== 'none' && step.cloudTable && cloudIds.length > 0) {
         const { error } = await step.cloud.client
           .from(step.cloudTable)
           .delete()
-          .in(step.column, step.ids)
+          .in(step.column, cloudIds)
           .eq('user_id', step.cloud.userId);
         if (error) throw error;
       }
