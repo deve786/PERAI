@@ -62,6 +62,7 @@ import {
 import { tripSpendQuestion } from '../src/tripQuestion';
 import { stockGain } from '../src/expense/accountsLogic';
 import { toSentence } from '../src/format';
+import { itemSizeText, pricePerUnitText, sizeLabel } from '../src/expense/itemSize';
 import { refundReminderTimes } from '../src/expense/refundSchedule';
 import { monthsWithData, OVERALL, periodLabel, periodRange, previousMonth } from '../src/expense/period';
 import { needsTranslation, normalizeMoney, normalizeQuery } from '../src/manglish';
@@ -1814,6 +1815,21 @@ section('refund reminders every 2 days');
   check('rescheduling later does not move them', refundReminderTimes(since, new Date(2026, 9, 11, 22, 0), 1)[0].getTime() === times[0].getTime());
   check('a reminder less than a minute away is skipped', refundReminderTimes(since, new Date(2026, 9, 12, 9, 59, 30), 1)[0].getTime() === new Date(2026, 9, 14, 10, 0).getTime());
   check('a bad date gives nothing', refundReminderTimes('not a date', now, 3).length === 0);
+}
+
+section('item size (weight)');
+{
+  check('one pack reads plainly', itemSizeText(1, 1, 'kg') === '1 kg');
+  check('2 packets of 1 kg', itemSizeText(2, 1, 'kg') === '2 × 1 kg = 2 kg');
+  check('grams roll up to kg', itemSizeText(3, 500, 'g') === '3 × 500 g = 1.5 kg');
+  check('grams stay grams when small', itemSizeText(2, 100, 'g') === '2 × 100 g = 200 g');
+  check('ml roll up to litres', itemSizeText(4, 250, 'ml') === '4 × 250 ml = 1 L');
+  check('no size, no text', itemSizeText(2, null, 'kg') === '' && itemSizeText(2, 1, '') === '');
+  check('unknown unit is ignored', sizeLabel(1, 'stone') === '');
+  check('price per kg from a 1 kg pack', pricePerUnitText(450, 1, 'kg') === '₹450 per kg');
+  check('price per kg from 250 g', pricePerUnitText(60, 250, 'g') === '₹240 per kg');
+  check('price per litre from 500 ml', pricePerUnitText(40, 500, 'ml') === '₹80 per L');
+  check('no price per unit without a size', pricePerUnitText(60, null, 'g') === '');
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

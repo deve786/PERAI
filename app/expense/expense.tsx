@@ -25,8 +25,10 @@ import {
 } from '@/expense/ui';
 import { showDialog } from '@/dialogStore';
 import { KeyboardLift } from '@/components/KeyboardLift';
+import { isSizeUnit, itemSizeText, pricePerUnitText, SIZE_UNITS } from '@/expense/itemSize';
 
-type DraftItem = { name: string; qty: string; amount: string };
+/** One bought thing. `amount` is the price of ONE pack; `weight` + `unit` is the size of one pack ("1" "kg"). */
+type DraftItem = { name: string; qty: string; amount: string; weight: string; unit: string; sizeOpen?: boolean };
 type Mode = 'view' | 'edit';
 
 const parseAmt = (s: string) => parseFloat(s.replace(/,/g, ''));
@@ -170,7 +172,10 @@ export default function ExpenseForm() {
         const existing = await listExpenseItems(editId);
         setViewItems(existing);
         if (existing.length) {
-          setItems(existing.map((it) => ({ name: it.name, qty: String(it.quantity), amount: String(it.amount) })));
+          setItems(existing.map((it) => ({
+            name: it.name, qty: String(it.quantity), amount: String(it.amount),
+            weight: it.weight ? String(it.weight) : '', unit: isSizeUnit(it.unit) ? it.unit : 'kg',
+          })));
         }
         // Left at its default (true): opening an existing expense doesn't
         // touch the title via onChangeNote at all (setNote above is direct),
@@ -332,14 +337,14 @@ export default function ExpenseForm() {
     // "Add item" grows the list from here, so Save isn't blocked by a second,
     // still-empty row the user never asked for.
     const seed = !isNaN(manualValue) && manualValue > 0 ? amount : '';
-    setItems([{ name: '', qty: '1', amount: seed }]);
+    setItems([{ name: '', qty: '1', amount: seed, weight: '', unit: 'kg' }]);
   }
   function clearItems() {
     if (itemsTotal > 0) setAmount(String(itemsTotal));
     setItems([]);
   }
   function addItem() {
-    setItems((prev) => [...prev, { name: '', qty: '1', amount: '' }]);
+    setItems((prev) => [...prev, { name: '', qty: '1', amount: '', weight: '', unit: 'kg' }]);
   }
   function updateItem(i: number, patch: Partial<DraftItem>) {
     setItems((prev) => prev.map((it, idx) => (idx === i ? { ...it, ...patch } : it)));
@@ -391,7 +396,10 @@ export default function ExpenseForm() {
     });
     const cleanItems = hasItems
       ? items
-          .map((it) => ({ name: it.name.trim(), quantity: parseAmt(it.qty) || 1, amount: round2(parseAmt(it.amount) || 0) }))
+          .map((it) => ({
+            name: it.name.trim(), quantity: parseAmt(it.qty) || 1, amount: round2(parseAmt(it.amount) || 0),
+            weight: parseAmt(it.weight) > 0 ? parseAmt(it.weight) : null, unit: it.unit,
+          }))
           .filter((it) => it.quantity * it.amount > 0)
       : [];
     await saveExpenseItems(newId, cleanItems);
@@ -455,6 +463,8 @@ export default function ExpenseForm() {
             name: it.name,
             qty: String(it.quantity || 1),
             amount: String(it.amount),
+            weight: '',
+            unit: 'kg',
           }))
         );
       }
@@ -620,9 +630,17 @@ export default function ExpenseForm() {
                       borderBottomWidth: i === viewItems.length - 1 ? 0 : StyleSheet.hairlineWidth, borderBottomColor: c.line,
                     }}
                   >
-                    <T size={15} numberOfLines={1} style={{ flex: 1 }}>
-                      {it.name || 'Item'}{it.quantity !== 1 ? <T size={15} sub tabular>{` ×${it.quantity}`}</T> : null}
-                    </T>
+                    <View style={{ flex: 1, paddingVertical: 6 }}>
+                      <T size={15} numberOfLines={1}>
+                        {it.name || 'Item'}{it.quantity !== 1 && !it.weight ? <T size={15} sub tabular>{` ×${it.quantity}`}</T> : null}
+                      </T>
+                      {it.weight ? (
+                        <T size={13} sub>
+                          {itemSizeText(it.quantity, it.weight, it.unit)}
+                          {pricePerUnitText(it.amount, it.weight, it.unit, symbol) ? ` · ${pricePerUnitText(it.amount, it.weight, it.unit, symbol)}` : ''}
+                        </T>
+                      ) : null}
+                    </View>
                     <Money value={it.quantity * it.amount} size={15} weight="500" />
                   </Row>
                 ))}
@@ -646,7 +664,7 @@ export default function ExpenseForm() {
 
   const moreHint = isTicketCat
     ? 'Ticket type, people, refund, place, person, notes'
-    : hasItems ? 'Place, person, notes' : 'Place, person, notes, split into items';
+    : 'Place, person, notes';
 
   return (
     <Screen edges={['top', 'bottom']}>
@@ -706,6 +724,26 @@ export default function ExpenseForm() {
             )}
           </Card>
 
+          {!hasItems && (
+            <Pressable
+              onPress={startItems}
+              accessibilityRole="button"
+              accessibilityLabel="Split into items"
+              style={({ pressed }) => ({
+                flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 12, minHeight: 58,
+                paddingHorizontal: 14, borderRadius: radius.lg, borderWidth: 1, borderColor: c.line, backgroundColor: c.card,
+                opacity: pressed ? 0.7 : 1,
+              })}
+            >
+              <Ionicons name="list-outline" size={22} color={c.accent} />
+              <View style={{ flex: 1 }}>
+                <T size={15} weight="600">Split into items</T>
+                <T size={13} sub>Add what you bought: quantity, price and weight</T>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={c.faint} />
+            </Pressable>
+          )}
+
           {hasItems && (
             <Card style={{ marginTop: 12 }}>
               <Row style={{ justifyContent: 'space-between', marginBottom: 10 }}>
@@ -752,6 +790,46 @@ export default function ExpenseForm() {
                       {lineTotal(it) > 0 ? (lineTotal(it) % 1 === 0 ? lineTotal(it) : lineTotal(it).toFixed(2)) : ''}
                     </T>
                   </Row>
+                  {it.sizeOpen || it.weight.trim() ? (
+                    <View style={{ marginTop: 10 }}>
+                      <Row style={{ gap: 10 }}>
+                        <T size={14} sub>Size of one</T>
+                        <TextInput
+                          value={it.weight}
+                          onChangeText={(t) => updateItem(i, { weight: t })}
+                          placeholder="1"
+                          placeholderTextColor={c.faint}
+                          keyboardType="decimal-pad"
+                          accessibilityLabel={`Weight or size of one of item ${i + 1}`}
+                          style={[itemInputStyle, numerals, { fontFamily: FONTS.mono, width: 84, textAlign: 'center' }]}
+                        />
+                      </Row>
+                      <Row style={{ marginTop: 10, flexWrap: 'wrap' }}>
+                        {SIZE_UNITS.map((u) => (
+                          <Chip key={u} label={u} active={it.unit === u} onPress={() => updateItem(i, { unit: u })} />
+                        ))}
+                      </Row>
+                      {itemSizeText(parseAmt(it.qty) || 1, parseAmt(it.weight), it.unit) ? (
+                        <T size={13} sub style={{ marginTop: 2 }}>
+                          {itemSizeText(parseAmt(it.qty) || 1, parseAmt(it.weight), it.unit)}
+                          {pricePerUnitText(parseAmt(it.amount) || 0, parseAmt(it.weight), it.unit, symbol)
+                            ? ` · ${pricePerUnitText(parseAmt(it.amount) || 0, parseAmt(it.weight), it.unit, symbol)}`
+                            : ''}
+                        </T>
+                      ) : null}
+                    </View>
+                  ) : (
+                    <Pressable
+                      onPress={() => updateItem(i, { sizeOpen: true })}
+                      hitSlop={6}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Add weight or size to item ${i + 1}`}
+                      style={{ flexDirection: 'row', alignItems: 'center', gap: 4, minHeight: 32, marginTop: 4 }}
+                    >
+                      <Ionicons name="scale-outline" size={15} color={c.accent} />
+                      <T size={13} weight="600" style={{ color: c.accent }}>Add weight or size (1 kg, 500 g…)</T>
+                    </Pressable>
+                  )}
                 </View>
               ))}
               <Pressable onPress={addItem} hitSlop={8} accessibilityRole="button" style={{ flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 36 }}>
@@ -958,7 +1036,7 @@ export default function ExpenseForm() {
                       />
                       {!refundAmount.trim() ? (
                         <T size={13} sub style={{ marginTop: 6 }}>
-                          Refund not come yet? Leave this empty and we'll remind you every 2 days to enter it.
+                          {"Refund not come yet? Leave this empty and we'll remind you every 2 days to enter it."}
                         </T>
                       ) : null}
 
@@ -1057,17 +1135,6 @@ export default function ExpenseForm() {
                 containerStyle={{ marginTop: 20, marginBottom: 0 }}
               />
 
-              {!hasItems && (
-                <Pressable
-                  onPress={startItems}
-                  hitSlop={6}
-                  accessibilityRole="button"
-                  style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 44, marginTop: 12, opacity: pressed ? 0.6 : 1 })}
-                >
-                  <Ionicons name="list-outline" size={18} color={c.accent} />
-                  <T size={15} weight="600" style={{ color: c.accent }}>Split into items</T>
-                </Pressable>
-              )}
             </View>
           )}
 
