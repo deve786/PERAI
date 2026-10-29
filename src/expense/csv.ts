@@ -1,6 +1,7 @@
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { listExpenseItems, listExpenses, listIncome } from './db';
+import { itemSizeText } from './itemSize';
 import { net } from './stats';
 
 const esc = (v: string | number) => {
@@ -33,7 +34,9 @@ export async function exportCsv() {
 
   for (const r of expenses) {
     const items = r.item_count > 0 ? await listExpenseItems(r.id) : [];
-    const itemSummary = items.map((it) => `${it.name || 'Item'}: ${it.amount}`).join('; ');
+    const itemSummary = items
+      .map((it) => `${it.name || 'Item'}${itemSizeText(it.quantity, it.weight, it.unit) ? ` (${itemSizeText(it.quantity, it.weight, it.unit)})` : ''}: ${it.amount}`)
+      .join('; ');
     records.push({
       date: r.date,
       type: 'Expense',

@@ -104,6 +104,7 @@ import {
 import { tripSpendQuestion } from '../src/tripQuestion';
 import { stockGain } from '../src/expense/accountsLogic';
 import { toSentence } from '../src/format';
+import { itemSizeText, pricePerUnitText, sizeLabel } from '../src/expense/itemSize';
 import { refundReminderTimes } from '../src/expense/refundSchedule';
 import { monthsWithData, OVERALL, periodLabel, periodRange, previousMonth } from '../src/expense/period';
 import { stitchChunkContents, groupAndStitchDocumentChunks, verifyItemGrounding } from '../src/sources/chunkLogic';
@@ -2646,6 +2647,21 @@ section('passbook and net worth transaction history');
   check('attaches current balance to latest entry', withBalances[0].runningBalance === 100000);
   check('rolls backwards correctly across expense', withBalances[1].runningBalance === 50000);
   check('rolls backwards correctly to oldest entry', withBalances[2].runningBalance === 55269);
+}
+
+section('item size (weight)');
+{
+  check('one pack reads plainly', itemSizeText(1, 1, 'kg') === '1 kg');
+  check('2 packets of 1 kg', itemSizeText(2, 1, 'kg') === '2 × 1 kg = 2 kg');
+  check('grams roll up to kg', itemSizeText(3, 500, 'g') === '3 × 500 g = 1.5 kg');
+  check('grams stay grams when small', itemSizeText(2, 100, 'g') === '2 × 100 g = 200 g');
+  check('ml roll up to litres', itemSizeText(4, 250, 'ml') === '4 × 250 ml = 1 L');
+  check('no size, no text', itemSizeText(2, null, 'kg') === '' && itemSizeText(2, 1, '') === '');
+  check('unknown unit is ignored', sizeLabel(1, 'stone') === '');
+  check('price per kg from a 1 kg pack', pricePerUnitText(450, 1, 'kg') === '₹450 per kg');
+  check('price per kg from 250 g', pricePerUnitText(60, 250, 'g') === '₹240 per kg');
+  check('price per litre from 500 ml', pricePerUnitText(40, 500, 'ml') === '₹80 per L');
+  check('no price per unit without a size', pricePerUnitText(60, null, 'g') === '');
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
