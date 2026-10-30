@@ -4,6 +4,7 @@
  *
  *   npm run test:logic
  */
+import { transferDeltas, transferEntries, withdrawalProblem } from '../src/expense/transferLogic';
 import { isCloudId } from '../src/expense/sync/cloudId';
 import {
   guessDateRange,
@@ -2692,6 +2693,28 @@ section('ids the backup can hold');
   check('a real uuid can be backed up', isCloudId('3f2b8c1e-9d4a-4e6b-8a1c-0b5d7e9f1a2c'));
   check('sample data ids stay on the phone', !isCloudId('rec-netflix'));
   check('empty and missing ids are not backed up', !isCloudId('') && !isCloudId(null));
+}
+
+section('ATM withdrawal');
+{
+  const d = transferDeltas(2000);
+  check('the bank loses what the wallet gains', d.from === -2000 && d.to === 2000);
+  check('the total you own does not change', d.from + d.to === 0);
+  check('an amount is needed', withdrawalProblem({ amount: 0, fromBalance: 5000 }) !== null);
+  check('more than the balance is flagged', withdrawalProblem({ amount: 6000, fromBalance: 5000 }) !== null);
+  check('a normal withdrawal is fine', withdrawalProblem({ amount: 1000, fromBalance: 5000 }) === null);
+  const t = { id: 't1', date: '2026-10-29', from_account_id: 'b', to_account_id: 'w', amount: 1500, note: '', created_at: '2026-10-29T10:00:00Z' };
+  const names = (id: string) => (id === 'b' ? { name: 'Savings', institution: 'HDFC' } : { name: 'Cash in hand' });
+  const bankView = transferEntries([t], names, 'b');
+  const cashView = transferEntries([t], names, 'w');
+  const allView = transferEntries([t], names, null);
+  check('the bank statement shows it going out', bankView.length === 1 && bankView[0].type === 'out' && !bankView[0].neutral);
+  check('the wallet statement shows it coming in', cashView.length === 1 && cashView[0].type === 'in');
+  check('another account does not see it', transferEntries([t], names, 'x').length === 0);
+  check('all accounts shows one neutral row', allView.length === 1 && allView[0].neutral === true);
+  const sum = computePassbookSummary(allView);
+  check('a neutral row counts as neither in nor out', sum.totalIn === 0 && sum.totalOut === 0);
+  check('and leaves the running total alone', attachRunningBalances(allView, 9000)[0].runningBalance === 9000);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

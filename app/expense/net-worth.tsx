@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import {
   listAccounts,
@@ -13,6 +13,7 @@ import {
 import { stockGain } from '@/expense/accountsLogic';
 import { CATEGORY_COLORS } from '@/expense/db';
 import { AccountModal } from '@/components/AccountModal';
+import { AtmWithdrawModal } from '@/components/AtmWithdrawModal';
 import { fmtMoney } from '@/expense/stats';
 import { radius, useTheme } from '@/expense/theme';
 import { ListCard, PillButton, Row, Screen, Segmented, T, TopBar } from '@/expense/ui';
@@ -29,7 +30,9 @@ const PRESETS: { key: PresetMode; label: string }[] = [
 export default function NetWorthScreen() {
   const { c } = useTheme();
   const router = useRouter();
+  const params = useLocalSearchParams<{ atm?: string }>();
 
+  const [atmOpen, setAtmOpen] = useState(false);
   const [accounts, setAccounts] = useState<AccountItem[]>([]);
   const [summary, setSummary] = useState<NetWorthSummary>({
     bankTotal: 0,
@@ -77,6 +80,11 @@ export default function NetWorthScreen() {
   useEffect(() => {
     void loadData();
   }, [loadData]);
+
+  // Opened from the Money shortcuts: go straight to the withdrawal form.
+  useEffect(() => {
+    if (params.atm === '1') setAtmOpen(true);
+  }, [params.atm]);
 
   const selectPreset = (mode: PresetMode) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
@@ -401,6 +409,21 @@ export default function NetWorthScreen() {
               const bank = (acc.institution || '').trim();
               return accountRow(acc, bank || acc.name, bank ? acc.name : '', 'business-outline');
             })}
+            {bankAccounts.length > 0 ? (
+              <Pressable
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                  setAtmOpen(true);
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="Record an ATM withdrawal"
+                style={({ pressed }) => [styles.addRow, { opacity: pressed ? 0.6 : 1, flexDirection: 'row', alignItems: 'center', gap: 8 }]}
+              >
+                <Ionicons name="cash-outline" size={18} color={c.accent} />
+                <T size={14} weight="700" style={{ color: c.accent }}>ATM withdrawal</T>
+                <T size={13} sub>Bank → cash</T>
+              </Pressable>
+            ) : null}
             {addRow(bankAccounts.length > 0 ? '+ Add bank' : '+ Add your first bank account', 'bank')}
           </ListCard>
         </View>
@@ -482,6 +505,7 @@ export default function NetWorthScreen() {
         </Pressable>
       </ScrollView>
 
+      <AtmWithdrawModal visible={atmOpen} onClose={() => setAtmOpen(false)} onSaved={loadData} />
       <AccountModal
         visible={modalVisible}
         item={selectedAccount}

@@ -39,6 +39,7 @@ const SHORTCUTS: Record<Menu, { title: string; items: Shortcut[] }> = {
       { label: 'Add an expense', icon: 'remove-circle-outline', to: '/expense/expense' },
       { label: 'Scan a receipt', hint: 'Photograph a bill and fill it in for you', icon: 'camera-outline', to: { pathname: '/expense/expense', params: { scan: '1' } } },
       { label: 'Add income', icon: 'add-circle-outline', to: '/expense/income' },
+      { label: 'ATM withdrawal', hint: 'Bank to cash, no spending', icon: 'cash-outline', to: { pathname: '/expense/net-worth', params: { atm: '1' } } },
       { label: 'History', icon: 'receipt-outline', to: '/expense-history' },
     ],
   },

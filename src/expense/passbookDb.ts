@@ -1,6 +1,8 @@
 import { getDb } from './db';
 import { listAccounts } from './accountsDb';
 import type { PassbookEntry } from './passbookLogic';
+import { listTransfers } from './transfersDb';
+import { transferEntries } from './transferLogic';
 
 export async function listPassbookEntries(accountId?: string | null): Promise<PassbookEntry[]> {
   const db = await getDb();
@@ -124,6 +126,19 @@ export async function listPassbookEntries(accountId?: string | null): Promise<Pa
       updatedAt: i.updated_at || undefined,
     });
   }
+
+  // Cash taken out at an ATM: money moved between your own accounts.
+  const transfers = await listTransfers().catch(() => []);
+  entries.push(
+    ...transferEntries(
+      transfers,
+      (id) => {
+        const a = accountMap.get(id);
+        return { name: a?.name ?? 'Account', institution: a?.institution };
+      },
+      accountId
+    )
+  );
 
   // Sort descending by date, with latest updated_at first within the same day
   entries.sort((a, b) => {

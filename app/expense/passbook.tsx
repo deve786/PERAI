@@ -3,6 +3,7 @@ import { FlatList, Pressable, ScrollView, StyleSheet, TextInput, View } from 're
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { listAccounts, type AccountItem } from '@/expense/accountsDb';
+import { deleteTransfer } from '@/expense/transfersDb';
 import { listPassbookEntries } from '@/expense/passbookDb';
 import {
   attachRunningBalances,
@@ -13,7 +14,7 @@ import {
 } from '@/expense/passbookLogic';
 import { fmtMoney } from '@/expense/stats';
 import { FONTS, radius, useTheme } from '@/expense/theme';
-import { Card, Chip, Empty, IconDot, ListCard, Row, Screen, Segmented, T, TopBar } from '@/expense/ui';
+import { Card, Chip, ConfirmDialog, Empty, IconDot, ListCard, Row, Screen, Segmented, T, TopBar } from '@/expense/ui';
 
 type FlowFilter = 'all' | 'in' | 'out';
 
@@ -34,6 +35,7 @@ export default function PassbookScreen() {
   const [flow, setFlow] = useState<FlowFilter>('all');
   const [q, setQ] = useState('');
   const [loading, setLoading] = useState(true);
+  const [removing, setRemoving] = useState<PassbookEntry | null>(null);
 
   const loadData = useCallback(async () => {
     try {
@@ -71,8 +73,8 @@ export default function PassbookScreen() {
   const filteredEntries = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return entriesWithBalances.filter((e) => {
-      if (flow === 'in' && e.type !== 'in') return false;
-      if (flow === 'out' && e.type !== 'out') return false;
+      if (flow === 'in' && (e.type !== 'in' || e.neutral)) return false;
+      if (flow === 'out' && (e.type !== 'out' || e.neutral)) return false;
       if (!needle) return true;
       return (
         e.title.toLowerCase().includes(needle) ||
@@ -92,6 +94,10 @@ export default function PassbookScreen() {
   const dayGroups = useMemo(() => groupPassbookByDate(filteredEntries), [filteredEntries]);
 
   function handleOpenDetail(entry: PassbookEntry) {
+    if (entry.id.startsWith('xfer-')) {
+      setRemoving(entry);
+      return;
+    }
     if (entry.type === 'out') {
       const cleanId = entry.id.replace('exp-', '');
       router.push({ pathname: '/expense/expense', params: { id: cleanId } });
@@ -208,6 +214,20 @@ export default function PassbookScreen() {
         title={selectedAccount ? selectedAccount.name : 'Passbook & Net Worth'}
         onBack={() => router.back()}
       />
+      <ConfirmDialog
+        visible={removing !== null}
+        title="Delete this withdrawal?"
+        message="The money goes back into the bank and comes out of the cash wallet."
+        onCancel={() => setRemoving(null)}
+        onConfirm={async () => {
+          const id = removing?.id.replace('xfer-', '');
+          setRemoving(null);
+          if (id) {
+            await deleteTransfer(id).catch((e) => console.warn('Could not delete the withdrawal:', e));
+            void loadData();
+          }
+        }}
+      />
       <FlatList
         data={dayGroups}
         keyExtractor={(g) => g.date}
@@ -261,20 +281,20 @@ export default function PassbookScreen() {
                             style={[
                               styles.sourcePill,
                               {
-                                backgroundColor: it.type === 'in' ? `${c.good}15` : c.well,
-                                borderColor: it.type === 'in' ? `${c.good}40` : c.border,
+                                backgroundColor: it.type === 'in' && !it.neutral ? `${c.good}15` : c.well,
+                                borderColor: it.type === 'in' && !it.neutral ? `${c.good}40` : c.border,
                               },
                             ]}
                           >
                             <Ionicons
-                              name={it.type === 'in' ? 'arrow-down' : 'arrow-up'}
+                              name={it.neutral ? 'swap-horizontal' : it.type === 'in' ? 'arrow-down' : 'arrow-up'}
                               size={11}
-                              color={it.type === 'in' ? c.good : c.sub}
+                              color={it.type === 'in' && !it.neutral ? c.good : c.sub}
                             />
                             <T
                               size={11}
                               weight="500"
-                              style={{ color: it.type === 'in' ? c.good : c.sub }}
+                              style={{ color: it.type === 'in' && !it.neutral ? c.good : c.sub }}
                             >
                               {badge.label}
                             </T>
@@ -301,9 +321,9 @@ export default function PassbookScreen() {
                           size={15}
                           weight="600"
                           tabular
-                          style={{ color: it.type === 'in' ? c.good : c.text }}
+                          style={{ color: it.type === 'in' && !it.neutral ? c.good : c.text }}
                         >
-                          {it.type === 'in' ? `+${fmtMoney(it.amount, symbol)}` : `−${fmtMoney(it.amount, symbol)}`}
+                          {it.neutral ? fmtMoney(it.amount, symbol) : it.type === 'in' ? `+${fmtMoney(it.amount, symbol)}` : `−${fmtMoney(it.amount, symbol)}`}
                         </T>
                         {it.runningBalance !== undefined ? (
                           <T size={12} sub tabular style={{ color: c.sub, marginTop: 2 }}>
