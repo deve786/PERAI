@@ -5,7 +5,7 @@
  *   npm run test:logic
  */
 import { transferDeltas, transferEntries, withdrawalProblem } from '../src/expense/transferLogic';
-import { isBlankNote, noteCategories, notePreview, noteTitle, visibleNotes, type Note } from '../src/notesLogic';
+import { guessSource, readCategoryGuess, isBlankNote, noteCategories, notePreview, noteTitle, visibleNotes, type Note } from '../src/notesLogic';
 import { splitBalance, splitTotal, wasTotalFixed } from '../src/expense/splitLogic';
 import { isCloudId } from '../src/expense/sync/cloudId';
 import {
@@ -2722,7 +2722,7 @@ section('ATM withdrawal');
 section('plain notes');
 {
   const mk = (id: string, title: string, body: string, category: string, pinned: number, at: string): Note =>
-    ({ id, title, body, category, pinned, created_at: at, updated_at: at });
+    ({ id, title, body, category, pinned, note_date: at.slice(0, 10), created_at: at, updated_at: at });
   const notes = [
     mk('1', 'Wi-Fi', 'password is on the fridge', 'Personal', 0, '2026-10-01T10:00:00Z'),
     mk('2', '', 'Gift ideas\nwatch\nbook', 'Ideas', 0, '2026-10-05T10:00:00Z'),
@@ -2740,6 +2740,13 @@ section('plain notes');
   check('work and Work are one category', cats.filter((x) => x.name.toLowerCase() === 'work').length === 1);
   check('unused defaults are still offered', cats.some((x) => x.name === 'Health' && x.count === 0));
   check('your own category is offered', noteCategories([{ category: 'Recipes' }]).some((x) => x.name === 'Recipes'));
+  check('the note date, not the edit time, orders the list', visibleNotes([mk('a', 'old', '', 'x', 0, '2026-01-01T10:00:00Z'), { ...mk('b', 'new', '', 'x', 0, '2026-02-01T10:00:00Z'), updated_at: '2025-01-01T00:00:00Z' }], {}).map((n) => n.id).join() === 'b,a');
+  const names = ['Personal', 'Work'];
+  check('a guess matching your category uses it, whatever the case', JSON.stringify(readCategoryGuess('work', names)) === '{"kind":"existing","name":"Work"}');
+  check('a guess you do not have is offered as new', JSON.stringify(readCategoryGuess('"Travel."', names)) === '{"kind":"new","name":"Travel"}');
+  check('Other, empty and too-long guesses are ignored', readCategoryGuess('Other', names) === null && readCategoryGuess('', names) === null && readCategoryGuess(null, names) === null && readCategoryGuess('x'.repeat(40), names) === null);
+  check('guessed from the title, else the first line', guessSource({ title: ' Dentist ', body: 'x' }) === 'Dentist' && guessSource({ title: '', body: '\n  Buy milk\nmore' }) === 'Buy milk');
+  check('a title alone, with no description, is a note', !isBlankNote({ title: 'Dentist visit', body: '' }));
   check('an empty note is blank', isBlankNote({ title: ' ', body: '\n' }) && !isBlankNote({ title: '', body: 'x' }));
 }
 

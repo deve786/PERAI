@@ -5,6 +5,8 @@ export interface Note {
   body: string;
   category: string;
   pinned: number; // 0 | 1
+  /** The day the note is about, YYYY-MM-DD. Chosen when saving; defaults to today. */
+  note_date: string;
   created_at: string;
   updated_at: string;
 }
@@ -51,7 +53,7 @@ export function noteCategories(notes: Pick<Note, 'category'>[]): { name: string;
   return out;
 }
 
-/** Pinned first, then most recently changed. Narrowed by category and by words in the title or text. */
+/** Pinned first, then newest note date, then most recently changed. Narrowed by category and by words in the title or text. */
 export function visibleNotes(
   notes: Note[],
   opts: { category?: string | null; query?: string }
@@ -64,10 +66,39 @@ export function visibleNotes(
       const hay = `${n.title} ${n.body} ${n.category}`.toLowerCase();
       return words.every((w) => hay.includes(w));
     })
-    .sort((a, b) => b.pinned - a.pinned || b.updated_at.localeCompare(a.updated_at));
+    .sort(
+      (a, b) =>
+        b.pinned - a.pinned ||
+        b.note_date.localeCompare(a.note_date) ||
+        b.updated_at.localeCompare(a.updated_at)
+    );
 }
 
 /** A note with nothing in it is not worth keeping. */
 export function isBlankNote(n: Pick<Note, 'title' | 'body'>): boolean {
   return !n.title.trim() && !n.body.trim();
+}
+
+const MAX_CATEGORY_LENGTH = 24;
+
+/**
+ * What to do with a category the AI suggested for a note's title: use one you
+ * already have, offer it as a new category, or leave the note unsorted.
+ */
+export function readCategoryGuess(
+  reply: string | null,
+  existing: string[]
+): { kind: 'existing' | 'new'; name: string } | null {
+  const clean = (reply ?? '').trim().replace(/^["'.]+|["'.]+$/g, '').trim();
+  if (!clean || clean.length > MAX_CATEGORY_LENGTH || same(clean, UNSORTED)) return null;
+  const hit = existing.find((n) => same(n, clean));
+  return hit ? { kind: 'existing', name: hit } : { kind: 'new', name: clean };
+}
+
+/** The words a note's category is guessed from: its title, or the first line of the text. */
+export function guessSource(note: Pick<Note, 'title' | 'body'>): string {
+  const title = note.title.trim();
+  if (title) return title;
+  const first = note.body.split('\n').find((line) => line.trim()) ?? '';
+  return first.trim().slice(0, 80);
 }

@@ -4,13 +4,12 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { NoteEditor } from '@/components/NoteEditor';
 import { deleteNote, listNotes } from '@/notesDb';
+import { prettyDate } from '@/expense/dates';
 import { noteCategories, notePreview, noteTitle, visibleNotes, type Note } from '@/notesLogic';
 import { showSnackbar } from '@/snackbarStore';
 import { FONTS, radius, useTheme } from '@/expense/theme';
 import { Chip, Empty, PillButton, Row, Screen, T, TopBar } from '@/expense/ui';
 
-const day = (iso: string) =>
-  new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
 
 /** Notes to keep, sorted by category. Nothing here is a task and nothing reminds you. */
 export default function NotesScreen() {
@@ -134,7 +133,7 @@ export default function NotesScreen() {
                 <View style={[styles.tag, { backgroundColor: c.accentSoft }]}>
                   <T size={12} weight="600" style={{ color: c.accent }}>{n.category}</T>
                 </View>
-                <T size={12} sub>{day(n.updated_at)}</T>
+                <T size={12} sub>{prettyDate(n.note_date)}</T>
               </Row>
             </Pressable>
           );
