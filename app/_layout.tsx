@@ -229,6 +229,7 @@ function ThemedApp() {
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="today" />
         <Stack.Screen name="lists" />
+        <Stack.Screen name="notes" />
         <Stack.Screen name="timeline" />
         <Stack.Screen name="expense-history" />
         <Stack.Screen name="expense-analytics" />

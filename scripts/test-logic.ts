@@ -5,6 +5,7 @@
  *   npm run test:logic
  */
 import { transferDeltas, transferEntries, withdrawalProblem } from '../src/expense/transferLogic';
+import { isBlankNote, noteCategories, notePreview, noteTitle, visibleNotes, type Note } from '../src/notesLogic';
 import { isCloudId } from '../src/expense/sync/cloudId';
 import {
   guessDateRange,
@@ -2715,6 +2716,30 @@ section('ATM withdrawal');
   const sum = computePassbookSummary(allView);
   check('a neutral row counts as neither in nor out', sum.totalIn === 0 && sum.totalOut === 0);
   check('and leaves the running total alone', attachRunningBalances(allView, 9000)[0].runningBalance === 9000);
+}
+
+section('plain notes');
+{
+  const mk = (id: string, title: string, body: string, category: string, pinned: number, at: string): Note =>
+    ({ id, title, body, category, pinned, created_at: at, updated_at: at });
+  const notes = [
+    mk('1', 'Wi-Fi', 'password is on the fridge', 'Personal', 0, '2026-10-01T10:00:00Z'),
+    mk('2', '', 'Gift ideas\nwatch\nbook', 'Ideas', 0, '2026-10-05T10:00:00Z'),
+    mk('3', 'Standup', 'ask about release', 'work', 1, '2026-09-01T10:00:00Z'),
+    mk('4', 'Recipe', 'dosa batter', 'Personal', 0, '2026-10-03T10:00:00Z'),
+  ];
+  check('title falls back to the first line', noteTitle(notes[1]) === 'Gift ideas');
+  check('preview skips a first line used as the title', notePreview(notes[1]) === 'watch · book');
+  check('preview keeps the body when there is a title', notePreview(notes[0]) === 'password is on the fridge');
+  check('pinned first, then newest', visibleNotes(notes, {}).map((n) => n.id).join() === '3,2,4,1');
+  check('category filter ignores case', visibleNotes(notes, { category: 'Work' }).length === 1);
+  check('search matches title, text and category', visibleNotes(notes, { query: 'dosa' }).length === 1 && visibleNotes(notes, { query: 'fridge wi-fi' }).length === 1 && visibleNotes(notes, { query: 'ideas' }).length === 1);
+  const cats = noteCategories(notes);
+  check('used categories first, most used first', cats[0].name === 'Personal' && cats[0].count === 2);
+  check('work and Work are one category', cats.filter((x) => x.name.toLowerCase() === 'work').length === 1);
+  check('unused defaults are still offered', cats.some((x) => x.name === 'Health' && x.count === 0));
+  check('your own category is offered', noteCategories([{ category: 'Recipes' }]).some((x) => x.name === 'Recipes'));
+  check('an empty note is blank', isBlankNote({ title: ' ', body: '\n' }) && !isBlankNote({ title: '', body: 'x' }));
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

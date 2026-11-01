@@ -149,6 +149,15 @@ export default function More() {
           <View style={styles.tiles}>
             <IconTile
               wide
+              icon="document-text-outline"
+              label="Notes"
+              sub="Write things down to keep, by category"
+              onPress={() => router.push('/notes' as any)}
+            />
+          </View>
+          <View style={styles.tiles}>
+            <IconTile
+              wide
               icon="documents-outline"
               label="Data sources"
               sub="Documents, websites and Telegram for Ask"
