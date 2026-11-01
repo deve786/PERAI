@@ -25,6 +25,7 @@ import {
 } from '@/expense/ui';
 import { showDialog } from '@/dialogStore';
 import { KeyboardLift } from '@/components/KeyboardLift';
+import { splitBalance, splitTotal, wasTotalFixed } from '@/expense/splitLogic';
 import { isSizeUnit, itemSizeText, pricePerUnitText, SIZE_UNITS } from '@/expense/itemSize';
 
 /** One bought thing. `amount` is the price of ONE pack; `weight` + `unit` is the size of one pack ("1" "kg"). */
@@ -81,6 +82,9 @@ export default function ExpenseForm() {
   const [cats, setCats] = useState<Category[]>([]);
   const [amount, setAmount] = useState('');
   const [items, setItems] = useState<DraftItem[]>([]);
+  // true: the grand total typed above stays as it is while items are added or
+  // changed. false: the total is whatever the items add up to.
+  const [lockTotal, setLockTotal] = useState(false);
   const [viewItems, setViewItems] = useState<ExpenseItemRow[]>([]);
   const [catId, setCatId] = useState<string | null>(null);
   const [date, setDate] = useState(dateParam || todayStr());
@@ -173,6 +177,8 @@ export default function ExpenseForm() {
         const existing = await listExpenseItems(editId);
         setViewItems(existing);
         if (existing.length) {
+          const sum = existing.reduce((acc, it) => acc + it.quantity * it.amount, 0);
+          setLockTotal(wasTotalFixed(e?.amount ?? sum, sum, existing.length));
           setItems(existing.map((it) => ({
             name: it.name, qty: String(it.quantity), amount: String(it.amount),
             weight: it.weight ? String(it.weight) : '', unit: isSizeUnit(it.unit) ? it.unit : 'kg',
@@ -198,7 +204,7 @@ export default function ExpenseForm() {
     const hasValidItems = items.some((it) => it.name.trim().length > 0);
     const hasCategory = cat && cat.name !== 'Other';
     const hasNotes = notes.trim().length > 0;
-    const hasAmount = hasItems ? itemsTotal > 0 : parseAmt(amount) > 0;
+    const hasAmount = value > 0;
 
     if (!hasValidItems && !hasCategory && !hasNotes && !hasAmount && !note.trim()) {
       showDialog({
@@ -214,7 +220,7 @@ export default function ExpenseForm() {
         items,
         category: cat?.name,
         notes: notes.trim(),
-        amount: hasItems ? itemsTotal : amount,
+        amount: value,
         userTag: userTag.trim(),
         currentTitle: note.trim(),
       });
@@ -325,10 +331,10 @@ export default function ExpenseForm() {
   const hasItems = items.length > 0;
   const itemsTotal = items.reduce((s, it) => s + lineTotal(it), 0);
   const manualValue = parseAmt(amount);
-  const value = hasItems ? itemsTotal : manualValue;
+  const value = splitTotal({ fixed: !hasItems || lockTotal, typed: manualValue, itemsSum: itemsTotal });
   // A row with nothing typed yet is just not filled in — it shouldn't block
   // saving the items that already have an amount.
-  const itemsValid = !hasItems || items.some((it) => lineTotal(it) > 0);
+  const itemsValid = !hasItems || lockTotal || items.some((it) => lineTotal(it) > 0);
   const isOther = cats.find((k) => k.id === catId)?.name === 'Other';
   const valid = !isNaN(value) && value > 0 && catId !== null && itemsValid;
   const cat = cats.find((k) => k.id === catId);
@@ -337,12 +343,20 @@ export default function ExpenseForm() {
     // Seed with just the one row carrying forward whatever was already typed —
     // "Add item" grows the list from here, so Save isn't blocked by a second,
     // still-empty row the user never asked for.
-    const seed = !isNaN(manualValue) && manualValue > 0 ? amount : '';
-    setItems([{ name: '', qty: '1', amount: seed, weight: '', unit: 'kg' }]);
+    // A total already typed stays fixed; the items then describe it rather
+    // than add to it.
+    setLockTotal(!isNaN(manualValue) && manualValue > 0);
+    setItems([{ name: '', qty: '1', amount: '', weight: '', unit: 'kg' }]);
   }
   function clearItems() {
-    if (itemsTotal > 0) setAmount(String(itemsTotal));
+    if (!lockTotal && itemsTotal > 0) setAmount(String(round2(itemsTotal)));
+    setLockTotal(false);
     setItems([]);
+  }
+  function toggleLockTotal() {
+    // Either way the total shown carries over, so switching never jumps it.
+    if (itemsTotal > 0) setAmount(String(round2(itemsTotal)));
+    setLockTotal((v) => !v);
   }
   function addItem() {
     setItems((prev) => [...prev, { name: '', qty: '1', amount: '', weight: '', unit: 'kg' }]);
@@ -399,7 +413,8 @@ export default function ExpenseForm() {
             name: it.name.trim(), quantity: parseAmt(it.qty) || 1, amount: round2(parseAmt(it.amount) || 0),
             weight: parseAmt(it.weight) > 0 ? parseAmt(it.weight) : null, unit: it.unit,
           }))
-          .filter((it) => it.quantity * it.amount > 0)
+          // With the total fixed an item may have no price of its own.
+          .filter((it) => it.quantity * it.amount > 0 || (lockTotal && it.name.length > 0))
       : [];
     await saveExpenseItems(newId, cleanItems);
     // Only a Ticket carries a refund; the field is hidden for anything else,
@@ -476,6 +491,9 @@ export default function ExpenseForm() {
         setCatId(null);
       }
       if (parsed.items && parsed.items.length > 0) {
+        // A bill's total includes tax and charges the items don't, so it stays.
+        const sum = parsed.items.reduce((acc, it) => acc + (it.quantity || 1) * it.amount, 0);
+        setLockTotal(parsed.totalAmount > 0 && wasTotalFixed(parsed.totalAmount, sum, parsed.items.length));
         setItems(
           parsed.items.map((it) => ({
             name: it.name,
@@ -698,7 +716,7 @@ export default function ExpenseForm() {
             <T size={14} sub>Amount</T>
             <Row style={{ justifyContent: 'center', gap: 10, marginTop: 4, maxWidth: '100%' }}>
               <T size={28} sub tabular>{symbol}</T>
-              {hasItems ? (
+              {hasItems && !lockTotal ? (
                 <T size={48} weight="600" tabular numberOfLines={1} style={{ letterSpacing: -1.2 }}>
                   {itemsTotal % 1 === 0 ? itemsTotal : itemsTotal.toFixed(2)}
                 </T>
@@ -718,7 +736,11 @@ export default function ExpenseForm() {
                 />
               )}
             </Row>
-            {hasItems ? <T size={13} sub style={{ marginTop: 2 }}>Total of {items.length} item{items.length === 1 ? '' : 's'}</T> : null}
+            {hasItems ? (
+              <T size={13} sub style={{ marginTop: 2 }}>
+                {lockTotal ? 'Grand total, kept as typed' : `Total of ${items.length} item${items.length === 1 ? '' : 's'}`}
+              </T>
+            ) : null}
             {!editId && (
               <Pressable
                 onPress={handleScanReceipt}
@@ -771,6 +793,35 @@ export default function ExpenseForm() {
                   <T size={14} weight="600" style={{ color: c.accent }}>Clear</T>
                 </Pressable>
               </Row>
+              <Pressable
+                onPress={toggleLockTotal}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: lockTotal }}
+                accessibilityLabel="Keep the grand total fixed"
+                style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 14, opacity: pressed ? 0.7 : 1 })}
+              >
+                <View style={{
+                  width: 24, height: 24, borderRadius: 7, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center',
+                  borderColor: lockTotal ? c.accent : c.border, backgroundColor: lockTotal ? c.accent : 'transparent',
+                }}>
+                  {lockTotal ? <Ionicons name="checkmark" size={16} color={c.inkText} /> : null}
+                </View>
+                <View style={{ flex: 1 }}>
+                  <T size={15} weight="600">Keep the grand total fixed</T>
+                  <T size={13} sub>
+                    {lockTotal
+                      ? 'Adding items or changing quantities will not change the total. Untick to let the items add up instead.'
+                      : 'Tick to keep the total you typed, whatever the items come to.'}
+                  </T>
+                </View>
+              </Pressable>
+              {lockTotal && itemsTotal > 0 ? (
+                <T size={13} style={{ marginBottom: 12, color: splitBalance(value, itemsTotal).over > 0 ? c.warn : c.sub }}>
+                  {splitBalance(value, itemsTotal).over > 0
+                    ? `Items come to ${symbol}${round2(itemsTotal)}, ${symbol}${splitBalance(value, itemsTotal).over} more than the total.`
+                    : `Items come to ${symbol}${round2(itemsTotal)} of ${symbol}${value}${splitBalance(value, itemsTotal).left > 0 ? ` · ${symbol}${splitBalance(value, itemsTotal).left} not itemised` : ''}.`}
+                </T>
+              ) : null}
               {items.map((it, i) => (
                 <View key={i} style={{ marginBottom: 12 }}>
                   <Row style={{ gap: 8, marginBottom: 6 }}>

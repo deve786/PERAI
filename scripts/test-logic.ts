@@ -6,6 +6,7 @@
  */
 import { transferDeltas, transferEntries, withdrawalProblem } from '../src/expense/transferLogic';
 import { isBlankNote, noteCategories, notePreview, noteTitle, visibleNotes, type Note } from '../src/notesLogic';
+import { splitBalance, splitTotal, wasTotalFixed } from '../src/expense/splitLogic';
 import { isCloudId } from '../src/expense/sync/cloudId';
 import {
   guessDateRange,
@@ -2740,6 +2741,20 @@ section('plain notes');
   check('unused defaults are still offered', cats.some((x) => x.name === 'Health' && x.count === 0));
   check('your own category is offered', noteCategories([{ category: 'Recipes' }]).some((x) => x.name === 'Recipes'));
   check('an empty note is blank', isBlankNote({ title: ' ', body: '\n' }) && !isBlankNote({ title: '', body: 'x' }));
+}
+
+section('split items: fixed grand total');
+{
+  check('open: the total is what the items add up to', splitTotal({ fixed: false, typed: 500, itemsSum: 650 }) === 650);
+  check('fixed: the typed total stays whatever the items come to', splitTotal({ fixed: true, typed: 500, itemsSum: 650 }) === 500);
+  check('fixed: raising a quantity does not move it', splitTotal({ fixed: true, typed: 500, itemsSum: 900 }) === 500);
+  check('nothing typed gives 0, not NaN', splitTotal({ fixed: true, typed: NaN, itemsSum: 10 }) === 0);
+  check('items under the total leave the rest not itemised', splitBalance(500, 350).left === 150 && splitBalance(500, 350).over === 0);
+  check('items over the total say by how much', splitBalance(500, 650).over === 150 && splitBalance(500, 650).left === 0);
+  check('equal items leave nothing', splitBalance(500, 500).left === 0 && splitBalance(500, 500).over === 0);
+  check('reopened: items that match the total are not fixed', !wasTotalFixed(500, 500, 3));
+  check('reopened: items that differ from the total were fixed', wasTotalFixed(520, 500, 3));
+  check('reopened: no items is not fixed', !wasTotalFixed(520, 0, 0));
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
