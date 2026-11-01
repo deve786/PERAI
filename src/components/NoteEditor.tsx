@@ -1,13 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Modal, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { KeyboardLift } from '@/components/KeyboardLift';
 import { useTheme } from '@/expense/theme';
 import { ActionBar, Button, Chip, Field, Label, Row, T } from '@/expense/ui';
 import { addDays, fromStr, prettyDate, toStr, todayStr } from '@/expense/dates';
 import { guessNoteCategory } from '@/ai/noteCategory';
-import { guessSource, isBlankNote, noteCategories, UNSORTED, type Note } from '@/notesLogic';
+import { addNoteDate, guessSource, isBlankNote, noteCategories, parseDates, removeNoteDate, summariseDates, UNSORTED, type Note } from '@/notesLogic';
 import { saveNote } from '@/notesDb';
 
 interface Props {
@@ -30,7 +31,7 @@ export function NoteEditor({ visible, note, all, initialCategory, onClose, onSav
   const [body, setBody] = useState('');
   const [category, setCategory] = useState(UNSORTED);
   const [pinned, setPinned] = useState(false);
-  const [date, setDate] = useState(todayStr());
+  const [days, setDays] = useState<string[]>([todayStr()]);
   const [showPicker, setShowPicker] = useState(false);
   // The AI files a new note by its title until you pick a category yourself.
   const [guessing, setGuessing] = useState(false);
@@ -48,7 +49,7 @@ export function NoteEditor({ visible, note, all, initialCategory, onClose, onSav
     setBody(note?.body ?? '');
     setCategory(note?.category ?? initialCategory ?? UNSORTED);
     setPinned(note ? note.pinned === 1 : false);
-    setDate(note?.note_date || todayStr());
+    setDays(note ? parseDates(note.dates || note.note_date) : [todayStr()]);
     setShowPicker(false);
     setAdding(false);
     setDraft('');
@@ -100,6 +101,7 @@ export function NoteEditor({ visible, note, all, initialCategory, onClose, onSav
     setCategory(name);
   };
   const blank = isBlankNote({ title, body });
+  const summary = summariseDates(days, todayStr());
 
   const addCategory = () => {
     const name = draft.trim();
@@ -117,7 +119,7 @@ export function NoteEditor({ visible, note, all, initialCategory, onClose, onSav
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
       // Text typed in "New category" but not added yet still counts.
       const typed = adding ? draft.trim() : '';
-      await saveNote({ id: note?.id, title, body, category: typed || category, pinned, date });
+      await saveNote({ id: note?.id, title, body, category: typed || category, pinned, dates: days });
       onSaved();
       onClose();
     } catch (err) {
@@ -160,25 +162,44 @@ export function NoteEditor({ visible, note, all, initialCategory, onClose, onSav
               style={styles.body}
             />
 
-            <Label>Date</Label>
+            <Label>{days.length > 1 ? `Dates · ${days.length} times` : 'Dates'}</Label>
+            <T size={13} sub style={{ marginBottom: 8 }}>
+              Add every day this happened, like each haircut. One date is fine too.
+            </T>
+            {days.length > 0 ? (
+              <View style={styles.chipRow}>
+                {days.map((d) => (
+                  <Pressable
+                    key={d}
+                    onPress={() => setDays((prev) => removeNoteDate(prev, d))}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Remove ${prettyDate(d)}`}
+                    style={({ pressed }) => [styles.dateChip, { backgroundColor: c.accentSoft, opacity: pressed ? 0.6 : 1 }]}
+                  >
+                    <T size={14} weight="600" style={{ color: c.accent }}>{prettyDate(d)}</T>
+                    <Ionicons name="close" size={14} color={c.accent} />
+                  </Pressable>
+                ))}
+              </View>
+            ) : null}
+            {summary.count > 1 && summary.everyDays !== null ? (
+              <T size={13} sub style={{ marginBottom: 8 }}>
+                Last {prettyDate(summary.last!)} · about every {summary.everyDays} day{summary.everyDays === 1 ? '' : 's'}
+              </T>
+            ) : null}
             <View style={[styles.chipRow, { marginBottom: showPicker ? 0 : 12 }]}>
-              <Chip label="Today" active={date === todayStr()} onPress={() => { setDate(todayStr()); setShowPicker(false); }} />
-              <Chip label="Yesterday" active={date === addDays(todayStr(), -1)} onPress={() => { setDate(addDays(todayStr(), -1)); setShowPicker(false); }} />
-              <Chip
-                label={date !== todayStr() && date !== addDays(todayStr(), -1) ? prettyDate(date) : 'Pick a date'}
-                icon="calendar-outline"
-                active={date !== todayStr() && date !== addDays(todayStr(), -1)}
-                onPress={() => setShowPicker((p) => !p)}
-              />
+              <Chip label="+ Today" active={false} onPress={() => { setDays((p) => addNoteDate(p, todayStr())); setShowPicker(false); }} />
+              <Chip label="+ Yesterday" active={false} onPress={() => { setDays((p) => addNoteDate(p, addDays(todayStr(), -1))); setShowPicker(false); }} />
+              <Chip label="+ Pick a date" icon="calendar-outline" active={showPicker} onPress={() => setShowPicker((p) => !p)} />
             </View>
             {showPicker ? (
               <DateTimePicker
-                value={fromStr(date)}
+                value={fromStr(days[0] ?? todayStr())}
                 mode="date"
                 display={Platform.OS === 'ios' ? 'inline' : 'default'}
-                onChange={(_, d) => {
+                onChange={(e, d) => {
                   if (Platform.OS !== 'ios') setShowPicker(false);
-                  if (d) setDate(toStr(d));
+                  if (d && e.type !== 'dismissed') setDays((p) => addNoteDate(p, toStr(d)));
                 }}
               />
             ) : null}
@@ -255,6 +276,7 @@ const styles = StyleSheet.create({
   scroll: { padding: 20, paddingBottom: 36 },
   body: { minHeight: 90, textAlignVertical: 'top' },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap' },
+  dateChip: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 36, paddingHorizontal: 12, borderRadius: 999, marginRight: 8, marginBottom: 8 },
   pinRow: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 48, marginTop: 14 },
   box: { width: 22, height: 22, borderRadius: 6, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
   deleteBtn: { minHeight: 48, alignItems: 'center', justifyContent: 'center', marginTop: 8 },

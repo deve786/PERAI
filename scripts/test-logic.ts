@@ -5,7 +5,7 @@
  *   npm run test:logic
  */
 import { transferDeltas, transferEntries, withdrawalProblem } from '../src/expense/transferLogic';
-import { guessSource, readCategoryGuess, isBlankNote, noteCategories, notePreview, noteTitle, visibleNotes, type Note } from '../src/notesLogic';
+import { addNoteDate, parseDates, removeNoteDate, summariseDates, guessSource, readCategoryGuess, isBlankNote, noteCategories, notePreview, noteTitle, visibleNotes, type Note } from '../src/notesLogic';
 import { splitBalance, splitTotal, wasTotalFixed } from '../src/expense/splitLogic';
 import { isCloudId } from '../src/expense/sync/cloudId';
 import {
@@ -2722,7 +2722,7 @@ section('ATM withdrawal');
 section('plain notes');
 {
   const mk = (id: string, title: string, body: string, category: string, pinned: number, at: string): Note =>
-    ({ id, title, body, category, pinned, note_date: at.slice(0, 10), created_at: at, updated_at: at });
+    ({ id, title, body, category, pinned, note_date: at.slice(0, 10), dates: at.slice(0, 10), created_at: at, updated_at: at });
   const notes = [
     mk('1', 'Wi-Fi', 'password is on the fridge', 'Personal', 0, '2026-10-01T10:00:00Z'),
     mk('2', '', 'Gift ideas\nwatch\nbook', 'Ideas', 0, '2026-10-05T10:00:00Z'),
@@ -2747,6 +2747,16 @@ section('plain notes');
   check('Other, empty and too-long guesses are ignored', readCategoryGuess('Other', names) === null && readCategoryGuess('', names) === null && readCategoryGuess(null, names) === null && readCategoryGuess('x'.repeat(40), names) === null);
   check('guessed from the title, else the first line', guessSource({ title: ' Dentist ', body: 'x' }) === 'Dentist' && guessSource({ title: '', body: '\n  Buy milk\nmore' }) === 'Buy milk');
   check('a title alone, with no description, is a note', !isBlankNote({ title: 'Dentist visit', body: '' }));
+  check('dates are kept once each, newest first', parseDates('2026-09-01, 2026-10-01,2026-09-01,junk').join() === '2026-10-01,2026-09-01');
+  check('adding a day already there changes nothing', addNoteDate(['2026-10-01'], '2026-10-01').length === 1);
+  check('adding puts it in order', addNoteDate(['2026-10-01', '2026-08-01'], '2026-09-01').join() === '2026-10-01,2026-09-01,2026-08-01');
+  check('removing takes one day out', removeNoteDate(['2026-10-01', '2026-09-01'], '2026-10-01').join() === '2026-09-01');
+  const cuts = summariseDates(['2026-08-01', '2026-09-01', '2026-10-01'], '2026-10-11');
+  check('how many times and the last one', cuts.count === 3 && cuts.last === '2026-10-01');
+  check('days since the last one', cuts.daysSince === 10);
+  check('about how often: 61 days over 2 gaps', cuts.everyDays === 31);
+  check('one day has no pattern yet', summariseDates(['2026-10-01'], '2026-10-11').everyDays === null);
+  check('no days at all', summariseDates([], '2026-10-11').count === 0);
   check('an empty note is blank', isBlankNote({ title: ' ', body: '\n' }) && !isBlankNote({ title: '', body: 'x' }));
 }
 

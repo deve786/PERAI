@@ -5,8 +5,14 @@ export interface Note {
   body: string;
   category: string;
   pinned: number; // 0 | 1
-  /** The day the note is about, YYYY-MM-DD. Chosen when saving; defaults to today. */
+  /** The newest of `dates`: what orders the list. YYYY-MM-DD. */
   note_date: string;
+  /**
+   * Every day this note is about, comma-separated YYYY-MM-DD. One day for an
+   * ordinary note; several for something that keeps happening — a haircut
+   * title with each date it was done.
+   */
+  dates: string;
   created_at: string;
   updated_at: string;
 }
@@ -101,4 +107,44 @@ export function guessSource(note: Pick<Note, 'title' | 'body'>): string {
   if (title) return title;
   const first = note.body.split('\n').find((line) => line.trim()) ?? '';
   return first.trim().slice(0, 80);
+}
+
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+const dayNumber = (d: string) => Math.round(Date.UTC(+d.slice(0, 4), +d.slice(5, 7) - 1, +d.slice(8, 10)) / 86400000);
+
+/** The days in a stored list, newest first, without repeats or anything that is not a date. */
+export function parseDates(stored: string | null | undefined): string[] {
+  const days = (stored ?? '').split(',').map((d) => d.trim()).filter((d) => DAY.test(d));
+  return [...new Set(days)].sort((a, b) => b.localeCompare(a));
+}
+
+export const joinDates = (days: string[]): string => parseDates(days.join(',')).join(',');
+
+/** The list with this day added (once), newest first. */
+export const addNoteDate = (days: string[], day: string): string[] => parseDates([...days, day].join(','));
+
+export const removeNoteDate = (days: string[], day: string): string[] => days.filter((d) => d !== day);
+
+export interface DateSummary {
+  count: number;
+  /** Newest day, or null with none. */
+  last: string | null;
+  /** Days from the newest day to `today`; negative when it is still ahead. */
+  daysSince: number | null;
+  /** Average days between one time and the next; null with fewer than two days. */
+  everyDays: number | null;
+}
+
+/** What a list of dates adds up to: how many times, the last one, and how often. */
+export function summariseDates(days: string[], today: string): DateSummary {
+  const sorted = parseDates(days.join(','));
+  if (sorted.length === 0) return { count: 0, last: null, daysSince: null, everyDays: null };
+  const last = sorted[0];
+  const first = sorted[sorted.length - 1];
+  return {
+    count: sorted.length,
+    last,
+    daysSince: dayNumber(today) - dayNumber(last),
+    everyDays: sorted.length > 1 ? Math.round((dayNumber(last) - dayNumber(first)) / (sorted.length - 1)) : null,
+  };
 }
