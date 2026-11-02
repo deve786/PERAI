@@ -110,7 +110,7 @@ import {
 import { tripSpendQuestion } from '../src/tripQuestion';
 import { stockGain } from '../src/expense/accountsLogic';
 import { toSentence } from '../src/format';
-import { loanBalanceDelta, outstandingOf } from '../src/expense/loanLogic';
+import { loanBalanceDelta, outstandingOf, planRepayment } from '../src/expense/loanLogic';
 import { itemSizeText, pricePerUnitText, sizeLabel } from '../src/expense/itemSize';
 import { refundReminderTimes } from '../src/expense/refundSchedule';
 import { monthsWithData, OVERALL, periodLabel, periodRange, previousMonth } from '../src/expense/period';
@@ -2772,6 +2772,23 @@ section('split items: fixed grand total');
   check('reopened: items that match the total are not fixed', !wasTotalFixed(500, 500, 3));
   check('reopened: items that differ from the total were fixed', wasTotalFixed(520, 500, 3));
   check('reopened: no items is not fixed', !wasTotalFixed(520, 0, 0));
+}
+
+section('repaying a different amount');
+{
+  const full = planRepayment({ amount: 1000, settled: 0, returned: 1000 });
+  check('the exact amount closes the loan', full.closed && full.extra === 0 && full.remaining === 0);
+  const more = planRepayment({ amount: 1000, settled: 0, returned: 1100 });
+  check('more than lent closes it, and the extra is noted', more.closed && more.extra === 100 && more.settledAmount === 1000);
+  const part = planRepayment({ amount: 1000, settled: 0, returned: 600 });
+  check('less leaves the rest owed', !part.closed && part.remaining === 400 && part.settledAmount === 600);
+  const off = planRepayment({ amount: 1000, settled: 0, returned: 900, writeOffRest: true });
+  check('less can close the loan, letting the rest go', off.closed && off.shortfall === 100 && off.remaining === 0);
+  const second = planRepayment({ amount: 1000, settled: 600, returned: 400 });
+  check('a second part payment finishes it', second.closed && second.extra === 0);
+  const over = planRepayment({ amount: 1000, settled: 600, returned: 500 });
+  check('extra is measured against what was left', over.closed && over.extra === 100);
+  check('what is outstanding after a part payment', outstandingOf(1000, 600) === 400);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
