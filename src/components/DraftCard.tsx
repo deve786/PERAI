@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useState } from 'react';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import {
   LayoutAnimation,
   Platform,
@@ -11,6 +12,7 @@ import {
   View,
 } from 'react-native';
 import { ChipWrap } from './Chip';
+import { isSameDay, withDay } from '../draftWhen';
 import { DEFAULT_CURRENCY } from '../constants';
 import { fullDateLabel } from '../format';
 import { useTheme } from '../ThemeContext';
@@ -54,6 +56,7 @@ export function DraftCard({ draft, index, total, onChange, onSave, onDiscard }: 
   const { colors, type } = useTheme();
   const styles = makeStyles(colors);
   const [open, setOpen] = useState(false);
+  const [picking, setPicking] = useState(false);
 
   const toggle = () => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
@@ -98,6 +101,68 @@ export function DraftCard({ draft, index, total, onChange, onSave, onDiscard }: 
         <Text style={[type.fine, styles.said]}>You said “{draft.dateExpression}”</Text>
       ) : null}
 
+      {/* Date and priority are asked for up front: they are what most notes
+          need changing, so they are not tucked under "More details". */}
+      <View style={styles.fields}>
+        <Field label="When">
+          <View style={styles.dateRow}>
+            <Pressable
+              style={styles.step}
+              hitSlop={6}
+              accessibilityRole="button"
+              accessibilityLabel="A day earlier"
+              onPress={() => onChange({ eventDate: shiftDays(draft.eventDate, -1) })}
+            >
+              <Ionicons name="chevron-back" size={18} color={colors.ink} />
+            </Pressable>
+            <Text style={[type.body, styles.dateText]}>{fullDateLabel(draft.eventDate)}</Text>
+            <Pressable
+              style={styles.step}
+              hitSlop={6}
+              accessibilityRole="button"
+              accessibilityLabel="A day later"
+              onPress={() => onChange({ eventDate: shiftDays(draft.eventDate, 1) })}
+            >
+              <Ionicons name="chevron-forward" size={18} color={colors.ink} />
+            </Pressable>
+          </View>
+          <View style={styles.quickDays}>
+            <QuickDay label="Today" days={0} iso={draft.eventDate} onPick={(d) => onChange({ eventDate: withDay(draft.eventDate, d) })} />
+            <QuickDay label="Tomorrow" days={1} iso={draft.eventDate} onPick={(d) => onChange({ eventDate: withDay(draft.eventDate, d) })} />
+            <Pressable
+              onPress={() => setPicking((p) => !p)}
+              hitSlop={6}
+              accessibilityRole="button"
+              accessibilityLabel="Pick a date"
+              style={[styles.quick, { borderColor: colors.border, backgroundColor: colors.surface }]}
+            >
+              <Ionicons name="calendar-outline" size={15} color={colors.ink} />
+              <Text style={styles.quickText}>Pick a date</Text>
+            </Pressable>
+          </View>
+          {picking ? (
+            <DateTimePicker
+              value={new Date(draft.eventDate)}
+              mode="date"
+              display={Platform.OS === 'ios' ? 'inline' : 'default'}
+              accentColor={colors.moss}
+              onChange={(event, day) => {
+                if (Platform.OS !== 'ios') setPicking(false);
+                if (day && event.type !== 'dismissed') onChange({ eventDate: withDay(draft.eventDate, day) });
+              }}
+            />
+          ) : null}
+        </Field>
+
+        <Field label="Priority">
+          <ChipWrap
+            options={PRIORITIES}
+            value={(draft.priority ?? '') as Priority}
+            onChange={(value) => onChange({ priority: draft.priority === value ? null : value })}
+          />
+        </Field>
+      </View>
+
       <Pressable
         onPress={toggle}
         style={styles.more}
@@ -124,30 +189,6 @@ export function DraftCard({ draft, index, total, onChange, onSave, onDiscard }: 
               value={draft.category}
               onChange={(value) => value && onChange({ category: value })}
             />
-          </Field>
-
-          <Field label="When">
-            <View style={styles.dateRow}>
-              <Pressable
-                style={styles.step}
-                hitSlop={6}
-                accessibilityRole="button"
-                accessibilityLabel="A day earlier"
-                onPress={() => onChange({ eventDate: shiftDays(draft.eventDate, -1) })}
-              >
-                <Ionicons name="chevron-back" size={18} color={colors.ink} />
-              </Pressable>
-              <Text style={[type.body, styles.dateText]}>{fullDateLabel(draft.eventDate)}</Text>
-              <Pressable
-                style={styles.step}
-                hitSlop={6}
-                accessibilityRole="button"
-                accessibilityLabel="A day later"
-                onPress={() => onChange({ eventDate: shiftDays(draft.eventDate, 1) })}
-              >
-                <Ionicons name="chevron-forward" size={18} color={colors.ink} />
-              </Pressable>
-            </View>
           </Field>
 
           <View style={styles.pair}>
@@ -219,15 +260,6 @@ export function DraftCard({ draft, index, total, onChange, onSave, onDiscard }: 
             />
           </Field>
 
-          <Field label="Priority">
-            <ChipWrap
-              options={PRIORITIES}
-              value={(draft.priority ?? '') as Priority}
-              onChange={(value) =>
-                onChange({ priority: draft.priority === value ? null : value })
-              }
-            />
-          </Field>
         </View>
       ) : null}
 
@@ -238,6 +270,33 @@ export function DraftCard({ draft, index, total, onChange, onSave, onDiscard }: 
     </View>
   );
 }
+
+/** A one-tap day: today, tomorrow. Lit when the note is already on that day. */
+function QuickDay({ label, days, iso, onPick }: { label: string; days: number; iso: string; onPick: (day: Date) => void }) {
+  const { colors } = useTheme();
+  const day = new Date();
+  day.setDate(day.getDate() + days);
+  const on = isSameDay(iso, day);
+  return (
+    <Pressable
+      onPress={() => onPick(day)}
+      hitSlop={6}
+      accessibilityRole="button"
+      accessibilityState={{ selected: on }}
+      style={[
+        quickLayout.quick,
+        { borderColor: on ? colors.moss : colors.border, backgroundColor: on ? colors.mossSoft : colors.surface },
+      ]}
+    >
+      <Text style={[quickLayout.text, { color: on ? colors.moss : colors.ink }]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+const quickLayout = StyleSheet.create({
+  quick: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 36, paddingHorizontal: 14, borderRadius: 999, borderWidth: 1 },
+  text: { fontFamily: FONTS.sansSemi, fontSize: 14 },
+});
 
 function Field({
   label,
@@ -317,6 +376,9 @@ function makeStyles(colors: Colors) {
       justifyContent: 'center',
       backgroundColor: colors.well,
     },
+    quickDays: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    quick: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 36, paddingHorizontal: 14, borderRadius: 999, borderWidth: 1 },
+    quickText: { fontFamily: FONTS.sansSemi, fontSize: 14, color: colors.ink },
     dateText: { flex: 1, textAlign: 'center', color: colors.ink },
     actions: { flexDirection: 'row', gap: 10, paddingTop: 8 },
     action: { flex: 1 },

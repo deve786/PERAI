@@ -7,6 +7,7 @@
 import { transferDeltas, transferEntries, withdrawalProblem } from '../src/expense/transferLogic';
 import { addNoteDate, parseDates, removeNoteDate, summariseDates, guessSource, readCategoryGuess, isBlankNote, noteCategories, notePreview, noteTitle, visibleNotes, type Note } from '../src/notesLogic';
 import { splitBalance, splitTotal, wasTotalFixed } from '../src/expense/splitLogic';
+import { isSameDay, withDay } from '../src/draftWhen';
 import { isCloudId } from '../src/expense/sync/cloudId';
 import {
   guessDateRange,
@@ -2789,6 +2790,15 @@ section('repaying a different amount');
   const over = planRepayment({ amount: 1000, settled: 600, returned: 500 });
   check('extra is measured against what was left', over.closed && over.extra === 100);
   check('what is outstanding after a part payment', outstandingOf(1000, 600) === 400);
+}
+
+section('choosing a day for a new note');
+{
+  const when = new Date(2026, 9, 5, 20, 30).toISOString();
+  const moved = new Date(withDay(when, new Date(2026, 10, 2)));
+  check('the day changes', moved.getFullYear() === 2026 && moved.getMonth() === 10 && moved.getDate() === 2);
+  check('the time of day is kept', moved.getHours() === 20 && moved.getMinutes() === 30);
+  check('same day is recognised', isSameDay(when, new Date(2026, 9, 5, 1, 0)) && !isSameDay(when, new Date(2026, 9, 6)));
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
