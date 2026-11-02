@@ -7,7 +7,7 @@
 import { transferDeltas, transferEntries, withdrawalProblem } from '../src/expense/transferLogic';
 import { addNoteDate, parseDates, removeNoteDate, summariseDates, guessSource, readCategoryGuess, isBlankNote, noteCategories, notePreview, noteTitle, visibleNotes, type Note } from '../src/notesLogic';
 import { splitBalance, splitTotal, wasTotalFixed } from '../src/expense/splitLogic';
-import { isSameDay, withDay } from '../src/draftWhen';
+import { applyChoices, isSameDay, withDay } from '../src/draftWhen';
 import { isCloudId } from '../src/expense/sync/cloudId';
 import {
   guessDateRange,
@@ -2798,6 +2798,11 @@ section('choosing a day for a new note');
   const moved = new Date(withDay(when, new Date(2026, 10, 2)));
   check('the day changes', moved.getFullYear() === 2026 && moved.getMonth() === 10 && moved.getDate() === 2);
   check('the time of day is kept', moved.getHours() === 20 && moved.getMinutes() === 30);
+  const draft = { eventDate: new Date(2026, 9, 5, 20, 30).toISOString(), priority: null as 'low' | 'medium' | 'high' | null };
+  const chosen = applyChoices(draft, { day: new Date(2026, 10, 3), priority: 'high' });
+  check('a chosen day replaces the guessed one, keeping the time', new Date(chosen.eventDate).getDate() === 3 && new Date(chosen.eventDate).getHours() === 20);
+  check('a chosen priority is used', chosen.priority === 'high');
+  check('nothing chosen leaves the draft alone', applyChoices(draft, { day: null, priority: null }) === draft && applyChoices(draft, undefined) === draft);
   check('same day is recognised', isSameDay(when, new Date(2026, 9, 5, 1, 0)) && !isSameDay(when, new Date(2026, 9, 6)));
 }
 

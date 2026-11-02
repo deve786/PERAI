@@ -4,6 +4,7 @@ import { getSpellings, insertMemory, queueTitleCheck } from './db/queries';
 import { lookupSpelling, spellingKey, type Spelling } from './dictionary';
 import { getTitleLanguage } from './settings';
 import { recordVoiceExpense } from './expense/voiceExpense';
+import { applyChoices, type NoteChoices } from './draftWhen';
 import type { Memory } from './types';
 
 export interface FilingContext {
@@ -16,6 +17,8 @@ export interface FilingContext {
    * what a note dictated from inside a group is for.
    */
   groupName?: string | null;
+  /** A date and priority chosen before saving; they replace what the AI worked out. */
+  choices?: NoteChoices;
 }
 
 /**
@@ -50,7 +53,7 @@ export async function fileNote(text: string, context: FilingContext = {}): Promi
   const memories: Memory[] = [];
   for (const draft of drafts) {
     const remembered = lookupSpelling(draft.title, known);
-    const named = remembered ? { ...draft, title: remembered } : draft;
+    const named = applyChoices(remembered ? { ...draft, title: remembered } : draft, context.choices);
     const memory = await insertMemory(
       context.groupName === undefined ? named : { ...named, groupName: context.groupName },
       text
