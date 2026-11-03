@@ -10,6 +10,16 @@ export interface ChangelogEntry {
 /** Newest first. Add a new entry here with every release that changes user-visible behaviour. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.41.1',
+    build: 190,
+    type: 'ota',
+    date: '2026-11-03',
+    time: '12:10 PM',
+    highlights: [
+      'Borrow and lend: show all saved people',
+    ],
+  },
+  {
     version: '1.41.0',
     build: 189,
     type: 'ota',
