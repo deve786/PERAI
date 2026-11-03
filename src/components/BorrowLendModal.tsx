@@ -23,6 +23,7 @@ import {
 import { listTaggedUsers, METHODS, type TaggedUser } from '@/expense/db';
 import { listAccounts, type AccountItem } from '@/expense/accountsDb';
 import { fmtMoney } from '@/expense/stats';
+import { matchPeople } from '@/expense/peopleMatch';
 
 const TYPES: { key: BorrowLendType; label: string }[] = [
   { key: 'lent', label: 'I lent' },
@@ -194,21 +195,17 @@ export function BorrowLendModal({
               containerStyle={{ marginBottom: knownUsers.length > 0 ? 10 : 16 }}
             />
             {knownUsers.length > 0 && (
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                keyboardShouldPersistTaps="handled"
-                style={{ marginBottom: 10 }}
-              >
-                {knownUsers.slice(0, 6).map((u) => (
+              // Every saved person, wrapping onto more lines; typing narrows them.
+              <View style={[styles.chipRow, { marginBottom: 10 }]}>
+                {matchPeople(knownUsers, personName).map((u) => (
                   <Chip
                     key={u.id}
                     label={u.name}
-                    active={personName.toLowerCase() === u.name.toLowerCase()}
+                    active={personName.trim().toLowerCase() === u.name.toLowerCase()}
                     onPress={() => setPersonName(u.name)}
                   />
                 ))}
-              </ScrollView>
+              </View>
             )}
 
             <Field

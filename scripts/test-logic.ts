@@ -8,6 +8,7 @@ import { transferDeltas, transferEntries, withdrawalProblem } from '../src/expen
 import { addNoteDate, parseDates, removeNoteDate, summariseDates, guessSource, readCategoryGuess, isBlankNote, noteCategories, notePreview, noteTitle, visibleNotes, type Note } from '../src/notesLogic';
 import { splitBalance, splitTotal, wasTotalFixed } from '../src/expense/splitLogic';
 import { applyChoices, isSameDay, withDay } from '../src/draftWhen';
+import { matchPeople } from '../src/expense/peopleMatch';
 import { isCloudId } from '../src/expense/sync/cloudId';
 import {
   guessDateRange,
@@ -2804,6 +2805,15 @@ section('choosing a day for a new note');
   check('a chosen priority is used', chosen.priority === 'high');
   check('nothing chosen leaves the draft alone', applyChoices(draft, { day: null, priority: null }) === draft && applyChoices(draft, undefined) === draft);
   check('same day is recognised', isSameDay(when, new Date(2026, 9, 5, 1, 0)) && !isSameDay(when, new Date(2026, 9, 6)));
+}
+
+section('saved people under the person box');
+{
+  const people = ['Anas', 'Rahul', 'Rahim', 'Sarah', 'Uncle', 'Aunt', 'Dev', 'Mohan'].map((name, i) => ({ id: String(i), name }));
+  check('all of them show while the box is empty, not only the first few', matchPeople(people, '').length === 8 && matchPeople(people, '  ').length === 8);
+  check('typing narrows to names containing it, any case', matchPeople(people, 'RA').map((p) => p.name).join() === 'Rahul,Rahim,Sarah');
+  check('a full name keeps that person', matchPeople(people, 'Sarah').length === 1);
+  check('no match shows none', matchPeople(people, 'zzz').length === 0);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
