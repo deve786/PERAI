@@ -30,6 +30,7 @@ const SHORTCUTS: Record<Menu, { title: string; items: Shortcut[] }> = {
     items: [
       { label: 'Speak a note', hint: 'Starts listening straight away', icon: 'mic-outline', to: { pathname: '/', params: { start: 'voice' } } },
       { label: 'Type a note', hint: 'Opens the keyboard on the note box', icon: 'create-outline', to: { pathname: '/', params: { start: 'type' } } },
+      { label: 'Write a plain note', hint: 'Just keep it, with a category', icon: 'document-text-outline', to: { pathname: '/notes', params: { new: '1' } } },
       { label: 'Timeline', hint: 'Everything you have recorded, by day', icon: 'list-outline', to: '/timeline' },
     ],
   },
@@ -39,6 +40,7 @@ const SHORTCUTS: Record<Menu, { title: string; items: Shortcut[] }> = {
       { label: 'Add an expense', icon: 'remove-circle-outline', to: '/expense/expense' },
       { label: 'Scan a receipt', hint: 'Photograph a bill and fill it in for you', icon: 'camera-outline', to: { pathname: '/expense/expense', params: { scan: '1' } } },
       { label: 'Add income', icon: 'add-circle-outline', to: '/expense/income' },
+      { label: 'ATM withdrawal', hint: 'Bank to cash, no spending', icon: 'cash-outline', to: { pathname: '/expense/net-worth', params: { atm: '1' } } },
       { label: 'History', icon: 'receipt-outline', to: '/expense-history' },
     ],
   },

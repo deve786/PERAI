@@ -10,6 +10,126 @@ export interface ChangelogEntry {
 /** Newest first. Add a new entry here with every release that changes user-visible behaviour. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.41.1',
+    build: 190,
+    type: 'ota',
+    date: '2026-11-03',
+    time: '12:10 PM',
+    highlights: [
+      'Borrow and lend: show all saved people',
+    ],
+  },
+  {
+    version: '1.41.0',
+    build: 189,
+    type: 'ota',
+    date: '2026-11-02',
+    time: '03:52 PM',
+    highlights: [
+      'Record: choose date and priority before saving',
+    ],
+  },
+  {
+    version: '1.40.1',
+    build: 188,
+    type: 'ota',
+    date: '2026-11-02',
+    time: '03:43 PM',
+    highlights: [
+      'Date and priority now on the add screen',
+    ],
+  },
+  {
+    version: '1.40.0',
+    build: 187,
+    type: 'ota',
+    date: '2026-11-02',
+    time: '03:35 AM',
+    highlights: [
+      'Loans: enter the amount actually returned or paid back',
+    ],
+  },
+  {
+    version: '1.39.1',
+    build: 186,
+    type: 'ota',
+    date: '2026-11-01',
+    time: '11:53 AM',
+    highlights: [
+      'Notes: add many dates to one note (e.g. every haircut)',
+    ],
+  },
+  {
+    version: '1.39.0',
+    build: 185,
+    type: 'ota',
+    date: '2026-11-01',
+    time: '11:47 AM',
+    highlights: [
+      'Notes: date, optional description, AI category from title',
+    ],
+  },
+  {
+    version: '1.38.1',
+    build: 184,
+    type: 'ota',
+    date: '2026-11-01',
+    time: '11:43 AM',
+    highlights: [
+      'Split into items: keep the grand total fixed option',
+    ],
+  },
+  {
+    version: '1.38.0',
+    build: 183,
+    type: 'ota',
+    date: '2026-11-01',
+    time: '11:39 AM',
+    highlights: [
+      'Notes: keep plain notes with your own categories',
+    ],
+  },
+  {
+    version: '1.37.0',
+    build: 182,
+    type: 'ota',
+    date: '2026-10-30',
+    time: '12:01 AM',
+    highlights: [
+      'ATM withdrawal: take cash out of a bank into your wallet',
+    ],
+  },
+  {
+    version: '1.36.1',
+    build: 181,
+    type: 'ota',
+    date: '2026-10-29',
+    time: '10:00 AM',
+    highlights: [
+      'Fix cloud backup stuck on sample bills (invalid uuid error)',
+    ],
+  },
+  {
+    version: '1.36.0',
+    build: 180,
+    type: 'ota',
+    date: '2026-10-29',
+    time: '06:09 AM',
+    highlights: [
+      'Loans: pay with Cash/UPI/Card/Bank, pick the bank, balances move',
+    ],
+  },
+  {
+    version: '1.35.0',
+    build: 179,
+    type: 'ota',
+    date: '2026-10-29',
+    time: '05:47 AM',
+    highlights: [
+      'Split into items under the amount, weight per item; sample data removal also removes places and people, deletes for real',
+    ],
+  },
+  {
     version: '1.34.0',
     build: 178,
     type: 'ota',

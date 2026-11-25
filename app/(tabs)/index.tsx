@@ -1,6 +1,7 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -13,6 +14,7 @@ import {
 } from 'react-native';
 import { describeError, hasApiKey } from '@/ai/client';
 import { ComposeButton, type ComposeMode } from '@/components/ComposeButton';
+import { Chip } from '@/components/Chip';
 import { MemoryRow } from '@/components/MemoryRow';
 import { SwipeableMemoryRow } from '@/components/SwipeableMemoryRow';
 import { EntrySheet } from '@/components/EntrySheet';
@@ -23,6 +25,8 @@ import { deleteMemories, queueNote } from '@/db/queries';
 import { deleteExpense } from '@/expense/db';
 import { setPendingDrafts } from '@/draftStore';
 import { fileNote } from '@/fileNote';
+import { isSameDay } from '@/draftWhen';
+import { fullDateLabel } from '@/format';
 import { LISTS } from '@/lists';
 import { logFail, logOk } from '@/log';
 import { usePendingNotes } from '@/usePendingNotes';
@@ -33,7 +37,7 @@ import { isStruck, sinkStruck } from '@/strike';
 import { useTheme } from '@/ThemeContext';
 import { FONTS, RADIUS, SPACE, type Colors } from '@/theme';
 import { Empty, IconTile, PillButton, Screen } from '@/expense/ui';
-import type { Memory, MemoryDraft, MemoryType } from '@/types';
+import { PRIORITIES, type Memory, type MemoryDraft, type MemoryType, type Priority } from '@/types';
 import { useMemories } from '@/useMemories';
 import { knownPeople } from '@/speechText';
 import { useVoiceInput } from '@/useVoiceInput';
@@ -49,6 +53,12 @@ interface Saved {
   changed: { from: string; to: string }[];
   /** Linked expense IDs in Expense database */
   expenseIds?: string[];
+}
+
+function tomorrow(): Date {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  return d;
 }
 
 function toDraft({ id, createdAt, confirmed, rawInput, ...draft }: Memory): MemoryDraft {
@@ -80,6 +90,21 @@ export default function CaptureScreen() {
   /** The new-group field, opened on request so it is never in the way. */
   const [makingGroup, setMakingGroup] = useState(false);
   const [saved, setSaved] = useState<Saved | null>(null);
+  // A date and priority set before saving. Left alone, the AI works them out
+  // from the note. Kept in a ref too: a spoken note is saved from a callback
+  // made before the choice was changed.
+  const [day, setDay] = useState<Date | null>(null);
+  const [priority, setPriority] = useState<Priority | null>(null);
+  const [pickingDay, setPickingDay] = useState(false);
+  const choices = useRef<{ day: Date | null; priority: Priority | null }>({ day: null, priority: null });
+  const chooseDay = (next: Date | null) => {
+    choices.current.day = next;
+    setDay(next);
+  };
+  const choosePriority = (next: Priority | null) => {
+    choices.current.priority = next;
+    setPriority(next);
+  };
 
   const configured = hasApiKey();
 
@@ -107,7 +132,7 @@ export default function CaptureScreen() {
     setSaved(null);
     const started = Date.now();
     try {
-      const kept = await fileNote(note, { people, listTitles });
+      const kept = await fileNote(note, { people, listTitles, choices: choices.current });
 
       // Ask for notification permission here, the first time it matters —
       // right after saving something that is meant to remind you.
@@ -120,6 +145,9 @@ export default function CaptureScreen() {
       const expenseIds = kept.map((m) => m.expenseId).filter((id): id is string => Boolean(id));
 
       setText('');
+      chooseDay(null);
+      choosePriority(null);
+      setPickingDay(false);
       setSaved({
         rawInput: note,
         memories: kept,
@@ -321,6 +349,56 @@ export default function CaptureScreen() {
               editable={voice.stage === 'idle' && !saving}
               accessibilityLabel="Your note"
             />
+
+            {/* Optional: left alone, the date and priority are worked out from
+                what you write. Set here, they are used for everything saved. */}
+            <View style={styles.options}>
+              <View style={styles.optionRow}>
+                <Text style={styles.optionLabel}>Date</Text>
+                <Chip label="Today" selected={day !== null && isSameDay(day.toISOString(), new Date())} onPress={() => chooseDay(day !== null && isSameDay(day.toISOString(), new Date()) ? null : new Date())} />
+                <Chip
+                  label="Tomorrow"
+                  selected={day !== null && isSameDay(day.toISOString(), tomorrow())}
+                  onPress={() => chooseDay(day !== null && isSameDay(day.toISOString(), tomorrow()) ? null : tomorrow())}
+                />
+                <Chip
+                  label={day !== null && !isSameDay(day.toISOString(), new Date()) && !isSameDay(day.toISOString(), tomorrow()) ? fullDateLabel(day.toISOString()) : 'Pick a date'}
+                  selected={day !== null && !isSameDay(day.toISOString(), new Date()) && !isSameDay(day.toISOString(), tomorrow())}
+                  onPress={() => setPickingDay((p) => !p)}
+                />
+              </View>
+              {pickingDay ? (
+                <DateTimePicker
+                  value={day ?? new Date()}
+                  mode="date"
+                  display={Platform.OS === 'ios' ? 'inline' : 'default'}
+                  accentColor={colors.moss}
+                  onChange={(event, picked) => {
+                    if (Platform.OS !== 'ios') setPickingDay(false);
+                    if (picked && event.type !== 'dismissed') chooseDay(picked);
+                  }}
+                />
+              ) : null}
+              <View style={styles.optionRow}>
+                <Text style={styles.optionLabel}>Priority</Text>
+                {PRIORITIES.map((p) => (
+                  <Chip key={p} label={p} selected={priority === p} onPress={() => choosePriority(priority === p ? null : p)} />
+                ))}
+              </View>
+              {day !== null || priority !== null ? (
+                <Pressable
+                  onPress={() => {
+                    chooseDay(null);
+                    choosePriority(null);
+                    setPickingDay(false);
+                  }}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                >
+                  <Text style={styles.link}>Let the app decide</Text>
+                </Pressable>
+              ) : null}
+            </View>
 
             <View style={styles.foot}>
               <ComposeButton
@@ -644,6 +722,9 @@ function makeStyles(colors: Colors) {
       textAlignVertical: 'top',
       padding: 0,
     },
+    options: { gap: 6 },
+    optionRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center' },
+    optionLabel: { fontFamily: FONTS.sansSemi, fontSize: 13, color: colors.graphite, width: 62 },
     foot: { flexDirection: 'row', alignItems: 'center', gap: 12 },
     statusCol: { flex: 1, minHeight: 56, justifyContent: 'center', overflow: 'hidden' },
     wave: { alignItems: 'flex-start' },

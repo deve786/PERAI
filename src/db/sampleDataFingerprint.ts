@@ -85,6 +85,18 @@ export const SAMPLE_DOCUMENTS: { id: string; filename: string }[] = [
   { id: 'doc-portfolio-q3', filename: 'Q3 Financial Portfolio Summary.pdf' },
 ];
 
+/**
+ * The places and people the seeder saved as chips for the expense and income
+ * forms (each sample expense carries a place, one a person, and each sample
+ * loan its person). Names only: a chip is removed only if no entry of yours
+ * still uses that name.
+ */
+export const SAMPLE_PLACES: string[] = [
+  'Swiggy', 'Blue Tokai Cafe', "Nature's Basket", 'Uber', 'Barbeque Nation', 'Shell Petrol Pump',
+  'Apollo Pharmacy', 'Zara', 'Airtel Fiber', 'Cult.fit', 'PVR Cinemas',
+];
+export const SAMPLE_PEOPLE: string[] = ['Rahul', 'Priya', 'Sarah', 'Amit'];
+
 export const SAMPLE_WEBSITE = { id: 'web-1', url: 'https://lakshadweeptourism.gov.in/voyages' };
 export const SAMPLE_TELEGRAM_CHANNEL = { id: 'tg-1', username: '@lakshadweep_ship_updates' };
 export const SAMPLE_TELEGRAM_MESSAGE_ID = 'tgm-1';

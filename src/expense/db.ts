@@ -48,7 +48,18 @@ export type Expense = {
   reimburse_income_id?: string | null;
 };
 export type ExpenseRow = Expense & { cat_name: string; cat_icon: string; cat_color: string; item_count: number };
-export type ExpenseItem = { id: string; expense_id: string; name: string; quantity: number; amount: number };
+export type ExpenseItem = {
+  id: string;
+  expense_id: string;
+  name: string;
+  /** How many packs/pieces — the price below is for ONE of them. */
+  quantity: number;
+  amount: number;
+  /** Size of one pack (1 for "1 kg"). Null when no size was given. */
+  weight?: number | null;
+  /** kg, g, L, ml or pcs; empty when no size was given. */
+  unit?: string;
+};
 export type Recurring = {
   id: string;
   amount: number;
@@ -426,6 +437,9 @@ async function init() {
   await addColumnIfMissing(db, 'expenses', 'reimburse_account_id', 'TEXT');
   await addColumnIfMissing(db, 'expenses', 'reimburse_income_id', 'TEXT');
   await addColumnIfMissing(db, 'expense_items', 'quantity', "REAL NOT NULL DEFAULT 1");
+  // Size of one pack ("1" + "kg"). Kept on this phone only: not in the synced columns.
+  await addColumnIfMissing(db, 'expense_items', 'weight', 'REAL');
+  await addColumnIfMissing(db, 'expense_items', 'unit', "TEXT NOT NULL DEFAULT ''");
   // Null means no budget, which is how every existing category starts.
   await addColumnIfMissing(db, 'categories', 'monthly_budget', 'REAL');
   // Stocks: money put in (profit = value − this), and where it was paid from.
@@ -1039,14 +1053,17 @@ export async function listExpenseItems(expenseId: string) {
 }
 
 /** Replaces the full item list for an expense — simplest correct behaviour for a small, user-edited list. */
-export async function saveExpenseItems(expenseId: string, items: { name: string; quantity: number; amount: number }[]) {
+export async function saveExpenseItems(
+  expenseId: string,
+  items: { name: string; quantity: number; amount: number; weight?: number | null; unit?: string }[]
+) {
   const db = await getDb();
   const now = nowIso();
   await db.runAsync('UPDATE expense_items SET deleted = 1, updated_at = ?, dirty = 1 WHERE expense_id = ? AND deleted = 0', now, expenseId);
   for (const it of items) {
     await db.runAsync(
-      'INSERT INTO expense_items (id, expense_id, name, quantity, amount, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
-      uuid(), expenseId, it.name.trim(), it.quantity, it.amount, now
+      'INSERT INTO expense_items (id, expense_id, name, quantity, amount, weight, unit, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      uuid(), expenseId, it.name.trim(), it.quantity, it.amount, it.weight && it.weight > 0 ? it.weight : null, it.weight && it.weight > 0 ? it.unit ?? '' : '', now
     );
   }
 }

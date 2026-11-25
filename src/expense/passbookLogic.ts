@@ -22,6 +22,8 @@ export interface PassbookEntry {
   place?: string;
   updatedAt?: string;
   runningBalance?: number;
+  /** Money moved between your own accounts (e.g. an ATM withdrawal): shown, but not counted as in or out, and it leaves the total unchanged. */
+  neutral?: boolean;
 }
 
 export interface PassbookSummary {
@@ -53,6 +55,7 @@ export function computePassbookSummary(entries: PassbookEntry[]): PassbookSummar
   let totalOut = 0;
 
   for (const entry of entries) {
+    if (entry.neutral) continue;
     if (entry.type === 'in') {
       totalIn += entry.amount;
     } else {
@@ -71,6 +74,7 @@ export function computePassbookSummary(entries: PassbookEntry[]): PassbookSummar
 
 export function sourceBadge(entry: PassbookEntry): { label: string; isSource: boolean } {
   const name = entry.accountName || entry.method || 'Unassigned';
+  if (entry.neutral) return { label: 'Moved between your accounts', isSource: false };
   if (entry.type === 'out') {
     return { label: `From ${name}`, isSource: true };
   }
@@ -96,6 +100,7 @@ export function groupPassbookByDate(entries: PassbookEntry[]): DayPassbookGroup[
     let dayOut = 0;
 
     for (const it of items) {
+      if (it.neutral) continue;
       if (it.type === 'in') {
         dayIn += it.amount;
       } else {
@@ -129,7 +134,9 @@ export function attachRunningBalances(
   return entries.map((entry) => {
     const bal = Math.round(rolling * 100) / 100;
     const delta = entry.amount;
-    if (entry.type === 'in') {
+    if (entry.neutral) {
+      // The total did not change.
+    } else if (entry.type === 'in') {
       rolling = Math.round((rolling - delta) * 100) / 100;
     } else {
       rolling = Math.round((rolling + delta) * 100) / 100;

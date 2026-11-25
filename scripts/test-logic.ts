@@ -4,6 +4,12 @@
  *
  *   npm run test:logic
  */
+import { transferDeltas, transferEntries, withdrawalProblem } from '../src/expense/transferLogic';
+import { addNoteDate, parseDates, removeNoteDate, summariseDates, guessSource, readCategoryGuess, isBlankNote, noteCategories, notePreview, noteTitle, visibleNotes, type Note } from '../src/notesLogic';
+import { splitBalance, splitTotal, wasTotalFixed } from '../src/expense/splitLogic';
+import { applyChoices, isSameDay, withDay } from '../src/draftWhen';
+import { matchPeople } from '../src/expense/peopleMatch';
+import { isCloudId } from '../src/expense/sync/cloudId';
 import {
   guessDateRange,
   selectRelevantMemories,
@@ -58,6 +64,8 @@ import {
   SAMPLE_INCOME,
   SAMPLE_LOANS,
   SAMPLE_MEMORIES,
+  SAMPLE_PEOPLE,
+  SAMPLE_PLACES,
   SAMPLE_RECURRING,
   SAMPLE_TELEGRAM_CHANNEL,
   SAMPLE_TELEGRAM_MESSAGE_ID,
@@ -104,6 +112,8 @@ import {
 import { tripSpendQuestion } from '../src/tripQuestion';
 import { stockGain } from '../src/expense/accountsLogic';
 import { toSentence } from '../src/format';
+import { loanBalanceDelta, outstandingOf, planRepayment } from '../src/expense/loanLogic';
+import { itemSizeText, pricePerUnitText, sizeLabel } from '../src/expense/itemSize';
 import { refundReminderTimes } from '../src/expense/refundSchedule';
 import { monthsWithData, OVERALL, periodLabel, periodRange, previousMonth } from '../src/expense/period';
 import { stitchChunkContents, groupAndStitchDocumentChunks, verifyItemGrounding } from '../src/sources/chunkLogic';
@@ -471,6 +481,9 @@ section('sample data can be recognised exactly');
     );
   }
 
+  for (const name of SAMPLE_PLACES) check(`place "${name}" matches the seeder`, has(name));
+  for (const name of SAMPLE_PEOPLE) check(`person ${name} matches the seeder`, has(name));
+
   // The other direction: nothing the seeder writes is missed.
   const seededExpenses = (seed.match(/await saveExpense\(/g) ?? []).length;
   check('every seeded expense is fingerprinted', seededExpenses === SAMPLE_EXPENSES.length, `${seededExpenses} seeded`);
@@ -484,6 +497,10 @@ section('sample data can be recognised exactly');
   check('every seeded account is fingerprinted', seededAccounts === SAMPLE_ACCOUNTS.length, `${seededAccounts} seeded`);
   const seededBills = (seed.match(/INSERT OR REPLACE INTO recurring/g) ?? []).length;
   check('every seeded bill is fingerprinted', seededBills === SAMPLE_RECURRING.length, `${seededBills} seeded`);
+  const seededPlaces = (seed.match(/^\s*place: /gm) ?? []).length;
+  check('every seeded place is fingerprinted', seededPlaces === SAMPLE_PLACES.length, `${seededPlaces} seeded`);
+  const seededTags = [...seed.matchAll(/^\s*user_tag: '([^']+)'/gm)].map((m) => m[1]);
+  check('every seeded person is fingerprinted', seededTags.every((n) => SAMPLE_PEOPLE.includes(n)), seededTags.join(','));
   const seededBudgets = (seed.match(/SET monthly_budget = \?/g) ?? []).length;
   check('every seeded budget is fingerprinted', seededBudgets === SAMPLE_BUDGETS.length, `${seededBudgets} seeded`);
 }
@@ -2646,6 +2663,157 @@ section('passbook and net worth transaction history');
   check('attaches current balance to latest entry', withBalances[0].runningBalance === 100000);
   check('rolls backwards correctly across expense', withBalances[1].runningBalance === 50000);
   check('rolls backwards correctly to oldest entry', withBalances[2].runningBalance === 55269);
+}
+
+section('item size (weight)');
+{
+  check('one pack reads plainly', itemSizeText(1, 1, 'kg') === '1 kg');
+  check('2 packets of 1 kg', itemSizeText(2, 1, 'kg') === '2 × 1 kg = 2 kg');
+  check('grams roll up to kg', itemSizeText(3, 500, 'g') === '3 × 500 g = 1.5 kg');
+  check('grams stay grams when small', itemSizeText(2, 100, 'g') === '2 × 100 g = 200 g');
+  check('ml roll up to litres', itemSizeText(4, 250, 'ml') === '4 × 250 ml = 1 L');
+  check('no size, no text', itemSizeText(2, null, 'kg') === '' && itemSizeText(2, 1, '') === '');
+  check('unknown unit is ignored', sizeLabel(1, 'stone') === '');
+  check('price per kg from a 1 kg pack', pricePerUnitText(450, 1, 'kg') === '₹450 per kg');
+  check('price per kg from 250 g', pricePerUnitText(60, 250, 'g') === '₹240 per kg');
+  check('price per litre from 500 ml', pricePerUnitText(40, 500, 'ml') === '₹80 per L');
+  check('no price per unit without a size', pricePerUnitText(60, null, 'g') === '');
+}
+
+section('loans move account balances');
+{
+  check('lending takes money out of the account', loanBalanceDelta('lent', 1000) === -1000);
+  check('borrowing puts money into the account', loanBalanceDelta('borrowed', 1000) === 1000);
+  check('a request moves nothing', loanBalanceDelta('request', 1000) === 0);
+  // lend 1000, change it to 1500: the account ends 500 lower than before the edit
+  check('editing the amount nets out', loanBalanceDelta('lent', 1500) - loanBalanceDelta('lent', 1000) === -500);
+  check('what is still owed is the amount less what was paid back', outstandingOf(1000, 400) === 600);
+  check('never negative', outstandingOf(1000, 1500) === 0);
+  check('nothing paid back yet', outstandingOf(800, null) === 800);
+}
+
+section('ids the backup can hold');
+{
+  check('a real uuid can be backed up', isCloudId('3f2b8c1e-9d4a-4e6b-8a1c-0b5d7e9f1a2c'));
+  check('sample data ids stay on the phone', !isCloudId('rec-netflix'));
+  check('empty and missing ids are not backed up', !isCloudId('') && !isCloudId(null));
+}
+
+section('ATM withdrawal');
+{
+  const d = transferDeltas(2000);
+  check('the bank loses what the wallet gains', d.from === -2000 && d.to === 2000);
+  check('the total you own does not change', d.from + d.to === 0);
+  check('an amount is needed', withdrawalProblem({ amount: 0, fromBalance: 5000 }) !== null);
+  check('more than the balance is flagged', withdrawalProblem({ amount: 6000, fromBalance: 5000 }) !== null);
+  check('a normal withdrawal is fine', withdrawalProblem({ amount: 1000, fromBalance: 5000 }) === null);
+  const t = { id: 't1', date: '2026-10-29', from_account_id: 'b', to_account_id: 'w', amount: 1500, note: '', created_at: '2026-10-29T10:00:00Z' };
+  const names = (id: string) => (id === 'b' ? { name: 'Savings', institution: 'HDFC' } : { name: 'Cash in hand' });
+  const bankView = transferEntries([t], names, 'b');
+  const cashView = transferEntries([t], names, 'w');
+  const allView = transferEntries([t], names, null);
+  check('the bank statement shows it going out', bankView.length === 1 && bankView[0].type === 'out' && !bankView[0].neutral);
+  check('the wallet statement shows it coming in', cashView.length === 1 && cashView[0].type === 'in');
+  check('another account does not see it', transferEntries([t], names, 'x').length === 0);
+  check('all accounts shows one neutral row', allView.length === 1 && allView[0].neutral === true);
+  const sum = computePassbookSummary(allView);
+  check('a neutral row counts as neither in nor out', sum.totalIn === 0 && sum.totalOut === 0);
+  check('and leaves the running total alone', attachRunningBalances(allView, 9000)[0].runningBalance === 9000);
+}
+
+section('plain notes');
+{
+  const mk = (id: string, title: string, body: string, category: string, pinned: number, at: string): Note =>
+    ({ id, title, body, category, pinned, note_date: at.slice(0, 10), dates: at.slice(0, 10), created_at: at, updated_at: at });
+  const notes = [
+    mk('1', 'Wi-Fi', 'password is on the fridge', 'Personal', 0, '2026-10-01T10:00:00Z'),
+    mk('2', '', 'Gift ideas\nwatch\nbook', 'Ideas', 0, '2026-10-05T10:00:00Z'),
+    mk('3', 'Standup', 'ask about release', 'work', 1, '2026-09-01T10:00:00Z'),
+    mk('4', 'Recipe', 'dosa batter', 'Personal', 0, '2026-10-03T10:00:00Z'),
+  ];
+  check('title falls back to the first line', noteTitle(notes[1]) === 'Gift ideas');
+  check('preview skips a first line used as the title', notePreview(notes[1]) === 'watch · book');
+  check('preview keeps the body when there is a title', notePreview(notes[0]) === 'password is on the fridge');
+  check('pinned first, then newest', visibleNotes(notes, {}).map((n) => n.id).join() === '3,2,4,1');
+  check('category filter ignores case', visibleNotes(notes, { category: 'Work' }).length === 1);
+  check('search matches title, text and category', visibleNotes(notes, { query: 'dosa' }).length === 1 && visibleNotes(notes, { query: 'fridge wi-fi' }).length === 1 && visibleNotes(notes, { query: 'ideas' }).length === 1);
+  const cats = noteCategories(notes);
+  check('used categories first, most used first', cats[0].name === 'Personal' && cats[0].count === 2);
+  check('work and Work are one category', cats.filter((x) => x.name.toLowerCase() === 'work').length === 1);
+  check('unused defaults are still offered', cats.some((x) => x.name === 'Health' && x.count === 0));
+  check('your own category is offered', noteCategories([{ category: 'Recipes' }]).some((x) => x.name === 'Recipes'));
+  check('the note date, not the edit time, orders the list', visibleNotes([mk('a', 'old', '', 'x', 0, '2026-01-01T10:00:00Z'), { ...mk('b', 'new', '', 'x', 0, '2026-02-01T10:00:00Z'), updated_at: '2025-01-01T00:00:00Z' }], {}).map((n) => n.id).join() === 'b,a');
+  const names = ['Personal', 'Work'];
+  check('a guess matching your category uses it, whatever the case', JSON.stringify(readCategoryGuess('work', names)) === '{"kind":"existing","name":"Work"}');
+  check('a guess you do not have is offered as new', JSON.stringify(readCategoryGuess('"Travel."', names)) === '{"kind":"new","name":"Travel"}');
+  check('Other, empty and too-long guesses are ignored', readCategoryGuess('Other', names) === null && readCategoryGuess('', names) === null && readCategoryGuess(null, names) === null && readCategoryGuess('x'.repeat(40), names) === null);
+  check('guessed from the title, else the first line', guessSource({ title: ' Dentist ', body: 'x' }) === 'Dentist' && guessSource({ title: '', body: '\n  Buy milk\nmore' }) === 'Buy milk');
+  check('a title alone, with no description, is a note', !isBlankNote({ title: 'Dentist visit', body: '' }));
+  check('dates are kept once each, newest first', parseDates('2026-09-01, 2026-10-01,2026-09-01,junk').join() === '2026-10-01,2026-09-01');
+  check('adding a day already there changes nothing', addNoteDate(['2026-10-01'], '2026-10-01').length === 1);
+  check('adding puts it in order', addNoteDate(['2026-10-01', '2026-08-01'], '2026-09-01').join() === '2026-10-01,2026-09-01,2026-08-01');
+  check('removing takes one day out', removeNoteDate(['2026-10-01', '2026-09-01'], '2026-10-01').join() === '2026-09-01');
+  const cuts = summariseDates(['2026-08-01', '2026-09-01', '2026-10-01'], '2026-10-11');
+  check('how many times and the last one', cuts.count === 3 && cuts.last === '2026-10-01');
+  check('days since the last one', cuts.daysSince === 10);
+  check('about how often: 61 days over 2 gaps', cuts.everyDays === 31);
+  check('one day has no pattern yet', summariseDates(['2026-10-01'], '2026-10-11').everyDays === null);
+  check('no days at all', summariseDates([], '2026-10-11').count === 0);
+  check('an empty note is blank', isBlankNote({ title: ' ', body: '\n' }) && !isBlankNote({ title: '', body: 'x' }));
+}
+
+section('split items: fixed grand total');
+{
+  check('open: the total is what the items add up to', splitTotal({ fixed: false, typed: 500, itemsSum: 650 }) === 650);
+  check('fixed: the typed total stays whatever the items come to', splitTotal({ fixed: true, typed: 500, itemsSum: 650 }) === 500);
+  check('fixed: raising a quantity does not move it', splitTotal({ fixed: true, typed: 500, itemsSum: 900 }) === 500);
+  check('nothing typed gives 0, not NaN', splitTotal({ fixed: true, typed: NaN, itemsSum: 10 }) === 0);
+  check('items under the total leave the rest not itemised', splitBalance(500, 350).left === 150 && splitBalance(500, 350).over === 0);
+  check('items over the total say by how much', splitBalance(500, 650).over === 150 && splitBalance(500, 650).left === 0);
+  check('equal items leave nothing', splitBalance(500, 500).left === 0 && splitBalance(500, 500).over === 0);
+  check('reopened: items that match the total are not fixed', !wasTotalFixed(500, 500, 3));
+  check('reopened: items that differ from the total were fixed', wasTotalFixed(520, 500, 3));
+  check('reopened: no items is not fixed', !wasTotalFixed(520, 0, 0));
+}
+
+section('repaying a different amount');
+{
+  const full = planRepayment({ amount: 1000, settled: 0, returned: 1000 });
+  check('the exact amount closes the loan', full.closed && full.extra === 0 && full.remaining === 0);
+  const more = planRepayment({ amount: 1000, settled: 0, returned: 1100 });
+  check('more than lent closes it, and the extra is noted', more.closed && more.extra === 100 && more.settledAmount === 1000);
+  const part = planRepayment({ amount: 1000, settled: 0, returned: 600 });
+  check('less leaves the rest owed', !part.closed && part.remaining === 400 && part.settledAmount === 600);
+  const off = planRepayment({ amount: 1000, settled: 0, returned: 900, writeOffRest: true });
+  check('less can close the loan, letting the rest go', off.closed && off.shortfall === 100 && off.remaining === 0);
+  const second = planRepayment({ amount: 1000, settled: 600, returned: 400 });
+  check('a second part payment finishes it', second.closed && second.extra === 0);
+  const over = planRepayment({ amount: 1000, settled: 600, returned: 500 });
+  check('extra is measured against what was left', over.closed && over.extra === 100);
+  check('what is outstanding after a part payment', outstandingOf(1000, 600) === 400);
+}
+
+section('choosing a day for a new note');
+{
+  const when = new Date(2026, 9, 5, 20, 30).toISOString();
+  const moved = new Date(withDay(when, new Date(2026, 10, 2)));
+  check('the day changes', moved.getFullYear() === 2026 && moved.getMonth() === 10 && moved.getDate() === 2);
+  check('the time of day is kept', moved.getHours() === 20 && moved.getMinutes() === 30);
+  const draft = { eventDate: new Date(2026, 9, 5, 20, 30).toISOString(), priority: null as 'low' | 'medium' | 'high' | null };
+  const chosen = applyChoices(draft, { day: new Date(2026, 10, 3), priority: 'high' });
+  check('a chosen day replaces the guessed one, keeping the time', new Date(chosen.eventDate).getDate() === 3 && new Date(chosen.eventDate).getHours() === 20);
+  check('a chosen priority is used', chosen.priority === 'high');
+  check('nothing chosen leaves the draft alone', applyChoices(draft, { day: null, priority: null }) === draft && applyChoices(draft, undefined) === draft);
+  check('same day is recognised', isSameDay(when, new Date(2026, 9, 5, 1, 0)) && !isSameDay(when, new Date(2026, 9, 6)));
+}
+
+section('saved people under the person box');
+{
+  const people = ['Anas', 'Rahul', 'Rahim', 'Sarah', 'Uncle', 'Aunt', 'Dev', 'Mohan'].map((name, i) => ({ id: String(i), name }));
+  check('all of them show while the box is empty, not only the first few', matchPeople(people, '').length === 8 && matchPeople(people, '  ').length === 8);
+  check('typing narrows to names containing it, any case', matchPeople(people, 'RA').map((p) => p.name).join() === 'Rahul,Rahim,Sarah');
+  check('a full name keeps that person', matchPeople(people, 'Sarah').length === 1);
+  check('no match shows none', matchPeople(people, 'zzz').length === 0);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

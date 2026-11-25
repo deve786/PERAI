@@ -19,6 +19,7 @@ import {
   type BorrowLendType,
 } from '@/expense/borrowLendDb';
 import { listAccounts, type AccountItem } from '@/expense/accountsDb';
+import { RepayModal } from '@/components/RepayModal';
 import { BorrowLendModal } from '@/components/BorrowLendModal';
 import { todayStr, prettyDate } from '@/expense/dates';
 import { fmtMoney } from '@/expense/stats';
@@ -56,6 +57,7 @@ export default function BorrowLendScreen() {
   const [selectedItem, setSelectedItem] = useState<BorrowLendItem | null>(null);
   const [newType, setNewType] = useState<BorrowLendType>('lent');
   const [bankAccounts, setBankAccounts] = useState<AccountItem[]>([]);
+  const [repaying, setRepaying] = useState<BorrowLendItem | null>(null);
 
   const today = todayStr();
 
@@ -64,11 +66,12 @@ export default function BorrowLendScreen() {
       const [list, sumData, accounts] = await Promise.all([
         listBorrowLend(),
         getBorrowLendSummary(),
-        listAccounts({ type: 'bank' }),
+        listAccounts(),
       ]);
       setItems(list);
       setSummary(sumData);
-      setBankAccounts(accounts);
+      // Repayments can go to or come from a bank or a cash account.
+      setBankAccounts(accounts.filter((a) => a.type === 'bank' || a.type === 'cash'));
     } catch (err) {
       console.warn('Could not load borrow/lend data:', err);
     }
@@ -97,7 +100,7 @@ export default function BorrowLendScreen() {
       await settleBorrowLend(item.id, {
         recordAsIncome: item.type === 'lent',
         recordAsExpense: item.type === 'borrowed',
-        method: accountId ? 'UPI' : 'Cash',
+        method: accountId && bankAccounts.find((a) => a.id === accountId)?.type !== 'cash' ? 'UPI' : 'Cash',
         accountId,
       });
       void loadData();
@@ -110,13 +113,16 @@ export default function BorrowLendScreen() {
       settleWithAccount(item, null);
       return;
     }
+    // The account the loan was made with comes first: that is where a
+    // repayment usually goes back to, or comes from.
+    const ordered = [...bankAccounts].sort((a, b) => Number(b.id === item.account_id) - Number(a.id === item.account_id));
     showDialog({
-      title: item.type === 'lent' ? 'Which bank did it land in?' : 'Which bank did you pay it from?',
+      title: item.type === 'lent' ? 'Where did it land?' : 'Where did you pay it from?',
       actions: [
         { label: 'Cancel', cancel: true },
-        { label: 'Not through a bank', onPress: () => settleWithAccount(item, null) },
-        ...bankAccounts.map((a) => ({
-          label: a.institution ? `${a.name} · ${a.institution}` : a.name,
+        { label: 'Not through an account', onPress: () => settleWithAccount(item, null) },
+        ...ordered.map((a) => ({
+          label: `${a.institution || a.name}${a.id === item.account_id ? ' (same as the loan)' : ''}`,
           onPress: () => settleWithAccount(item, a.id),
         })),
       ],
@@ -125,11 +131,14 @@ export default function BorrowLendScreen() {
 
   const handleSettle = (item: BorrowLendItem) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-    const verb = item.type === 'lent' ? 'returned to you' : 'paid back';
-
+    // Lent and borrowed money can come back as a different amount, so ask how much.
+    if (item.type !== 'request') {
+      setRepaying(item);
+      return;
+    }
     showDialog({
       title: 'Mark as settled?',
-      message: `Confirm that ₹${item.amount} was ${verb} by ${item.person_name}?`,
+      message: `Confirm that ₹${item.amount} was fulfilled for ${item.person_name}?`,
       actions: [
         { label: 'Cancel', cancel: true },
         {
@@ -141,10 +150,7 @@ export default function BorrowLendScreen() {
             })();
           },
         },
-        {
-          label: item.type === 'lent' ? 'Yes, record as income' : 'Yes, mark paid',
-          onPress: () => pickBankThenSettle(item),
-        },
+        { label: 'Yes, mark paid', onPress: () => pickBankThenSettle(item) },
       ],
     });
   };
@@ -261,7 +267,11 @@ export default function BorrowLendScreen() {
                   dueText = `${dateGivenStr} · Due ${prettyDate(item.due_date)}`;
                 }
               } else if (isSettled && item.settled_at) {
-                dueText = `${dateGivenStr} · Settled ${prettyDate(item.settled_at.slice(0, 10))}`;
+                const back = item.returned_amount ?? 0;
+                const backText = back > 0 && Math.abs(back - item.amount) > 0.005
+                  ? ` · ${isLent ? 'Got back' : 'Paid back'} ${fmtMoney(back, '₹')}`
+                  : '';
+                dueText = `${dateGivenStr} · Settled ${prettyDate(item.settled_at.slice(0, 10))}${backText}`;
               } else {
                 dueText = dateGivenStr;
               }
@@ -292,6 +302,11 @@ export default function BorrowLendScreen() {
                       <T size={13} style={{ color: isOverdue ? c.danger : c.sub }} weight={isOverdue ? '600' : '400'}>
                         {dueText}
                       </T>
+                      {!isSettled && item.settled_amount > 0 ? (
+                        <T size={13} sub>
+                          {fmtMoney(item.settled_amount, '₹')} of {fmtMoney(item.amount, '₹')} {isLent ? 'returned so far' : 'paid so far'}
+                        </T>
+                      ) : null}
                     </View>
 
                     <T
@@ -300,7 +315,7 @@ export default function BorrowLendScreen() {
                       tabular
                       style={[{ color: tone }, isSettled && { textDecorationLine: 'line-through' }]}
                     >
-                      {fmtMoney(item.amount, '₹')}
+                      {fmtMoney(!isSettled && item.settled_amount > 0 ? item.amount - item.settled_amount : item.amount, '₹')}
                     </T>
                   </Pressable>
 
@@ -328,6 +343,13 @@ export default function BorrowLendScreen() {
         )}
       </ScrollView>
 
+      <RepayModal
+        visible={repaying !== null}
+        item={repaying}
+        accounts={bankAccounts}
+        onClose={() => setRepaying(null)}
+        onDone={loadData}
+      />
       <BorrowLendModal
         visible={modalVisible}
         item={selectedItem}
