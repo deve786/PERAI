@@ -4,6 +4,8 @@ import { currentUserId, getSupabase, isConfigured } from './client';
 import { TABLES, type TableDef } from './tables';
 
 const LAST_SYNC_KEY = 'sync.lastAt';
+/** Set once this phone's expenses have been queued for the shared project. */
+const SHARED_MIGRATED_KEY = 'sync.sharedProject';
 const PUSH_BATCH = 200;
 const PULL_BATCH = 500;
 /** How long a deleted entry is kept around after the server has been told. */
@@ -48,6 +50,20 @@ export async function pendingCount(): Promise<number> {
 export async function lastSyncedAt(): Promise<string | null> {
   const v = await getSetting(LAST_SYNC_KEY, '');
   return v || null;
+}
+
+/**
+ * Expenses used to back up to their own Supabase project. Now that they share
+ * the app's project, whatever is on the phone has to be sent there once: mark
+ * every row as changed and forget where the old project's pull had got to.
+ */
+async function migrateToSharedProject(db: SQLite.SQLiteDatabase): Promise<void> {
+  if (await getSetting(SHARED_MIGRATED_KEY, '')) return;
+  for (const def of TABLES) {
+    await db.runAsync(`UPDATE ${def.name} SET dirty = 1`);
+    await setSetting(`sync.cursor.${def.name}`, '');
+  }
+  await setSetting(SHARED_MIGRATED_KEY, new Date().toISOString());
 }
 
 /** Send everything changed in this table since the last successful push. */
@@ -230,6 +246,7 @@ export function syncNow(): Promise<SyncOutcome | null> {
     if (!userId) return null;
 
     const db = await getDb();
+    await migrateToSharedProject(db);
     await reconcileNamedDuplicates(db, userId);
     let pushed = 0;
     for (const def of TABLES) pushed += await pushTable(db, userId, def);
