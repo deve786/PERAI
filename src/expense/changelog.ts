@@ -10,6 +10,16 @@ export interface ChangelogEntry {
 /** Newest first. Add a new entry here with every release that changes user-visible behaviour. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.41.2',
+    build: 191,
+    type: 'ota',
+    date: '2026-11-25',
+    time: '05:08 PM',
+    highlights: [
+      'expenses now back up to the main PERAI project; existing expenses upload once on first sync',
+    ],
+  },
+  {
     version: '1.41.1',
     build: 190,
     type: 'ota',
