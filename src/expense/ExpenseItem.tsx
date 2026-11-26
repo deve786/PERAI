@@ -51,6 +51,7 @@ export function ExpenseItem({ e, showDate = true, onDeleted, trip, last }: {
     e.user_tag ? `@${e.user_tag}` : null,
     e.reimburse_amount ? `Paid back ${fmtMoney(e.reimburse_amount, symbol)}` : null,
     e.refund_amount ? `Refunded ${fmtMoney(e.refund_amount, symbol)}` : null,
+    e.shop || null,
     e.place || null,
     e.method,
     showDate ? prettyDate(e.date) : null,

@@ -16,6 +16,7 @@ import {
 } from '@/expense/db';
 import { listAccounts, type AccountItem } from '@/expense/accountsDb';
 import { PlacePicker } from '@/expense/PlacePicker';
+import { ShopPicker } from '@/expense/ShopPicker';
 import { fromStr, monthName, prettyDate, toStr, todayStr } from '@/expense/dates';
 import { noteBudgetCrossing } from '@/expense/budgetAlerts';
 import { fmtMoney } from '@/expense/stats';
@@ -109,6 +110,7 @@ export default function ExpenseForm() {
   const [userTag, setUserTag] = useState('');
   const [place, setPlace] = useState('');
   const [placeDraft, setPlaceDraft] = useState('');
+  const [shop, setShop] = useState('');
   const [savedUsers, setSavedUsers] = useState<TaggedUser[]>([]);
   const [showNewUserInput, setShowNewUserInput] = useState(false);
   const [newUserName, setNewUserName] = useState('');
@@ -165,12 +167,13 @@ export default function ExpenseForm() {
           setRefundPeopleCount(e.refund_people_count != null ? String(e.refund_people_count) : '');
           if (e.user_tag) setUserTag(e.user_tag);
           if (e.place) setPlace(e.place);
+          if (e.shop) setShop(e.shop);
           if (e.sub_category) setSubCategory(e.sub_category);
           setReimbursed(e.reimbursed === 1);
           setReimburseAmount(e.reimburse_amount != null ? String(e.reimburse_amount) : '');
           setReimburseAccountId(e.reimburse_account_id ?? null);
           setReimburseSame(e.reimburse_amount != null ? e.reimburse_amount === e.amount : true);
-          if (e.place || e.user_tag || e.notes || e.sub_category || e.people_count != null || e.cancelled === 1 || e.reimbursed === 1) {
+          if (e.place || e.shop || e.user_tag || e.notes || e.sub_category || e.people_count != null || e.cancelled === 1 || e.reimbursed === 1) {
             setMoreOpen(true);
           }
         }
@@ -403,6 +406,7 @@ export default function ExpenseForm() {
       note: note.trim(), notes: notes.trim(), method,
       user_tag: finalUserTag,
       place: (place || placeDraft).trim(),
+      shop: shop.trim(),
       account_id: isBankLinkedMethod(method) ? accountId : null,
       people_count: isTicket && parseAmt(peopleCount) > 0 ? Math.round(parseAmt(peopleCount)) : null,
       sub_category: finalSubCategory,
@@ -607,6 +611,7 @@ export default function ExpenseForm() {
       { icon: 'calendar-outline', label: 'Date', value: longDate(date) },
       { icon: METHOD_ICONS[method] ?? 'wallet-outline', label: 'Paid with', value: isBankLinkedMethod(method) && bankName(accountId) ? `${method} · ${bankName(accountId)}` : method },
     ];
+    if (shop.trim()) details.push({ icon: 'storefront-outline', label: 'Shop', value: shop });
     if (place.trim()) details.push({ icon: 'location-outline', label: 'Place', value: place });
     if (userTag.trim()) details.push({ icon: 'person-outline', label: 'For', value: userTag });
     if (subCategory.trim()) details.push({ icon: 'ticket-outline', label: 'Ticket type', value: subCategory });
@@ -700,8 +705,8 @@ export default function ExpenseForm() {
   }
 
   const moreHint = isTicketCat
-    ? 'Ticket type, people, refund, place, person, notes'
-    : 'Place, person, notes';
+    ? 'Ticket type, people, refund, shop, place, person, notes'
+    : 'Shop, place, person, notes';
 
   return (
     <Screen edges={['top', 'bottom']}>
@@ -1117,6 +1122,7 @@ export default function ExpenseForm() {
                 </View>
               ) : null}
 
+              <ShopPicker value={shop} onChange={setShop} />
               <PlacePicker value={place} onChange={setPlace} onDraft={setPlaceDraft} />
 
               <Label style={{ marginTop: 20 }}>Person</Label>
