@@ -1206,3 +1206,28 @@ export async function setSetting(key: string, value: string) {
   const db = await getDb();
   await db.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', key, value);
 }
+
+/** Expenses with no shop yet whose note or notes contain `text` (any case). */
+export async function countShoplessMatching(text: string): Promise<number> {
+  const t = text.trim();
+  if (!t) return 0;
+  const db = await getDb();
+  const row = await db.getFirstAsync<{ c: number }>(
+    "SELECT COUNT(*) AS c FROM expenses WHERE deleted = 0 AND shop = '' AND (note LIKE '%' || ? || '%' OR notes LIKE '%' || ? || '%')",
+    t, t
+  );
+  return row?.c ?? 0;
+}
+
+/** One query: gives every shop-less expense matching `text` this shop. Never overwrites a shop already set. Returns how many changed. */
+export async function setShopWhereTextMatches(text: string, shop: string): Promise<number> {
+  const t = text.trim();
+  const s = shop.trim();
+  if (!t || !s) return 0;
+  const db = await getDb();
+  const res = await db.runAsync(
+    "UPDATE expenses SET shop = ? WHERE deleted = 0 AND shop = '' AND (note LIKE '%' || ? || '%' OR notes LIKE '%' || ? || '%')",
+    s, t, t
+  );
+  return res.changes;
+}

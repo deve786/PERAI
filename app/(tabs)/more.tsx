@@ -88,6 +88,7 @@ export default function More() {
         <ListCard>
           <ListRow icon="settings-outline" label="Settings" onPress={() => router.push('/settings')} />
           <ListRow icon="cloud-outline" label="Backup" onPress={() => router.push('/account')} />
+          <ListRow icon="storefront-outline" label="Set shop by note" onPress={() => router.push('/expense/bulk-shop')} />
           <ListRow
             icon="sparkles-outline"
             label="What's new"
