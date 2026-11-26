@@ -18,7 +18,6 @@ import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { UpdateBanner } from '@/components/UpdateBanner';
 import { initDatabase } from '@/db/client';
 import { getSetting } from '@/db/queries';
-import { seedAllDummyData } from '@/db/seedData';
 import { initSourcesDb } from '@/sources/client';
 import { startOverdueSweep } from '@/overdue';
 import { startReminderSync } from '@/reminders';
@@ -109,7 +108,6 @@ export default function RootLayout() {
         // Open sequentially on web to avoid concurrent OPFS access handle races
         await initDatabase();
         await initSourcesDb();
-        await seedAllDummyData();
         setDbReady(true);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
