@@ -10,6 +10,16 @@ export interface ChangelogEntry {
 /** Newest first. Add a new entry here with every release that changes user-visible behaviour. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.42.0',
+    build: 192,
+    type: 'ota',
+    date: '2026-11-26',
+    time: '03:16 PM',
+    highlights: [
+      'Expenses: new Shop name field; shops you\'ve used before show in a dropdown',
+    ],
+  },
+  {
     version: '1.41.2',
     build: 191,
     type: 'ota',
