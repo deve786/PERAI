@@ -10,6 +10,16 @@ export interface ChangelogEntry {
 /** Newest first. Add a new entry here with every release that changes user-visible behaviour. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.42.1',
+    build: 193,
+    type: 'ota',
+    date: '2026-11-26',
+    time: '03:44 PM',
+    highlights: [
+      'Removed the Load sample data and Remove sample data options',
+    ],
+  },
+  {
     version: '1.42.0',
     build: 192,
     type: 'ota',
